@@ -21,7 +21,7 @@ jobs:
           repository: microsoft/vcpkg
           ref: 469a0504e4a6ebf6173d1c0f51a7fa34c382fd43
           path: third_party/vcpkg
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
         id: dependencies
         with:
           path: |
@@ -30,10 +30,9 @@ jobs:
             third_party/cargo-home
             third_party/adblock-build
             ~/AppData/Local/vcpkg/archives
-          key: windows-x64-${{ hashFiles('third_party/dependencies.lock.json', 'scripts/build_skia.py', 'third_party/patches/*', 'core/adblock/Cargo.lock', 'vcpkg.json') }}-${{ github.sha }}
-          restore-keys: |
-            windows-x64-${{ hashFiles('third_party/dependencies.lock.json', 'scripts/build_skia.py', 'third_party/patches/*', 'core/adblock/Cargo.lock', 'vcpkg.json') }}-
-            windows-x64-${{ hashFiles('third_party/dependencies.lock.json', 'scripts/build_skia.py', 'third_party/patches/*', 'core/adblock/Cargo.lock', 'vcpkg.json') }}
+          key: windows-deps-${{ hashFiles('third_party/dependencies.lock.json', 'scripts/build_skia.py', 'third_party/patches/*', 'core/adblock/Cargo.lock', 'vcpkg.json') }}
+          # Migrate the completed dependency cache from the initial build.
+          restore-keys: windows-x64-${{ hashFiles('third_party/dependencies.lock.json', 'scripts/build_skia.py', 'third_party/patches/*', 'core/adblock/Cargo.lock', 'vcpkg.json') }}-cae1f82a36c9ee2182baa767d6bb69ab0eb3caac
       - name: Prepare Rust and vcpkg
         shell: pwsh
         run: |
@@ -46,6 +45,7 @@ jobs:
         shell: pwsh
         run: ./scripts/windows_ci.ps1 -Stage bootstrap
       - name: Configure browser and build system dependencies
+        id: configure
         shell: pwsh
         env:
           VCPKG_MAX_CONCURRENCY: '4'
@@ -60,7 +60,7 @@ jobs:
         shell: pwsh
         run: ./scripts/windows_ci.ps1 -Stage package
       - uses: actions/cache/save@v4
-        if: always() && steps.dependencies.outputs.cache-hit != 'true'
+        if: always() && steps.configure.outcome == 'success' && steps.dependencies.outputs.cache-hit != 'true'
         with:
           path: |
             third_party/cache
@@ -68,7 +68,7 @@ jobs:
             third_party/cargo-home
             third_party/adblock-build
             ~/AppData/Local/vcpkg/archives
-          key: windows-x64-${{ hashFiles('third_party/dependencies.lock.json', 'scripts/build_skia.py', 'third_party/patches/*', 'core/adblock/Cargo.lock', 'vcpkg.json') }}-${{ github.sha }}
+          key: windows-deps-${{ hashFiles('third_party/dependencies.lock.json', 'scripts/build_skia.py', 'third_party/patches/*', 'core/adblock/Cargo.lock', 'vcpkg.json') }}
       - uses: actions/upload-artifact@v4
         if: success()
         with:

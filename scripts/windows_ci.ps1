@@ -6,7 +6,17 @@ if (-not $vs) { throw 'Visual Studio C++ tools missing' }
 $dev = Join-Path $vs 'Common7\Tools\VsDevCmd.bat'
 $commands = @("call `"$dev`" -arch=x64 -host_arch=x64")
 switch ($Stage) {
-    bootstrap { $commands += 'python scripts/bootstrap.py --jobs 4' }
+    bootstrap {
+        # The workflow restores this directory only from the matching locked
+        # dependencies, Skia build flags and source patches cache key.
+        # Reuse the completed static library; fresh extraction otherwise makes
+        # Ninja recompile generated sources after restoring object files.
+        if (Test-Path 'third_party/skia-build/windows64/skia.lib') {
+            $commands += 'python scripts/bootstrap.py --fetch-only'
+        } else {
+            $commands += 'python scripts/bootstrap.py --jobs 4'
+        }
+    }
     configure { $commands += 'cmake --preset windows-x64-release' }
     build { $commands += 'cmake --build --preset windows-x64-release --parallel 4' }
     test {
