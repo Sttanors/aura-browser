@@ -152,7 +152,7 @@ int run(const CefMainArgs& main_args, CefRefPtr<CefCommandLine> command, void* s
         ? std::filesystem::absolute(path_from_utf8(command->GetSwitchValue("data-dir").ToString()))
         : std::filesystem::temp_directory_path() / ("aura2-m0-" + std::to_string(process_id));
     std::filesystem::create_directories(data_path);
-    auto logger = spdlog::basic_logger_mt("aura", utf8_path(data_path / "aura.log"));
+    auto logger = spdlog::basic_logger_mt("aura", (data_path / "aura.log").native());
     spdlog::set_default_logger(logger);
     spdlog::flush_on(spdlog::level::info);
     spdlog::info("Aura M0; CEF {}", CEF_VERSION);

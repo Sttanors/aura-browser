@@ -578,7 +578,11 @@ void BrowserController::mute() {
 void BrowserController::devtools() {
     if (auto t = current(); t && t->browser) {
         CefWindowInfo info;
+#ifdef _WIN32
+        info.SetAsPopup(window->handle(), tr("Aura Developer Tools"));
+#else
         CefString(&info.window_name) = tr("Aura Developer Tools");
+#endif
         info.bounds = {0, 0, 1100, 800};
         CefBrowserSettings settings;
         t->browser->GetHost()->ShowDevTools(info, new ToolsClient(*this), settings, {});

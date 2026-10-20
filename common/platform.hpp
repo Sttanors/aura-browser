@@ -9,4 +9,4 @@ std::tm local_time(std::time_t value);
 void replace_file(const std::filesystem::path &source, const std::filesystem::path &target,
                   std::error_code &error);
 void replace_file(const std::filesystem::path &source, const std::filesystem::path &target);
-}
+} // namespace aura

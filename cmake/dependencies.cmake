@@ -18,3 +18,7 @@ if(BUILD_TESTING)
   set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
   add_subdirectory("${PROJECT_SOURCE_DIR}/third_party/src/googletest" "third_party/googletest" EXCLUDE_FROM_ALL)
 endif()
+
+if(WIN32)
+  target_compile_definitions(spdlog PUBLIC SPDLOG_WCHAR_FILENAMES)
+endif()

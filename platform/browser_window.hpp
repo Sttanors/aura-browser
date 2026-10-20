@@ -1,8 +1,8 @@
 #pragma once
 #include "common/geometry.hpp"
 #include "include/cef_browser.h"
-#include <functional>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 class SkCanvas;

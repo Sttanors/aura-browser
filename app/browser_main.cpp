@@ -1,5 +1,5 @@
-#include "common/platform.hpp"
 #include "common/config.hpp"
+#include "common/platform.hpp"
 #include "core/browser/browser.hpp"
 #include "include/base/cef_compiler_specific.h"
 #include "include/cef_command_line.h"
@@ -28,7 +28,7 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
                                 command->GetSwitchValue("data-dir").ToString()))
                           : binary / "profile";
     std::filesystem::create_directories(path);
-    auto logger = spdlog::basic_logger_mt("aura", aura::utf8_path(path / "aura.log"));
+    auto logger = spdlog::basic_logger_mt("aura", (path / "aura.log").native());
     spdlog::set_default_logger(logger);
     spdlog::flush_on(spdlog::level::info);
     double scale = 1;
@@ -140,15 +140,19 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
 }
 } // namespace
 #ifdef _WIN32
-CEF_BOOTSTRAP_EXPORT int RunWinMain(HINSTANCE instance, LPWSTR, int, void *sandbox_info, cef_version_info_t *) {
+CEF_BOOTSTRAP_EXPORT int RunWinMain(HINSTANCE instance, LPWSTR, int, void *sandbox_info,
+                                    cef_version_info_t *) {
     CefMainArgs args(instance);
     const auto child = CefExecuteProcess(args, nullptr, sandbox_info);
-    if (child >= 0) return child;
+    if (child >= 0)
+        return child;
     auto command = CefCommandLine::CreateCommandLine();
     command->InitFromString(GetCommandLineW());
-    try { return run(args, command, sandbox_info); }
-    catch (const std::exception &error) {
-        MessageBoxW(nullptr, CefString(error.what()).ToWString().c_str(), L"Aura — initialization error", MB_OK | MB_ICONERROR);
+    try {
+        return run(args, command, sandbox_info);
+    } catch (const std::exception &error) {
+        MessageBoxW(nullptr, CefString(error.what()).ToWString().c_str(),
+                    L"Aura — initialization error", MB_OK | MB_ICONERROR);
         return 1;
     }
 }

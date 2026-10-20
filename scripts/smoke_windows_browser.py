@@ -27,6 +27,8 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     profile = output/'profile-кириллица'
     shutil.rmtree(profile, ignore_errors=True)
+    profile.mkdir()
+    (profile/'profile.toml').write_text('language="ru"\nrestore=false\n', encoding='utf-8')
     server = ThreadingHTTPServer(('127.0.0.1', 0), partial(SimpleHTTPRequestHandler, directory=str(ROOT/'tests/fixtures')))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     url = f'http://127.0.0.1:{server.server_port}/browser/a.html'
@@ -55,7 +57,8 @@ def main():
                 assert state['adblock_ready'], 'Rust ad blocker must initialize'
                 assert 'DIB' in state['renderer'], state['renderer']
                 def click(x, y):
-                    scale = state['interface']['device_scale']*state['interface']['applied']/100
+                    current = read()
+                    scale = current['interface']['device_scale']*current['interface']['applied']/100
                     point = round(x*scale) | (round(y*scale)<<16)
                     user.SendMessageW(window, 0x201, 1, point)
                     user.SendMessageW(window, 0x202, 0, point)
@@ -64,16 +67,44 @@ def main():
                 tab = next(t for t in state['tabs'] if t.get('title') == 'Alpha')
                 bounds = tab.get('bounds', [252, 88, 1000, 700])
                 x, y = (bounds['x'], bounds['y']) if isinstance(bounds, dict) else bounds[:2]
-                click(x+120, y+165)
-                for char in 'Windows Привет': user.SendMessageW(window, 0x102, ord(char), 1)
+                def click_web(css_x, css_y):
+                    factor = read()['interface']['applied']/100
+                    click(x+css_x/factor, y+css_y/factor)
+                click_web(120, 165)
+                def type_text(value):
+                    for char in value:
+                        virtual = user.VkKeyScanW(ord(char)) & 255
+                        if virtual == 255: virtual = ord('A')
+                        user.SendMessageW(window, 0x100, virtual, 1)
+                        user.SendMessageW(window, 0x102, ord(char), 1)
+                        user.SendMessageW(window, 0x101, virtual, 1)
+                type_text('Windows Привет')
                 wait(lambda s: any(t.get('title') == 'Alpha input Windows Привет' for t in s.get('tabs', [])), 'Win32 Unicode typing must reach the real web input')
-                click(x+100, y+285)
+                click_web(100, 285)
                 wait(lambda s: s.get('dialog_count') == 1, 'JavaScript dialog must open')
                 user.SendMessageW(window, 0x100, 13, 1)
                 user.SendMessageW(window, 0x101, 13, 1)
                 wait(lambda s: any(t.get('title') == 'Alpha dialog accepted' for t in s.get('tabs', [])), 'Native dialog must accept Return')
-                click(x+100, y+108)
+                click_web(100, 108)
                 wait(lambda s: any(t.get('title') == 'Beta' for t in s.get('tabs', [])), 'Native pointer input must navigate to Beta')
+                if launch == 0:
+                    click(read()['interface']['width']-53, 55)
+                    settings = wait(lambda s: bool(s.get('settings_ui')), 'Settings panel must open')
+                    def click_rect(rect):
+                        click(rect[0]+rect[2]//2, rect[1]+rect[3]//2)
+                    # The first category includes language; choose English through the native UI.
+                    language = next(c for c in settings['settings_ui']['controls'] if c['id'] == 'language')
+                    click_rect(next(o['bounds'] for o in language['options'] if o['value'] == 'en'))
+                    wait(lambda s: s.get('settings', {}).get('language') == 'en', 'English selection must apply')
+                    click_rect(read()['settings_ui']['search_bounds'])
+                    type_text('ui_zoom')
+                    settings = wait(lambda s: (s.get('settings_ui') or {}).get('search') == 'ui_zoom', 'Settings search must accept native text')
+                    zoom = next(c for c in settings['settings_ui']['controls'] if c['id'] == 'ui_zoom')
+                    click_rect(next(o['bounds'] for o in zoom['options'] if o['value'] == '125'))
+                    wait(lambda s: s.get('settings', {}).get('ui_zoom') == 125, 'Interface zoom must apply')
+                else:
+                    assert state['settings']['language'] == 'en', 'Language must survive restart'
+                    assert state['settings']['ui_zoom'] == 125, 'Interface scale must survive restart'
                 user.SendMessageW(window, 0x10, 0, 0)
                 process.wait(timeout=30)
                 assert process.returncode == 0, process.returncode
@@ -81,7 +112,7 @@ def main():
                 assert final['cef_created'] == final['cef_closed'], final
                 assert (profile/'profile.toml').is_file(), 'Profile must persist'
                 process = None
-        (output/'PASS.txt').write_text('PASS: full Win32 browser, Chromium page, Unicode path/input, pointer navigation, native dialog, adblock, profile replacement and balanced CEF shutdown.\n')
+        (output/'PASS.txt').write_text('PASS: full Win32 browser, Chromium page, Unicode path/input, pointer navigation, native dialog, English, interface scaling, adblock, profile replacement and balanced CEF shutdown.\n')
     finally:
         if process and process.poll() is None:
             subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'], check=False)

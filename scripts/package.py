@@ -58,6 +58,17 @@ def runtime_archive(output: Path):
                     target = stage / "licenses" / name / filename
                     target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(candidate, target)
+        if platform == "windows64":
+            share = build / "vcpkg_installed/x64-windows-static/share"
+            if not share.is_dir():
+                share = ROOT / "vcpkg_installed/x64-windows-static/share"
+            notices = list(share.glob("*/copyright"))
+            if not notices:
+                raise RuntimeError("Windows static dependency license notices are missing")
+            for notice in notices:
+                target = stage / "licenses" / notice.parent.name / "copyright"
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(notice, target)
         with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED, strict_timestamps=False) as archive:
             for source in sorted(stage.rglob("*")):
                 if source.is_file(): archive.write(source, Path("Aura2") / source.relative_to(stage))
