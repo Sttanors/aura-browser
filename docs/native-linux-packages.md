@@ -36,7 +36,7 @@ Inside the build container, `packaging/linux/native/build-debian.sh` creates a s
 reuses the verified dependency sources and performs Skia, CMake and CTest builds. Then:
 
 ```sh
-python3 scripts/build_native_linux.py --archive artifacts/native-packages/aura2-linux64-debian13.zip
+python3 /source/scripts/build_native_linux.py --archive /output/aura2-linux64-debian13.zip --output /output
 ```
 
 The packaging command must run in the Debian packaging image (dpkg-dev, rpm, libarchive-tools and
