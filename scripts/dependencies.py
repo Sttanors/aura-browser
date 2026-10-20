@@ -151,6 +151,8 @@ def extract_archive(archive: Path, destination: Path, strip_root: bool) -> None:
                     with source.extractfile(source_entry) as src, target.open("wb") as dst:
                         shutil.copyfileobj(src, dst)
                     target.chmod(source_entry.mode & 0o777)
+                    # Stable source timestamps let Ninja reuse cached object files.
+                    os.utime(target, (source_entry.mtime, source_entry.mtime))
 
 
 

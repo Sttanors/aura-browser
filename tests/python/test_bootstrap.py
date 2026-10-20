@@ -61,6 +61,7 @@ class ArchiveTests(unittest.TestCase):
                 stream.addfile(member, io.BytesIO(b"ok"))
             extract_archive(archive, root / "out", True)
             self.assertEqual((root / "out/nested/file.txt").read_text(), "ok")
+            self.assertEqual(int((root / "out/nested/file.txt").stat().st_mtime), 0)
 
 
 class ContentIntegrityTests(unittest.TestCase):
