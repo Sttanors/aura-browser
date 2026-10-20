@@ -25,6 +25,8 @@ endif()
 add_subdirectory("${CEF_LIBCEF_DLL_WRAPPER_PATH}" "libcef_dll_wrapper")
 if(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
   # GetProcAddress returns FARPROC; the SDK casts it to the exported signature.
-  target_compile_options(libcef_dll_wrapper PRIVATE -Wno-error=cast-function-type-mismatch)
+  # Sized C API aggregates intentionally zero-initialize their remaining fields.
+  target_compile_options(libcef_dll_wrapper PRIVATE
+    -Wno-error=cast-function-type-mismatch -Wno-missing-field-initializers)
 endif()
 ADD_LOGICAL_TARGET("libcef_lib" "${CEF_LIB_DEBUG}" "${CEF_LIB_RELEASE}")
