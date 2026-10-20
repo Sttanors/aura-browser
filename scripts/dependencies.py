@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import posixpath
 from pathlib import Path, PurePosixPath
 import shutil
 import tarfile
@@ -113,18 +114,44 @@ def extract_archive(archive: Path, destination: Path, strip_root: bool) -> None:
             entries = [(entry, relative(entry.name)) for entry in source.getmembers()]
             if sum(entry.size for entry, _ in entries) > 8 * 1024**3:
                 raise ValueError("Archive exceeds extraction budget")
-            for entry, name in entries:
-                if not (entry.isfile() or entry.isdir()):
-                    raise ValueError(f"Archive links/devices are not accepted: {entry.name}")
-                if name:
-                    target = destination / name
-                    if entry.isdir():
-                        target.mkdir(parents=True, exist_ok=True)
-                    else:
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        with source.extractfile(entry) as src, target.open("wb") as dst:
-                            shutil.copyfileobj(src, dst)
-                        target.chmod(entry.mode & 0o777)
+            by_name = {name: entry for entry, name in entries if name}
+            if len(by_name) != sum(name is not None for _, name in entries):
+                raise ValueError("Duplicate archive path")
+
+            def regular(entry, name, seen):
+                if entry.isfile():
+                    return entry
+                if name in seen or len(seen) >= 32:
+                    raise ValueError("Cyclic archive link")
+                if entry.issym():
+                    link = entry.linkname.replace("\\", "/")
+                    if link.startswith("/") or any(":" in part for part in PurePosixPath(link).parts):
+                        raise ValueError("Unsafe archive link")
+                    target = posixpath.normpath(posixpath.join(posixpath.dirname(name), link))
+                    if target == ".." or target.startswith("../"):
+                        raise ValueError("Archive link escapes destination")
+                elif entry.islnk():
+                    target = relative(entry.linkname)
+                else:
+                    raise ValueError("Archive links to devices/directories are not accepted")
+                if target not in by_name:
+                    raise ValueError("Archive link target is missing")
+                return regular(by_name[target], target, seen | {name})
+
+            # Resolve all links against the archive, never against the host filesystem.
+            # Materializing copies also works on Windows without symlink privileges.
+            plan = [(entry, name, None if entry.isdir() else regular(entry, name, set()))
+                    for entry, name in entries if name]
+            for entry, name, source_entry in plan:
+                target = destination / name
+                if entry.isdir():
+                    target.mkdir(parents=True, exist_ok=True)
+                else:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with source.extractfile(source_entry) as src, target.open("wb") as dst:
+                        shutil.copyfileobj(src, dst)
+                    target.chmod(source_entry.mode & 0o777)
+
 
 
 def install(name: str, destination: Path, offline: bool = False) -> Path:

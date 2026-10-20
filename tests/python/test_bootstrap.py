@@ -35,6 +35,22 @@ class ArchiveTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 extract_archive(archive, root / "out", True)
 
+    def test_materializes_internal_links_without_creating_filesystem_links(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / "links.tar.gz"
+            with tarfile.open(archive, "w:gz") as stream:
+                item = tarfile.TarInfo("package/source.txt")
+                item.size = 2
+                stream.addfile(item, io.BytesIO(b"ok"))
+                link = tarfile.TarInfo("package/nested/link.txt")
+                link.type = tarfile.SYMTYPE
+                link.linkname = "../source.txt"
+                stream.addfile(link)
+            extract_archive(archive, root / "out", True)
+            self.assertEqual((root/"out/nested/link.txt").read_bytes(), b"ok")
+            self.assertFalse((root/"out/nested/link.txt").is_symlink())
+
     def test_extracts_nested_files_and_strips_root(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

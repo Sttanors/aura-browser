@@ -30,7 +30,8 @@ jobs:
             third_party/cargo-home
             third_party/adblock-build
             ~/AppData/Local/vcpkg/archives
-          key: windows-x64-${{ hashFiles('third_party/dependencies.lock.json', 'scripts/build_skia.py', 'third_party/patches/*', 'core/adblock/Cargo.lock', 'vcpkg.json') }}
+          key: windows-x64-${{ hashFiles('third_party/dependencies.lock.json', 'scripts/build_skia.py', 'third_party/patches/*', 'core/adblock/Cargo.lock', 'vcpkg.json') }}-${{ github.sha }}
+          restore-keys: windows-x64-${{ hashFiles('third_party/dependencies.lock.json', 'scripts/build_skia.py', 'third_party/patches/*', 'core/adblock/Cargo.lock', 'vcpkg.json') }}-
       - name: Prepare Rust and vcpkg
         shell: pwsh
         run: |
@@ -72,7 +73,7 @@ jobs:
             third_party/cargo-home
             third_party/adblock-build
             ~/AppData/Local/vcpkg/archives
-          key: windows-x64-${{ hashFiles('third_party/dependencies.lock.json', 'scripts/build_skia.py', 'third_party/patches/*', 'core/adblock/Cargo.lock', 'vcpkg.json') }}
+          key: windows-x64-${{ hashFiles('third_party/dependencies.lock.json', 'scripts/build_skia.py', 'third_party/patches/*', 'core/adblock/Cargo.lock', 'vcpkg.json') }}-${{ github.sha }}
       - uses: actions/upload-artifact@v4
         if: success()
         with:

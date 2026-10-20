@@ -35,7 +35,7 @@ struct BrowserWindow::Impl {
     WindowCallbacks callbacks;
     int pixel_width=0,pixel_height=0,width=0,height=0,hz=60,cursor_kind=0;
     double cli_scale=1,base_scale=1,scale=1,zoom=1;
-    bool dirty=true,full=true,tracking=false;
+    bool dirty=true,full=true,tracking=false,suppress_character=false;
     wchar_t surrogate=0;
     uint64_t frame_count=0,allocations=0;
     Impl(int w,int h,double factor,WindowCallbacks hooks,double interface_zoom)
@@ -171,10 +171,12 @@ struct BrowserWindow::Impl {
         case WM_KEYDOWN:case WM_KEYUP:case WM_SYSKEYDOWN:case WM_SYSKEYUP:{
             CefKeyEvent key;key.type=(message==WM_KEYUP||message==WM_SYSKEYUP)?KEYEVENT_KEYUP:KEYEVENT_RAWKEYDOWN;
             key.windows_key_code=int(wp);key.native_key_code=int(lp);key.modifiers=modifiers();key.is_system_key=message==WM_SYSKEYDOWN||message==WM_SYSKEYUP;
-            if(callbacks.key&&callbacks.key(key))return 0;
+            const bool handled=callbacks.key&&callbacks.key(key);
+            if(key.type==KEYEVENT_RAWKEYDOWN)suppress_character=handled;
+            if(handled)return 0;
             if(!key.is_system_key)return 0;break;}
         case WM_CHAR:{wchar_t c=wchar_t(wp);if(c>=0xD800&&c<=0xDBFF){surrogate=c;return 0;}
-            if(c>=32){std::wstring value;if(c>=0xDC00&&c<=0xDFFF&&surrogate)value+=surrogate;value+=c;text(value);}surrogate=0;return 0;}
+            if(!suppress_character&&(c>=32||c==8||c==9||c==13)){std::wstring value;if(c>=0xDC00&&c<=0xDFFF&&surrogate)value+=surrogate;value+=c;text(value);}surrogate=0;return 0;}
         case WM_IME_COMPOSITION:if(lp&GCS_RESULTSTR){
             auto context=ImmGetContext(window);if(context){auto size=ImmGetCompositionStringW(context,GCS_RESULTSTR,nullptr,0);
                 if(size>0){std::wstring value(size/sizeof(wchar_t),L'\0');ImmGetCompositionStringW(context,GCS_RESULTSTR,value.data(),size);text(value);}ImmReleaseContext(window,context);}return 0;}break;
