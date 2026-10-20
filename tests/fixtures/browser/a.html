@@ -6,3 +6,5 @@
 <button onclick="alert('A native Aura dialog');document.title='Alpha dialog accepted'">Open JavaScript dialog</button>
 <a id="popup" href="b.html" target="_blank">Open Beta in a new tab</a>
 <script>document.querySelector('input').addEventListener('input',e=>document.title='Alpha input '+e.target.value)</script>
+
+<script>document.querySelector('input').addEventListener('focus',()=>document.title='Alpha input focused')</script>

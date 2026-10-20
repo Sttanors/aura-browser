@@ -75,6 +75,8 @@ def main():
                     factor = read()['interface']['applied']/100
                     click(x+css_x/factor, y+css_y/factor)
                 click_web(120, 165)
+                # Native SendMessage returns before Chromium acknowledges DOM focus.
+                wait(lambda s: any(t.get('title') == 'Alpha input focused' for t in s.get('tabs', [])), 'The real web input must receive focus before typing')
                 def type_text(value):
                     for char in value:
                         virtual = user.VkKeyScanW(ord(char)) & 255
