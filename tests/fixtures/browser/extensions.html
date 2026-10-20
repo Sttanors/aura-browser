@@ -1,0 +1,4 @@
+<!doctype html><meta charset="utf-8"><title>Extension loading</title><p id="extension-proof">Extension probe</p><script>
+setInterval(() => { const raw = document.documentElement.getAttribute('data-aura-mv3'); if (!raw) return;
+const p = JSON.parse(raw); if (p.content_script && p.service_worker && p.runtime_messaging) document.title = 'Extensions PASS'; }, 100);
+</script>

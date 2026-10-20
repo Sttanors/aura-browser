@@ -1,0 +1,47 @@
+#pragma once
+#include "core/browser/preferences.hpp"
+#include <array>
+#include <cstdint>
+#include <filesystem>
+#include <optional>
+#include <string>
+#include <vector>
+namespace aura {
+std::string navigation_url(std::string input, const std::string &engine = "duckduckgo");
+std::string search_engine_name(const std::string &engine);
+std::string url_host(const std::string &url);
+struct Visit {
+    std::string url, title;
+    long long time = 0;
+};
+struct Shortcut {
+    std::string title, url;
+};
+struct SavedTab {
+    std::string url;
+    bool pinned = false;
+};
+class Profile : public BrowserPreferences {
+  public:
+    explicit Profile(std::filesystem::path directory);
+    std::filesystem::path directory;
+    std::vector<Visit> history, bookmarks;
+    std::vector<SavedTab> session;
+    std::vector<Shortcut> shortcuts = {{"Wikipedia", "https://www.wikipedia.org/"},
+                                       {"GitHub", "https://github.com/"},
+                                       {"MDN Web Docs", "https://developer.mozilla.org/"}};
+    std::optional<std::array<std::array<uint32_t, 5>, 2>> image_palette;
+    bool add_shortcut(std::string title, std::string url);
+    bool edit_shortcut(size_t index, std::string title, std::string url);
+    void move_shortcut(size_t from, size_t to);
+    void remove_shortcut(size_t index);
+    int active = 0;
+    void prune_history();
+    void load();
+    void save() const;
+    void visit(std::string url, std::string title, bool private_tab);
+    bool bookmarked(const std::string &url) const;
+    void toggle_bookmark(std::string url, std::string title);
+    std::vector<Visit> suggest(const std::string &query, std::size_t limit = 7) const;
+};
+} // namespace aura

@@ -1,0 +1,167 @@
+cmake_minimum_required(VERSION 3.31)
+cmake_policy(SET CMP0091 NEW)
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+project(Aura2 VERSION 0.2.0 LANGUAGES C CXX)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+option(AURA_BUILD_DIAGNOSTIC "Build the CEF + Skia M0 executable" ON)
+include(CTest)
+find_package(Python3 3.12 REQUIRED COMPONENTS Interpreter)
+include(cmake/dependencies.cmake)
+
+set(AURA_GENERATED "${CMAKE_CURRENT_BINARY_DIR}/generated")
+add_custom_command(
+  OUTPUT "${AURA_GENERATED}/aura/design_tokens.hpp"
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_tokens.py"
+          "${CMAKE_CURRENT_SOURCE_DIR}/design/tokens.json"
+          "${AURA_GENERATED}/aura/design_tokens.hpp"
+  DEPENDS design/tokens.json scripts/generate_tokens.py VERBATIM)
+add_custom_target(aura_design_tokens DEPENDS "${AURA_GENERATED}/aura/design_tokens.hpp")
+add_library(aura_common common/platform.cpp common/config.cpp common/paint_buffer.cpp common/pump_schedule.cpp core/browser/profile.cpp core/browser/i18n.cpp core/browser/preferences.cpp)
+target_include_directories(aura_common PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}" "${AURA_GENERATED}")
+target_link_libraries(aura_common PUBLIC tomlplusplus::tomlplusplus spdlog::spdlog)
+add_dependencies(aura_common aura_design_tokens)
+if(MSVC)
+  target_compile_options(aura_common PUBLIC /utf-8 /W4 /EHsc)
+  target_compile_definitions(aura_common PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
+else()
+  target_compile_options(aura_common PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+if(BUILD_TESTING)
+  add_executable(aura_tests tests/common_tests.cpp)
+  target_link_libraries(aura_tests PRIVATE aura_common GTest::gtest_main)
+  include(GoogleTest)
+  gtest_discover_tests(aura_tests)
+  add_test(NAME bootstrap_validation COMMAND "${Python3_EXECUTABLE}" -m unittest discover
+           -s "${CMAKE_CURRENT_SOURCE_DIR}/tests/python" -v)
+endif()
+
+if(AURA_BUILD_DIAGNOSTIC)
+  include(cmake/cef.cmake)
+  include(cmake/skia.cmake)
+  set(AURA_SOURCES app/main.cpp core/cef/diagnostic_client.cpp render/diagnostic_scene.cpp)
+  if(WIN32)
+    list(APPEND AURA_SOURCES platform/windows/diagnostic_window.cpp
+         render/rhi/angle_surface.cpp render/cef_bridge/shared_texture_probe.cpp
+         platform/windows/aura.manifest)
+    add_library(aura_diagnostic SHARED ${AURA_SOURCES})
+    target_compile_definitions(aura_diagnostic PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_link_libraries(aura_diagnostic PRIVATE dwmapi d3d11 dxgi imm32 shcore opengl32)
+    target_link_options(aura_diagnostic PRIVATE /DELAYLOAD:libcef.dll ${CEF_DELAYLOAD_FLAGS})
+    target_link_libraries(aura_diagnostic PRIVATE ${CEF_STANDARD_LIBS})
+    set_target_properties(aura_diagnostic PROPERTIES PREFIX "")
+  else()
+    find_package(X11 REQUIRED)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(AURA_EGL REQUIRED IMPORTED_TARGET egl)
+    pkg_check_modules(AURA_GLES REQUIRED IMPORTED_TARGET glesv2)
+    list(APPEND AURA_SOURCES platform/linux/x11/diagnostic_window.cpp)
+    add_executable(aura_diagnostic ${AURA_SOURCES})
+    set_target_properties(aura_diagnostic PROPERTIES BUILD_RPATH "$ORIGIN")
+    target_link_libraries(aura_diagnostic PRIVATE dl pthread X11::X11 PkgConfig::AURA_EGL PkgConfig::AURA_GLES)
+  endif()
+  target_link_libraries(aura_diagnostic PRIVATE aura_common aura_skia libcef_lib libcef_dll_wrapper)
+  target_include_directories(aura_diagnostic PRIVATE "${CEF_ROOT}")
+  if(MSVC)
+    target_compile_options(aura_diagnostic PRIVATE /EHsc /utf-8 /W4)
+    target_compile_options(aura_common PUBLIC /EHsc)
+  else()
+    target_compile_options(aura_diagnostic PRIVATE -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers)
+  endif()
+  target_compile_definitions(aura_diagnostic PRIVATE ${CEF_COMPILER_DEFINES})
+  # The CEF wrapper keeps its own no-exception policy. Aura uses exceptions internally.
+  get_target_property(AURA_DEFINITIONS aura_diagnostic COMPILE_DEFINITIONS)
+  list(REMOVE_ITEM AURA_DEFINITIONS _HAS_EXCEPTIONS=0)
+  set_target_properties(aura_diagnostic PROPERTIES COMPILE_DEFINITIONS "${AURA_DEFINITIONS}")
+  if(WIN32)
+    target_compile_definitions(aura_diagnostic PRIVATE CEF_USE_BOOTSTRAP)
+  endif()
+  add_custom_command(TARGET aura_diagnostic POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory "${CEF_ROOT}/Release" "$<TARGET_FILE_DIR:aura_diagnostic>"
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory "${CEF_ROOT}/Resources" "$<TARGET_FILE_DIR:aura_diagnostic>"
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts"
+            "$<TARGET_FILE_DIR:aura_diagnostic>/fonts"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/resources/default.toml"
+            "$<TARGET_FILE_DIR:aura_diagnostic>/default.toml"
+    VERBATIM)
+  if(WIN32)
+    add_custom_command(TARGET aura_diagnostic POST_BUILD
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/stage_windows.py"
+              "$<TARGET_FILE_DIR:aura_diagnostic>" "${CEF_ROOT}"
+              "${PROJECT_SOURCE_DIR}/third_party/skia-build/windows64" "${CMAKE_MT}"
+      VERBATIM)
+  endif()
+endif()
+
+# The normal desktop application. M0 remains a separate compatibility harness.
+if(AURA_BUILD_DIAGNOSTIC AND NOT APPLE)
+  find_package(OpenSSL REQUIRED)
+  if(WIN32)
+    find_package(LibArchive REQUIRED)
+    set(AURA_BROWSER_LIBS LibArchive::LibArchive user32 gdi32 dwmapi imm32 shcore shell32 comdlg32 ole32
+      ntdll userenv ws2_32 advapi32 bcrypt crypt32)
+    set(AURA_RUST_LIBRARY aura_adblock.lib)
+    set(AURA_RUST_FLAGS "-C target-feature=+crt-static")
+  else()
+    pkg_check_modules(AURA_ARCHIVE REQUIRED IMPORTED_TARGET libarchive)
+    pkg_check_modules(AURA_WAYLAND REQUIRED IMPORTED_TARGET wayland-client)
+    set(AURA_BROWSER_LIBS X11::X11 X11::Xext PkgConfig::AURA_WAYLAND PkgConfig::AURA_EGL
+      PkgConfig::AURA_GLES dl pthread PkgConfig::AURA_ARCHIVE)
+    set(AURA_RUST_LIBRARY libaura_adblock.a)
+    set(AURA_RUST_FLAGS "")
+  endif()
+  find_program(AURA_CARGO cargo REQUIRED)
+  set(AURA_RUST_TARGET "${PROJECT_SOURCE_DIR}/third_party/adblock-build")
+  add_custom_command(OUTPUT "${AURA_RUST_TARGET}/release/${AURA_RUST_LIBRARY}"
+    COMMAND "${CMAKE_COMMAND}" -E env "CARGO_HOME=${PROJECT_SOURCE_DIR}/third_party/cargo-home"
+      "CARGO_TARGET_DIR=${AURA_RUST_TARGET}" "RUSTFLAGS=${AURA_RUST_FLAGS}" "${AURA_CARGO}" build
+      --manifest-path "${PROJECT_SOURCE_DIR}/core/adblock/Cargo.toml" --release --locked --jobs 2
+    DEPENDS core/adblock/src/lib.rs core/adblock/Cargo.toml core/adblock/Cargo.lock VERBATIM)
+  add_custom_target(aura_adblock_build DEPENDS "${AURA_RUST_TARGET}/release/${AURA_RUST_LIBRARY}")
+  add_library(aura_adblock STATIC IMPORTED)
+  set_target_properties(aura_adblock PROPERTIES IMPORTED_LOCATION "${AURA_RUST_TARGET}/release/${AURA_RUST_LIBRARY}")
+  add_dependencies(aura_adblock aura_adblock_build)
+  set(AURA_BROWSER_SOURCES app/browser_main.cpp core/browser/browser.cpp core/browser/client.cpp core/browser/devtools.cpp core/browser/protection.cpp core/browser/extensions.cpp core/browser/site_tools.cpp core/browser/extension_popup.cpp
+    core/cef/diagnostic_client.cpp ui/browser_ui.cpp ui/wallpaper.cpp)
+  if(WIN32)
+    add_library(aura_browser SHARED ${AURA_BROWSER_SOURCES} platform/windows/browser_window.cpp)
+    target_compile_definitions(aura_browser PRIVATE CEF_USE_BOOTSTRAP)
+    target_compile_options(aura_browser PRIVATE /EHsc /utf-8 /W4)
+    target_link_options(aura_browser PRIVATE /DELAYLOAD:libcef.dll ${CEF_DELAYLOAD_FLAGS})
+    target_link_libraries(aura_browser PRIVATE ${CEF_STANDARD_LIBS})
+    set_target_properties(aura_browser PROPERTIES PREFIX "")
+    add_custom_command(TARGET aura_browser POST_BUILD
+      COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/scripts/stage_windows.py"
+        "$<TARGET_FILE_DIR:aura_browser>" "${CEF_ROOT}"
+        "${PROJECT_SOURCE_DIR}/third_party/skia-build/windows64" "${CMAKE_MT}" aura_browser VERBATIM)
+  else()
+    add_executable(aura_browser ${AURA_BROWSER_SOURCES} platform/linux/x11/browser_window.cpp
+      platform/linux/x11/software_presenter.cpp platform/linux/x11/wayland_refresh.cpp)
+    target_compile_options(aura_browser PRIVATE -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers)
+    set_target_properties(aura_browser PROPERTIES BUILD_RPATH "$ORIGIN")
+  endif()
+  target_link_libraries(aura_browser PRIVATE aura_common aura_skia libcef_lib libcef_dll_wrapper
+    ${AURA_BROWSER_LIBS} aura_adblock OpenSSL::Crypto)
+  target_include_directories(aura_browser PRIVATE "${CEF_ROOT}")
+  target_compile_definitions(aura_browser PRIVATE ${CEF_COMPILER_DEFINES})
+  get_target_property(AURA_BROWSER_DEFINITIONS aura_browser COMPILE_DEFINITIONS)
+  list(REMOVE_ITEM AURA_BROWSER_DEFINITIONS _HAS_EXCEPTIONS=0)
+  set_target_properties(aura_browser PROPERTIES COMPILE_DEFINITIONS "${AURA_BROWSER_DEFINITIONS}")
+  if(BUILD_TESTING)
+    add_executable(aura_protection_tests tests/protection_tests.cpp core/browser/protection.cpp core/browser/extensions.cpp)
+    target_include_directories(aura_protection_tests PRIVATE "${CEF_ROOT}")
+    target_compile_definitions(aura_protection_tests PRIVATE ${CEF_COMPILER_DEFINES} AURA_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    target_link_libraries(aura_protection_tests PRIVATE aura_common aura_adblock libcef_lib libcef_dll_wrapper OpenSSL::Crypto ${AURA_BROWSER_LIBS} GTest::gtest_main)
+    get_target_property(AURA_TEST_DEFINITIONS aura_protection_tests COMPILE_DEFINITIONS)
+    list(REMOVE_ITEM AURA_TEST_DEFINITIONS _HAS_EXCEPTIONS=0)
+    set_target_properties(aura_protection_tests PROPERTIES BUILD_RPATH "$ORIGIN" COMPILE_DEFINITIONS "${AURA_TEST_DEFINITIONS}")
+    gtest_discover_tests(aura_protection_tests)
+  endif()
+  add_dependencies(aura_browser aura_diagnostic)
+  add_custom_target(aura_protection_resources ALL
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory "${PROJECT_SOURCE_DIR}/resources/protection" "$<TARGET_FILE_DIR:aura_browser>/protection"
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory "${PROJECT_SOURCE_DIR}/resources/vendor" "$<TARGET_FILE_DIR:aura_browser>/vendor" VERBATIM)
+  add_dependencies(aura_browser aura_protection_resources)
+endif()

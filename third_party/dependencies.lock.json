@@ -1,0 +1,131 @@
+{
+  "schema": 1,
+  "artifacts": {
+    "googletest": {
+      "version": "1.17.0",
+      "url": "https://codeload.github.com/google/googletest/tar.gz/refs/tags/v1.17.0",
+      "archive": "googletest.tar.gz",
+      "sha256": "65fab701d9829d38cb77c14acdc431d2108bfdbf8979e40eb8ae567edf10b27c"
+    },
+    "spdlog": {
+      "version": "1.15.3",
+      "url": "https://codeload.github.com/gabime/spdlog/tar.gz/refs/tags/v1.15.3",
+      "archive": "spdlog.tar.gz",
+      "sha256": "15a04e69c222eb6c01094b5c7ff8a249b36bb22788d72519646fb85feb267e67"
+    },
+    "tomlplusplus": {
+      "version": "3.4.0",
+      "url": "https://codeload.github.com/marzer/tomlplusplus/tar.gz/refs/tags/v3.4.0",
+      "archive": "tomlplusplus.tar.gz",
+      "sha256": "8517f65938a4faae9ccf8ebb36631a38c1cadfb5efa85d9a72e15b9e97d25155"
+    },
+    "freetype": {
+      "version": "2.14.3",
+      "url": "https://download.savannah.gnu.org/releases/freetype/freetype-2.14.3.tar.xz",
+      "archive": "freetype.tar.xz",
+      "sha256": "36bc4f1cc413335368ee656c42afca65c5a3987e8768cc28cf11ba775e785a5f"
+    },
+    "libpng": {
+      "version": "1.6.59",
+      "url": "https://codeload.github.com/pnggroup/libpng/tar.gz/refs/tags/v1.6.59",
+      "archive": "libpng.tar.gz",
+      "sha256": "2540302a1844ad2b2b501977abecfa850f265f97b78f065a712ab4074a89f5b5"
+    },
+    "zlib": {
+      "version": "1.3.2",
+      "url": "https://zlib.net/fossils/zlib-1.3.2.tar.gz",
+      "archive": "zlib.tar.gz",
+      "sha256": "bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16"
+    },
+    "inter": {
+      "version": "4.1",
+      "url": "https://raw.githubusercontent.com/rsms/inter/v4.1/docs/font-files/InterVariable.ttf",
+      "archive": "InterVariable.ttf",
+      "sha256": "4989b125924991b90d05b2d16e0e388c48f7d5bb8b30539bbf9c755278d0ccaf"
+    },
+    "gn-linux64": {
+      "version": "b2afae122eeb6ce09c52d63f67dc53fc517dbdc8",
+      "url": "https://chrome-infra-packages.appspot.com/dl/gn/gn/linux-amd64/+/git_revision:b2afae122eeb6ce09c52d63f67dc53fc517dbdc8",
+      "archive": "gn-linux64.zip",
+      "sha256": "6a3bfc53d825bccac5e5b4b7bdcc10ce9396a04a689ac684ec3308ca5c7f3d9c",
+      "strip_root": false
+    },
+    "gn-windows64": {
+      "version": "b2afae122eeb6ce09c52d63f67dc53fc517dbdc8",
+      "url": "https://chrome-infra-packages.appspot.com/dl/gn/gn/windows-amd64/+/git_revision:b2afae122eeb6ce09c52d63f67dc53fc517dbdc8",
+      "archive": "gn-windows64.zip",
+      "sha256": "7249f55d6f22b55affa68aaf19d2f597c39946299216e12d78eac6cc1469f8a1",
+      "strip_root": false
+    },
+    "ninja-linux64": {
+      "version": "1.13.1",
+      "url": "https://github.com/ninja-build/ninja/releases/download/v1.13.1/ninja-linux.zip",
+      "archive": "ninja-linux64.zip",
+      "sha256": "0830252db77884957a1a4b87b05a1e2d9b5f658b8367f82999a941884cbe0238",
+      "strip_root": false
+    },
+    "ninja-windows64": {
+      "version": "1.13.1",
+      "url": "https://github.com/ninja-build/ninja/releases/download/v1.13.1/ninja-win.zip",
+      "archive": "ninja-windows64.zip",
+      "sha256": "26a40fa8595694dec2fad4911e62d29e10525d2133c9a4230b66397774ae25bf",
+      "strip_root": false
+    },
+    "cef-linux64": {
+      "version": "154.0.34+g14c5a08+chromium-154.0.8037.98",
+      "url": "https://cef-builds.spotifycdn.com/cef_binary_154.0.34+g14c5a08+chromium-154.0.8037.98_linux64_minimal.tar.bz2",
+      "archive": "cef-linux64.tar.bz2",
+      "sha256": "e87e2c76304372dd28b899ceb6efa4b353f52700594ddc358a8237ec07ec6492",
+      "strip_root": true
+    },
+    "cef-windows64": {
+      "version": "154.0.34+g14c5a08+chromium-154.0.8037.98",
+      "url": "https://cef-builds.spotifycdn.com/cef_binary_154.0.34+g14c5a08+chromium-154.0.8037.98_windows64_minimal.tar.bz2",
+      "archive": "cef-windows64.tar.bz2",
+      "sha256": "c81c34d048d87276f4a18f0b000206710a1709bb67dd658948b87100e1a538da",
+      "strip_root": true
+    },
+    "skia": {
+      "version": "2466dcf3937437e217e7f284afe0e1aae15891ce",
+      "url": "https://skia.googlesource.com/skia/+archive/2466dcf3937437e217e7f284afe0e1aae15891ce.tar.gz",
+      "archive": "skia.tar.gz",
+      "sha256": "ade6b5d5398fffae28fa6f922d3d87d5a2e68afeae32de4ef49f7dc4c1cc6e39",
+      "strip_root": false
+    },
+    "inter-license": {
+      "version": "4.1",
+      "url": "https://raw.githubusercontent.com/rsms/inter/v4.1/LICENSE.txt",
+      "archive": "Inter-LICENSE.txt",
+      "sha256": "262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a",
+      "strip_root": false
+    },
+    "angle": {
+      "version": "e12217f3e133cb1029b050d893b1806d141483be",
+      "url": "https://chromium.googlesource.com/angle/angle/+archive/e12217f3e133cb1029b050d893b1806d141483be.tar.gz",
+      "archive": "angle.tar.gz",
+      "strip_root": false,
+      "sha256": "047f23334cad35af12fbeeab98e417b4f43609b3e80d932ffdd586e7fccd84ef"
+    },
+    "zlib-google-utils": {
+      "version": "646b7f569718921d7d4b5b8e22572ff6c76f2596",
+      "url": "https://chromium.googlesource.com/chromium/src/third_party/zlib/+archive/646b7f569718921d7d4b5b8e22572ff6c76f2596/google.tar.gz",
+      "archive": "zlib-google-utils.tar.gz",
+      "strip_root": false,
+      "sha256": "e237dca2dcc7ac966f8b17d5ab432db4b1c6503c68edc2ff81db363f54cc5435"
+    },
+    "spirv-tools": {
+      "version": "d693d2289e69f47135918089ab8038a929e43661",
+      "url": "https://chromium.googlesource.com/external/github.com/KhronosGroup/SPIRV-Tools/+archive/d693d2289e69f47135918089ab8038a929e43661.tar.gz",
+      "archive": "spirv-tools.tar.gz",
+      "strip_root": false,
+      "sha256": "496dac66b546760e96f8c627d066487313dd0af074d09b566ab6d714850968d6"
+    },
+    "spirv-headers": {
+      "version": "496543121ce6419f23d6fa5d7194ba66c36212d2",
+      "url": "https://chromium.googlesource.com/external/github.com/KhronosGroup/SPIRV-Headers/+archive/496543121ce6419f23d6fa5d7194ba66c36212d2.tar.gz",
+      "archive": "spirv-headers.tar.gz",
+      "strip_root": false,
+      "sha256": "a90e6feb48b1edc1cdf7717b755f5af1bf9fb052bde819ef748b930a6d16f26d"
+    }
+  }
+}

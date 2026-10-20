@@ -1,0 +1,33 @@
+# Use the pinned upstream zlib 1.3.2 sources instead of Chromium's private SIMD layout.
+import("../third_party.gni")
+import("zlib.gni")
+third_party("zlib") {
+  public_include_dirs = [ "../externals/zlib" ]
+  if (!is_win) {
+    defines = [ "Z_HAVE_UNISTD_H" ]
+  }
+  sources = [
+    "../externals/zlib/adler32.c",
+    "../externals/zlib/compress.c",
+    "../externals/zlib/crc32.c",
+    "../externals/zlib/deflate.c",
+    "../externals/zlib/gzclose.c",
+    "../externals/zlib/gzlib.c",
+    "../externals/zlib/gzread.c",
+    "../externals/zlib/gzwrite.c",
+    "../externals/zlib/infback.c",
+    "../externals/zlib/inffast.c",
+    "../externals/zlib/inflate.c",
+    "../externals/zlib/inftrees.c",
+    "../externals/zlib/trees.c",
+    "../externals/zlib/uncompr.c",
+    "../externals/zlib/zutil.c",
+  ]
+}
+config("zlib_config") {
+}
+third_party("compression_utils_portable") {
+  public_include_dirs = [ "../externals/zlib/google" ]
+  sources = [ "../externals/zlib/google/compression_utils_portable.cc" ]
+  public_deps = [ ":zlib" ]
+}

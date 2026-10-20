@@ -1,0 +1,8 @@
+<!doctype html><meta charset="utf-8"><title>Alpha</title>
+<style>body{margin:0;background:#f8fafc;color:#182332;font:16px system-ui}h1{position:absolute;top:12px;left:32px}p{position:absolute;top:52px;left:32px;color:#64748b}a,button,input{position:absolute;left:32px;font:inherit}#next{top:100px}input{top:145px;width:400px;height:38px;border:1px solid #bbb;border-radius:8px;padding-left:12px}#download{top:214px}button{top:266px;padding:10px 16px}#popup{top:330px}</style>
+<h1>Alpha · real browser integration</h1><p>Alpha is served over HTTP and rendered by Chromium.</p>
+<a id="next" href="b.html">Navigate to Beta</a><input aria-label="Browser input" placeholder="Type in the actual web page">
+<a id="download" onclick="document.title='Alpha download clicked'" href="sample.bin" download="aura-sample.bin">Download a sample file</a>
+<button onclick="alert('A native Aura dialog');document.title='Alpha dialog accepted'">Open JavaScript dialog</button>
+<a id="popup" href="b.html" target="_blank">Open Beta in a new tab</a>
+<script>document.querySelector('input').addEventListener('input',e=>document.title='Alpha input '+e.target.value)</script>

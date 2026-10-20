@@ -1,0 +1,26 @@
+<!doctype html><meta charset="utf-8"><title>Scroll probe</title>
+<style>
+body {margin:0;font:18px system-ui;background:repeating-linear-gradient(#f5f7fc 0 99px,#b8c4dd 99px 100px);height:12000px;color:#182332}
+button {position:fixed;top:12px;left:16px;z-index:2;padding:12px}
+#nested {position:fixed;left:430px;top:120px;width:300px;height:220px;overflow:auto;border:2px solid #345;background:white;overscroll-behavior:contain}
+#nested div {height:4000px;background:repeating-linear-gradient(white 0 49px,#ddd 49px 50px)}
+#horizontal {position:fixed;left:430px;top:390px;width:300px;height:110px;overflow:auto;border:2px solid #345;overscroll-behavior:contain}
+#horizontal div {width:4000px;height:70px;background:repeating-linear-gradient(90deg,#fff 0 49px,#aaa 49px 50px)}
+h1 {position:fixed;left:16px;top:75px;font-size:24px}p{position:fixed;left:16px;top:140px;width:350px}
+</style><button id="measure">Measure wheel</button><h1>Native Chromium scrolling</h1><p>Page, nested scroller and horizontal scroller. No JavaScript scrolling implementation or CSS smooth scrolling.</p><div id="nested"><div>Nested content</div></div><div id="horizontal"><div>Horizontal content</div></div>
+<script>
+const nested=document.querySelector('#nested'), horizontal=document.querySelector('#horizontal');
+let sequence=0;
+document.querySelector('#measure').onclick=()=>{
+ fetch('/scroll-start');
+ window.scrollTo(0,1000); nested.scrollTop=1000; horizontal.scrollLeft=1000;
+ const samples=[], start=performance.now(), id=++sequence;
+ function sample(t){
+  samples.push({t:t-start,y:scrollY,n:nested.scrollTop,x:horizontal.scrollLeft});
+  if(t-start<1100)requestAnimationFrame(sample);
+  else fetch('/scroll-probe',{method:'POST',body:JSON.stringify({id,samples})});
+ }
+ requestAnimationFrame(sample);
+};
+fetch("/scroll-ready");
+</script>

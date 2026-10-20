@@ -1,0 +1,9 @@
+[window]
+width = 1280
+height = 800
+
+[appearance]
+aura = "aurora"
+
+[browser]
+url = "https://example.com/"

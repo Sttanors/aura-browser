@@ -1,0 +1,50 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {"major": 3, "minor": 31, "patch": 0},
+  "configurePresets": [
+    {
+      "name": "windows-x64-release",
+      "displayName": "Aura / Windows x64 / Release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/windows-x64-release",
+      "condition": {"type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows"},
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "clang-cl",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/third_party/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_TARGET_TRIPLET": "x64-windows-static",
+        "CMAKE_CXX_COMPILER": "clang-cl",
+        "CMAKE_MAKE_PROGRAM": "${sourceDir}/third_party/tools/windows64/ninja.exe"
+      }
+    },
+    {
+      "name": "linux-x64-release",
+      "displayName": "Aura / Linux desktop / Release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-x64-release",
+      "condition": {"type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux"},
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_MAKE_PROGRAM": "${sourceDir}/third_party/tools/linux64/ninja"
+      }
+    },
+    {
+      "name": "core-tests",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/core-tests",
+      "cacheVariables": {"CMAKE_BUILD_TYPE": "Release", "AURA_BUILD_DIAGNOSTIC": "OFF"}
+    }
+  ],
+  "buildPresets": [
+    {"name": "windows-x64-release", "configurePreset": "windows-x64-release"},
+    {"name": "linux-x64-release", "configurePreset": "linux-x64-release"},
+    {"name": "core-tests", "configurePreset": "core-tests"}
+  ],
+  "testPresets": [
+    {"name": "windows-x64-release", "configurePreset": "windows-x64-release", "output": {"outputOnFailure": true}},
+    {"name": "linux-x64-release", "configurePreset": "linux-x64-release", "output": {"outputOnFailure": true}},
+    {"name": "core-tests", "configurePreset": "core-tests", "output": {"outputOnFailure": true}}
+  ]
+}

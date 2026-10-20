@@ -1,0 +1,19 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Scripts disabled</title></head>
+<body><p id="sample">Aura preferences probe</p><span id="tiny" style="font-size:1px">Small text</span>
+<p><button id="notify">Ask for notifications</button></p>
+<p><button id="alert">Show an alert</button></p>
+<p><a href="b.html" target="_blank">Open a background tab</a></p>
+<img id="image" src="probe-image.svg"><script>
+let storage = true; try { localStorage.setItem('aura-preferences','ok'); } catch (_) { storage = false; }
+const probe = {font: getComputedStyle(document.body).fontSize, storage,
+  tiny: document.getElementById('tiny').getBoundingClientRect().height, languages: navigator.languages,
+  cookie: document.cookie};
+document.title = 'Scripts enabled';
+setTimeout(() => { probe.image = document.getElementById('image').naturalWidth;
+  fetch('probe?' + new URLSearchParams({data:JSON.stringify(probe)}), {cache:'no-store'});
+}, 300);
+notify.onclick = async () => { document.title = 'Notification ' + await Notification.requestPermission(); };
+document.getElementById('alert').onclick = () => { alert('Aura alert probe'); document.title = 'Alert returned'; };
+document.addEventListener('keydown', event => { if (event.key === 'n') notify.onclick(); if (event.key === 'a') document.getElementById('alert').onclick(); });
+if (location.search.includes('popup')) window.open('b.html');
+</script></body></html>

@@ -1,0 +1,80 @@
+name: Windows browser
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/checkout@v4
+        with:
+          repository: microsoft/vcpkg
+          ref: 469a0504e4a6ebf6173d1c0f51a7fa34c382fd43
+          path: third_party/vcpkg
+      - uses: actions/cache@v4
+        with:
+          path: |
+            third_party/cache
+            third_party/skia-build
+            third_party/cargo-home
+            third_party/adblock-build
+            ~/AppData/Local/vcpkg/archives
+          key: windows-x64-${{ hashFiles('third_party/dependencies.lock.json', 'scripts/build_skia.py', 'third_party/patches/*', 'core/adblock/Cargo.lock', 'vcpkg.json') }}
+      - name: Prepare Rust and vcpkg
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.90.0 --profile minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup default 1.90.0
+          & ./third_party/vcpkg/bootstrap-vcpkg.bat -disableMetrics
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build and verify full Windows browser
+        shell: pwsh
+        env:
+          VCPKG_MAX_CONCURRENCY: '4'
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw 'Visual Studio C++ tools missing' }
+          $dev = Join-Path $vs 'Common7\Tools\VsDevCmd.bat'
+          $commands = @(
+            "call `"$dev`" -arch=x64 -host_arch=x64",
+            'python scripts/bootstrap.py --jobs 4',
+            'cmake --preset windows-x64-release',
+            'cmake --build --preset windows-x64-release --parallel 4',
+            'ctest --preset windows-x64-release',
+            'python scripts/smoke_windows_browser.py',
+            'python scripts/package.py'
+          )
+          Set-Content -Path 'build-aura-ci.cmd' -Value ($commands -join "`r`nif errorlevel 1 exit /b 1`r`n")
+          cmd /c build-aura-ci.cmd
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-FileHash artifacts/aura2-windows64.zip -Algorithm SHA256 | ForEach-Object {
+            "$($_.Hash.ToLower())  aura2-windows64.zip" | Set-Content artifacts/aura2-windows64.zip.sha256
+          }
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: aura-windows-x64
+          path: |
+            artifacts/aura2-windows64.zip
+            artifacts/aura2-windows64.zip.sha256
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-test-diagnostics
+          path: |
+            artifacts/windows-smoke/
+            build/windows-x64-release/Testing/Temporary/
+            build/windows-x64-release/vcpkg-manifest-install.log

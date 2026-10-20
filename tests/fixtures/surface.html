@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Chromium OSR / live test surface</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f7f8fb;color:#1b2437;font:14px system-ui,sans-serif;padding:40px}
+.eyebrow{color:#64748b;font-size:11px;letter-spacing:2px}h1{font-size:36px;letter-spacing:-1.5px;margin:18px 0 12px}
+p{max-width:540px;color:#64748b;line-height:1.7}.grid{display:flex;gap:12px;margin:30px 0}.card{padding:22px;border:1px solid #e3e7ef;border-radius:16px;background:white;flex:1}.card b{display:block;margin-bottom:8px}.card small{color:#64748b}
+input,select{border:1px solid #cbd5e1;border-radius:10px;background:white;padding:12px;font:inherit}input{width:65%;margin-right:10px}canvas{width:100%;height:56px;display:block;margin-top:24px}.footer{font-size:11px;color:#64748b;margin-top:16px}
+</style>
+<div class="eyebrow">CHROMIUM / REAL WEB CONTENT</div>
+<h1>This is a live browser surface.</h1>
+<p>This document is served by the local integration-test server and rendered by Chromium.
+The surrounding Aura interface is drawn separately in C++ with Skia.</p>
+<div class="grid"><div class="card"><b>Blink + V8</b><small>HTML, CSS and JavaScript</small></div><div class="card"><b>Off-screen rendering</b><small>Owned frame buffers</small></div><div class="card"><b>Native composition</b><small>Skia draws the shell</small></div></div>
+<input aria-label="IME test" placeholder="Type here / Кириллица / 日本語"><select aria-label="Popup test"><option>Popup test</option><option>Second option</option><option>Third option</option></select>
+<canvas width="1000" height="80" aria-label="Animated frame probe"></canvas>
+<div class="footer" id="counter">Waiting for the next Chromium frame...</div>
+<script>
+const canvas=document.querySelector('canvas'),ctx=canvas.getContext('2d');let frames=0,lastReport='';
+document.querySelector('input').addEventListener('input',event=>{document.title='Chromium OSR / input: '+event.target.value});
+function draw(t){frames++;ctx.clearRect(0,0,1000,80);ctx.fillStyle='#e7ebf4';ctx.fillRect(0,38,1000,2);ctx.fillStyle='#7c83e8';ctx.beginPath();ctx.arc(30+(t/8)%940,39,9,0,Math.PI*2);ctx.fill();document.querySelector('#counter').textContent='JavaScript animation frame '+frames+' / '+navigator.userAgent;const report=document.documentElement.getAttribute('data-aura-mv3');if(report&&report!==lastReport){console.log('AURA_MV3_PROBE:'+report);lastReport=report}requestAnimationFrame(draw)}requestAnimationFrame(draw);
+</script></html>

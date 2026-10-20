@@ -1,0 +1,10 @@
+
+# Aura's application loads ANGLE directly; Skia's test-tool dependencies are disabled.
+if (skia_use_angle) {
+  group("aura_angle") {
+    deps = [
+      "//third_party/externals/angle2:libEGL",
+      "//third_party/externals/angle2:libGLESv2",
+    ]
+  }
+}

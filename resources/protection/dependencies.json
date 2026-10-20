@@ -1,0 +1,30 @@
+{
+  "vendor/darkreader.js": {
+    "url": "https://unpkg.com/darkreader@4.9.133/darkreader.js",
+    "sha256": "82619e7a0bcabbea15a91488bc74fd0f9ba8f8f2a1cc67527f78166037cce166"
+  },
+  "vendor/darkreader-LICENSE": {
+    "url": "https://unpkg.com/darkreader@4.9.133/LICENSE",
+    "sha256": "f0a5f835174494f8981b2cbb1a34054d4f887a5c865318650d6a17afe1c7850e"
+  },
+  "vendor/adblock-LICENSE": {
+    "url": "https://raw.githubusercontent.com/brave/adblock-rust/master/LICENSE",
+    "sha256": "3f3d9e0024b1921b067d6f7f88deb4a60cbe7a78e76c64e3f1d7fc3b779b9d04"
+  },
+  "protection/easylist.txt": {
+    "url": "https://raw.githubusercontent.com/easylist/easylist/gh-pages/easylist.txt",
+    "sha256": "9e11172924bdef3a7080e16e05e350fd75535b6e77cf8240378c91b13b933ebd",
+    "license": "GPL-3.0-or-later OR CC-BY-SA-3.0-or-later",
+    "attribution": "The EasyList authors (https://easylist.to/)"
+  },
+  "protection/easyprivacy.txt": {
+    "url": "https://raw.githubusercontent.com/easylist/easylist/gh-pages/easyprivacy.txt",
+    "sha256": "51d96d3377b7d9d0a22e2633211a0783cec57214c5ecc824e9d7d41f50f5fed2",
+    "license": "GPL-3.0-or-later OR CC-BY-SA-3.0-or-later",
+    "attribution": "The EasyList authors (https://easylist.to/)"
+  },
+  "vendor/easylist-GPL-3.0.txt": {
+    "url": "https://www.gnu.org/licenses/gpl-3.0.txt",
+    "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+  }
+}

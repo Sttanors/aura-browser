@@ -1,0 +1,6 @@
+Dark Reader 4.9.133 — MIT, https://github.com/darkreader/darkreader
+Brave adblock-rust 0.13.3 — MPL-2.0, https://crates.io/crates/adblock/0.13.3
+EasyList and EasyPrivacy — The EasyList authors (https://easylist.to/).
+Unmodified bundled snapshots. GPL-3.0-or-later OR CC-BY-SA-3.0-or-later.
+License policy: https://easylist.to/pages/licence.html
+Rust dependency sources: cargo build --locked fetches the exact Cargo.lock versions.
