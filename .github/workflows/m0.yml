@@ -40,7 +40,9 @@ jobs:
             ~/AppData/Local/vcpkg/archives
           key: windows-deps-${{ hashFiles('third_party/dependencies.lock.json', 'scripts/build_skia.py', 'third_party/patches/*', 'core/adblock/Cargo.lock', 'vcpkg.json') }}
           # Migrate the completed dependency cache from the initial build.
-          restore-keys: windows-x64-${{ hashFiles('third_party/dependencies.lock.json', 'scripts/build_skia.py', 'third_party/patches/*', 'core/adblock/Cargo.lock', 'vcpkg.json') }}-cae1f82a36c9ee2182baa767d6bb69ab0eb3caac
+          restore-keys: |
+            windows-x64-${{ hashFiles('third_party/dependencies.lock.json', 'scripts/build_skia.py', 'third_party/patches/*', 'core/adblock/Cargo.lock', 'vcpkg.json') }}-cae1f82a36c9ee2182baa767d6bb69ab0eb3caac
+            windows-deps-
       - name: Prepare Rust and vcpkg
         shell: pwsh
         run: |

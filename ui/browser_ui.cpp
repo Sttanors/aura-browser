@@ -294,11 +294,13 @@ Rect BrowserUi::panel_bounds() const {
     const int w = std::min(panel_ == Settings     ? 1000
                            : panel_ == Extensions ? 900
                            : panel_ == Shortcuts  ? 900
+                           : panel_ == Import     ? 900
                                                   : 660,
                            r.width - 24);
     const int h = std::min(panel_ == Settings     ? 760
                            : panel_ == Extensions ? 700
                            : panel_ == Shortcuts  ? 700
+                           : panel_ == Import     ? 700
                                                   : 580,
                            height_ - 124);
     return {r.x + (r.width - w) / 2, std::max(100, (height_ - h) / 2), w, h};
@@ -640,7 +642,7 @@ void BrowserUi::draw(SkCanvas &c) {
                                       app_.tr("Downloads"),
                                       app_.tr("Settings"),
                                       app_.tr("Extensions"),
-                                      app_.tr("Quick links"), app_.tr("About Aura and updates")};
+                                      app_.tr("Quick links"), app_.tr("About Aura and updates"), app_.tr("Import browser data")};
         label(c, medium_, titles[panel_], r.x + 28, r.y + 47, 23, ink);
         icon(c, "close", r.x + r.width - 43, r.y + 26, 19, muted);
         if (panel_ == History || panel_ == Bookmarks) {
@@ -730,6 +732,8 @@ void BrowserUi::draw(SkCanvas &c) {
             draw_shortcuts(c, r);
         if (panel_ == Updates)
             draw_updates(c, r);
+        if (panel_ == Import)
+            draw_import(c, r);
     }
 
     if (editing) {
@@ -808,7 +812,7 @@ void BrowserUi::draw(SkCanvas &c) {
                 if (inside(row, hover_x_, hover_y_) && item.enabled)
                     fill(c, row, 7, SkColorSetA(t.accent, 28));
                 label(c, regular_, item.label, row.x + 13, row.y + 21, 12,
-                      item.enabled ? ink : muted);
+                      item.enabled ? ink : muted, row.width - 26);
             }
         }
     }
@@ -1212,14 +1216,25 @@ bool BrowserUi::import_wallpaper(const std::string &value) {
     return true;
 }
 void BrowserUi::choose_wallpaper() {
+    choose_file(false);
+}
+void BrowserUi::choose_file(bool for_import) {
+    if (for_import && app_.importer.busy)
+        return;
+    const auto error_text = for_import ? "Could not open the file chooser. Paste a file path instead."
+                                      : "Could not open the image chooser. Paste a file path instead.";
 #ifdef _WIN32
     std::wstring file(32768, L'\0');
-    const auto title = CefString(app_.tr("Choose background image")).ToWString();
+    const auto title = CefString(app_.tr(for_import ? "Choose browser data" : "Choose background image")).ToWString();
     const auto initial = app_.profile.directory.wstring();
     OPENFILENAMEW dialog{};
     dialog.lStructSize = sizeof(dialog);
     dialog.hwndOwner = app_.window->handle();
-    dialog.lpstrFilter = L"PNG / JPEG\0*.png;*.jpg;*.jpeg\0\0";
+    dialog.lpstrFilter = for_import
+        ? (app_.profile.language == "ru"
+            ? L"Данные браузера\0*.html;*.htm;*.json;*.sqlite;History;Bookmarks\0Все файлы\0*.*\0\0"
+            : L"Browser data\0*.html;*.htm;*.json;*.sqlite;History;Bookmarks\0All files\0*.*\0\0")
+        : L"PNG / JPEG\0*.png;*.jpg;*.jpeg\0\0";
     dialog.lpstrFile = file.data();
     dialog.nMaxFile = static_cast<DWORD>(file.size());
     dialog.lpstrTitle = title.c_str();
@@ -1227,16 +1242,20 @@ void BrowserUi::choose_wallpaper() {
     dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_EXPLORER;
     if (GetOpenFileNameW(&dialog)) {
         file.resize(wcslen(file.c_str()));
-        if (!import_wallpaper(utf8_path(std::filesystem::path(file)))) toast(app_.tr(wallpaper_error_));
+        if (for_import) {
+            import_input_.set(utf8_path(std::filesystem::path(file)));
+            import_input_focus_ = false;
+            app_.importer.preview(import_input_.value);
+        } else if (!import_wallpaper(utf8_path(std::filesystem::path(file)))) toast(app_.tr(wallpaper_error_));
     } else if (CommDlgExtendedError())
-        toast(app_.tr("Could not open the image chooser. Paste a file path instead."));
+        toast(app_.tr(error_text));
     app_.changed();
 #else
     if (picker_pid_ > 0)
         return;
     int pipes[2];
     if (pipe2(pipes, O_CLOEXEC | O_NONBLOCK)) {
-        toast(app_.tr("Could not open the image chooser. Paste a file path instead."));
+        toast(app_.tr(error_text));
         return;
     }
     std::vector<std::string> args = {
@@ -1248,8 +1267,10 @@ void BrowserUi::choose_wallpaper() {
         "zenity",
         "--file-selection",
         "--modal",
-        "--title=" + app_.tr("Choose background image"),
-        "--file-filter=PNG / JPEG | *.png *.PNG *.jpg *.JPG *.jpeg *.JPEG",
+        "--title=" + app_.tr(for_import ? "Choose browser data" : "Choose background image"),
+        for_import ? "--file-filter=" + app_.tr("Browser data") + " | *.html *.htm *.json *.sqlite History Bookmarks" :
+                     "--file-filter=PNG / JPEG | *.png *.PNG *.jpg *.JPG *.jpeg *.JPEG",
+        "--file-filter=" + app_.tr("All files") + " | *",
         "--filename=" + utf8_path(app_.profile.directory) + "/"};
     std::vector<char *> argv;
     for (auto &s : args)
@@ -1266,10 +1287,11 @@ void BrowserUi::choose_wallpaper() {
     close(pipes[1]);
     if (status) {
         close(pipes[0]);
-        toast(app_.tr("Could not open the image chooser. Paste a file path instead."));
+        toast(app_.tr(error_text));
         return;
     }
     picker_pid_ = child;
+    picker_import_ = for_import;
     picker_fd_ = pipes[0];
     picker_output_.clear();
     settings_edit_.clear();
@@ -1299,11 +1321,18 @@ void BrowserUi::poll_wallpaper_picker() {
         while (!picker_output_.empty() &&
                (picker_output_.back() == '\n' || picker_output_.back() == '\r'))
             picker_output_.pop_back();
-        if (!picker_output_.empty() && !import_wallpaper(picker_output_))
-            toast(app_.tr(wallpaper_error_));
+        if (!picker_output_.empty()) {
+            if (picker_import_) {
+                import_input_.set(picker_output_);
+                import_input_focus_ = false;
+                app_.importer.preview(picker_output_);
+            } else if (!import_wallpaper(picker_output_))
+                toast(app_.tr(wallpaper_error_));
+        }
         settings_error_.clear();
     } else if (!WIFEXITED(status) || WEXITSTATUS(status) != 1)
-        toast(app_.tr("Could not open the image chooser. Paste a file path instead."));
+        toast(app_.tr(picker_import_ ? "Could not open the file chooser. Paste a file path instead."
+                                   : "Could not open the image chooser. Paste a file path instead."));
     picker_output_.clear();
     app_.changed();
 #endif
@@ -1550,6 +1579,134 @@ std::string BrowserUi::updates_report() const {
     }
     return out + "]}";
 }
+void BrowserUi::draw_import(SkCanvas &c, Rect r) {
+    const auto &t = interface_theme(app_.profile);
+    auto &importer = app_.importer;
+    label(c, regular_, "HTML / JSON · Firefox places.sqlite · Chromium History", r.x + 28, r.y + 88, 12, t.muted, r.width - 56);
+    Rect input{r.x + 28, r.y + 108, r.width - 172, 36};
+    if (!importer.busy) focus_target(input);
+    fill(c, input, 9, SkColorSetA(t.text, 7));
+    border(c, input, 9, import_input_focus_ ? t.accent : SkColorSetA(t.muted, 190));
+    if (import_input_.value.empty() && !import_input_focus_)
+        label(c, regular_, app_.tr("Paste a file path or choose Browse"), input.x + 12, input.y + 24, 12, t.muted, input.width - 24);
+    else
+        draw_editor(c, import_input_, {input.x + 10, input.y + 2, input.width - 20, 32}, 12, import_input_focus_);
+    auto button = [&](Rect b, const std::string &text, bool enabled) {
+        if (enabled) focus_target(b);
+        fill(c, b, 9, SkColorSetA(t.accent, enabled && inside(b, hover_x_, hover_y_) ? 30 : 12));
+        border(c, b, 9, SkColorSetA(t.muted, enabled ? 180 : 60));
+        centered_label(c, medium_, app_.tr(text), b, 12, enabled ? t.text : t.muted, 10, 10);
+    };
+    button({r.x + r.width - 132, r.y + 108, 104, 36}, "Browse", !importer.busy);
+    button({r.x + 28, r.y + 162, 200, 36}, importer.busy ? "Cancel" : "Preview import", importer.busy || !import_input_.value.empty());
+    button({r.x + 244, r.y + 162, 220, 36}, "Detected profiles", !importer.busy);
+    label(c, regular_, app_.tr(importer.status), r.x + 28, r.y + 225, 12, t.muted, r.width - 56);
+    if (auto data = importer.candidate.get()) {
+        label(c, medium_, app_.tr(data->source), r.x + 28, r.y + 257, 15, t.text, r.width - 56);
+        label(c, regular_, data->limited ? app_.tr("This is a partial preview of a large data set.") :
+              app_.tr("Skipped or duplicate records: ") + std::to_string(data->skipped + data->duplicates),
+              r.x + 28, r.y + 283, 12, t.muted, r.width - 56);
+        auto check = [&](int row, const std::string &title, size_t count, bool selected) {
+            Rect b{r.x + 28, r.y + 302 + row * 40, r.width - 56, 32};
+            if (count) focus_target(b);
+            fill(c, {b.x, b.y + 6, 20, 20}, 5, SkColorSetA(t.accent, selected && count ? 45 : 10));
+            border(c, {b.x, b.y + 6, 20, 20}, 5, SkColorSetA(t.muted, count ? 190 : 70));
+            if (selected && count) icon(c, "check", b.x + 4, b.y + 10, 12, t.accent);
+            label(c, regular_, app_.tr(title) + " · " + std::to_string(count), b.x + 32, b.y + 23, 13, count ? t.text : t.muted, b.width - 32);
+        };
+        check(0, "Bookmarks", data->bookmarks.size(), import_bookmarks_);
+        check(1, "History", data->history.size(), import_history_);
+        label(c, regular_, app_.tr("History limit: ") + std::to_string(app_.profile.history_limit),
+              r.x + 28, r.y + 393, 12, t.muted, r.width - 56);
+        if (r.height >= 620) {
+            label(c, medium_, app_.tr("Sample addresses"), r.x + 28, r.y + 431, 12, t.text);
+            const auto &values = import_bookmarks_ && !data->bookmarks.empty() ? data->bookmarks : data->history;
+            for (size_t i = 0; i < std::min<size_t>(3, values.size()); ++i)
+                label(c, regular_, values[i].title + " · " + values[i].url, r.x + 28, r.y + 458 + i * 25, 12, t.muted, r.width - 56);
+        }
+    } else if (importer.result) {
+        const auto &result = *importer.result;
+        const std::pair<std::string, size_t> counts[] = {
+            {"Bookmarks added: ", result.bookmarks_added}, {"History entries added: ", result.history_added},
+            {"Duplicate records: ", result.duplicates}, {"Excluded by history limits: ", result.history_limited}};
+        for (size_t i = 0; i < std::size(counts); ++i)
+            label(c, regular_, app_.tr(counts[i].first) + std::to_string(counts[i].second),
+                  r.x + 28, r.y + 265 + int(i) * 28, 13, t.text, r.width - 56);
+    }
+    const bool selected = importer.candidate &&
+        ((import_bookmarks_ && !importer.candidate->bookmarks.empty()) || (import_history_ && !importer.candidate->history.empty()));
+    button({r.x + 28, r.y + r.height - 82, 240, 36}, "Import selected data", selected && !importer.busy);
+    if (importer.result && !importer.result->backup.empty())
+        button({r.x + r.width - 256, r.y + r.height - 82, 228, 36}, "Show backup folder", true);
+    label(c, regular_, app_.tr("Bookmarks use a flat list. History keeps your current limits."),
+          r.x + 28, r.y + r.height - 22, 11, t.muted, r.width - 56);
+}
+void BrowserUi::import_pointer(Rect r, int x, int y) {
+    auto &importer = app_.importer;
+    import_input_focus_ = false;
+    if (!importer.busy && inside({r.x + 28, r.y + 108, r.width - 172, 36}, x, y)) {
+        import_input_focus_ = true;
+        app_.window->caret(x, y + 24);
+    } else if (!importer.busy && inside({r.x + r.width - 132, r.y + 108, 104, 36}, x, y))
+        choose_file(true);
+    else if (!importer.busy && inside({r.x + 244, r.y + 162, 220, 36}, x, y)) {
+        auto sources = discover_browser_imports(browser_import_roots());
+        if (sources.empty()) {
+            toast(app_.tr("No browser profiles found. Choose a file instead."));
+        } else {
+            app_.close_menu();
+            app_.menu_x = r.x + 244;
+            app_.menu_y = r.y + 204;
+            const int limit = std::clamp((height_ - app_.menu_y - 22) / 32, 1, 12);
+            for (size_t i = 0; i < std::min<size_t>(sources.size(), limit); ++i)
+                app_.menu.push_back({int(i + 1), sources[i].label});
+            app_.menu_action = [this, sources](int id) {
+                if (id < 1 || static_cast<size_t>(id) > sources.size()) return;
+                import_input_.set(utf8_path(sources[id - 1].path));
+                app_.importer.preview(import_input_.value);
+                app_.changed();
+            };
+        }
+    } else if (inside({r.x + 28, r.y + 162, 200, 36}, x, y)) {
+        if (importer.busy) importer.cancel();
+        else if (!import_input_.value.empty()) importer.preview(import_input_.value);
+    } else if (importer.candidate && !importer.busy) {
+        if (!importer.candidate->bookmarks.empty() && inside({r.x + 28, r.y + 302, r.width - 56, 32}, x, y))
+            import_bookmarks_ = !import_bookmarks_;
+        else if (!importer.candidate->history.empty() && inside({r.x + 28, r.y + 342, r.width - 56, 32}, x, y))
+            import_history_ = !import_history_;
+        else if (inside({r.x + 28, r.y + r.height - 82, 240, 36}, x, y)) {
+            importer.apply(app_.profile, import_bookmarks_, import_history_);
+            app_.changed();
+        }
+    } else if (importer.result && !importer.result->backup.empty() &&
+               inside({r.x + r.width - 256, r.y + r.height - 82, 228, 36}, x, y))
+        app_.open_directory(importer.result->backup);
+    app_.changed();
+}
+std::string BrowserUi::import_report() const {
+    if (panel_ != Import) return "null";
+    const auto r = panel_bounds();
+    auto rect = [](Rect b) { return "[" + std::to_string(b.x) + "," + std::to_string(b.y) + "," + std::to_string(b.width) + "," + std::to_string(b.height) + "]"; };
+    auto &importer = app_.importer;
+    std::string out = "{\"input\":" + rect({r.x + 28, r.y + 108, r.width - 172, 36}) +
+        ",\"browse\":" + rect({r.x + r.width - 132, r.y + 108, 104, 36}) +
+        ",\"preview\":" + rect({r.x + 28, r.y + 162, 200, 36}) +
+        ",\"profiles\":" + rect({r.x + 244, r.y + 162, 220, 36}) +
+        ",\"bookmarks\":" + rect({r.x + 28, r.y + 302, r.width - 56, 32}) +
+        ",\"history\":" + rect({r.x + 28, r.y + 342, r.width - 56, 32}) +
+        ",\"apply\":" + rect({r.x + 28, r.y + r.height - 82, 240, 36}) +
+        ",\"path\":" + json_quote(import_input_.value) + ",\"status\":" + json_quote(importer.status) +
+        ",\"busy\":" + (importer.busy ? "true" : "false") +
+        ",\"preview_bookmarks\":" + std::to_string(importer.candidate ? importer.candidate->bookmarks.size() : 0) +
+        ",\"preview_history\":" + std::to_string(importer.candidate ? importer.candidate->history.size() : 0) +
+        ",\"ready\":" + (importer.candidate ? "true" : "false");
+    if (importer.result)
+        out += ",\"result\":{\"bookmarks\":" + std::to_string(importer.result->bookmarks_added) +
+            ",\"history\":" + std::to_string(importer.result->history_added) +
+            ",\"backup\":" + json_quote(utf8_path(importer.result->backup)) + "}";
+    return out + "}";
+}
 std::vector<BrowserUi::SettingsRow> BrowserUi::settings_rows(Rect panel) const {
     std::vector<SettingsRow> rows;
     const auto query = fold_settings(settings_search_.value);
@@ -1582,7 +1739,9 @@ std::vector<BrowserUi::SettingsRow> BrowserUi::settings_rows(Rect panel) const {
     }
     const struct {
         const char *id, *section, *title, *description;
-    } actions[] = {{"updates", "General", "About Aura and updates",
+    } actions[] = {{"import", "Data", "Import browser data",
+                    "Preview bookmarks and history from Firefox, Chrome or an HTML export."},
+                   {"updates", "General", "About Aura and updates",
                     "View your version and check for verified browser updates."},
                    {"shortcuts", "Start page", "Manage quick links",
                     "Add, edit, remove and reorder your shortcuts."},
@@ -1879,6 +2038,8 @@ void BrowserUi::settings_pointer(Rect r, int x, int y) {
                     open_shortcuts();
                 else if (row.action == "updates")
                     panel(Updates);
+                else if (row.action == "import")
+                    panel(Import);
                 else if (row.action == "wallpaper_clear")
                     import_wallpaper("");
                 else if (row.action == "extensions")
@@ -2021,6 +2182,7 @@ void BrowserUi::panel(Panel value) {
     }
     settings_search_focus_ = false;
     settings_edit_.clear();
+    import_input_focus_ = false;
     app_.changed();
 }
 void BrowserUi::commit_address() {
@@ -2069,6 +2231,8 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
                 live = target;
             else if (panel_ == Extensions && target == &extension_input_ && extension_input_focus_)
                 live = &extension_input_;
+            else if (panel_ == Import && target == &import_input_ && import_input_focus_ && !app_.importer.busy)
+                live = &import_input_;
             else if (!app_.dialogs.empty() && target == &app_.dialogs.front().input)
                 live = target;
             if (live && !text.empty())
@@ -2077,6 +2241,10 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
                 app_.find_text(find.value);
             if (live == &settings_search_)
                 settings_scroll_ = 0;
+            if (live == &import_input_) {
+                app_.importer.candidate.reset();
+                app_.importer.result.reset();
+            }
             app_.changed();
         });
     } else if (code == 0x08)
@@ -2122,6 +2290,7 @@ bool BrowserUi::key(const CefKeyEvent &key) {
         }
         settings_search_focus_ = false;
         extension_input_focus_ = false;
+        import_input_focus_ = false;
         shortcut_focus_ = -1;
         if (auto tab = app_.current(); tab && tab->browser)
             tab->browser->GetHost()->SetFocus(false);
@@ -2137,7 +2306,7 @@ bool BrowserUi::key(const CefKeyEvent &key) {
     }
     if (!app_.extension_popup && down && keyboard_focus_ >= 0 &&
         keyboard_focus_ < int(focus_targets_.size()) && (code == 0x0D || code == 0x20) &&
-        !settings_search_focus_ && settings_edit_.empty() && !extension_input_focus_ &&
+        !settings_search_focus_ && settings_edit_.empty() && !extension_input_focus_ && !import_input_focus_ &&
         shortcut_focus_ < 0 && !editing) {
         const auto r = focus_targets_[keyboard_focus_];
         const int previous = keyboard_focus_;
@@ -2198,6 +2367,29 @@ bool BrowserUi::key(const CefKeyEvent &key) {
             }
             if (!ctrl || (code != 'L' && code != 'T' && code != 'W' && code != 'Q')) {
                 editor_key(shortcut_focus_ == 0 ? shortcut_title_ : shortcut_url_, key);
+                app_.changed();
+                return code < 0x20 || ctrl || (code >= 0x21 && code <= 0x2E);
+            }
+        }
+        if (panel_ == Import && import_input_focus_) {
+            if (code == 0x1B) {
+                import_input_focus_ = false;
+                app_.changed();
+                return true;
+            }
+            if (code == 0x0D) {
+                app_.importer.preview(import_input_.value);
+                import_input_focus_ = false;
+                app_.changed();
+                return true;
+            }
+            if (!ctrl || (code != 'L' && code != 'T' && code != 'W' && code != 'Q')) {
+                const auto before = import_input_.value;
+                editor_key(import_input_, key);
+                if (before != import_input_.value) {
+                    app_.importer.candidate.reset();
+                    app_.importer.result.reset();
+                }
                 app_.changed();
                 return code < 0x20 || ctrl || (code >= 0x21 && code <= 0x2E);
             }
@@ -2503,6 +2695,12 @@ void BrowserUi::text(const std::string &value) {
     } else if (panel_ == Shortcuts) {
         if (shortcut_focus_ >= 0)
             (shortcut_focus_ == 0 ? shortcut_title_ : shortcut_url_).insert(clean);
+    } else if (panel_ == Import) {
+        if (import_input_focus_ && !app_.importer.busy) {
+            import_input_.insert(clean);
+            app_.importer.candidate.reset();
+            app_.importer.result.reset();
+        }
     } else if (panel_ == Extensions) {
         if (extension_input_focus_)
             extension_input_.insert(clean);
@@ -2765,6 +2963,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                 shortcuts_pointer(r, x, y);
             else if (panel_ == Updates)
                 updates_pointer(r, x, y);
+            else if (panel_ == Import)
+                import_pointer(r, x, y);
         }
         return;
     }

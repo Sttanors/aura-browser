@@ -15,7 +15,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 NATIVE = ROOT/'packaging/linux/native'
-ARCH_DEPENDS = ['glibc>=2.38','gcc-libs','openssl','libarchive','libx11','libxext',
+ARCH_DEPENDS = ['glibc>=2.38','gcc-libs','openssl','libarchive','sqlite','libx11','libxext',
     'libxpresent','libxrandr','libxcomposite','libxdamage','libxfixes','libxcb',
     'libxkbcommon','wayland','libglvnd','mesa','nss','nspr','glib2','at-spi2-core',
     'dbus','libcups','cairo','pango','alsa-lib','expat','ca-certificates','xdg-utils']

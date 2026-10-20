@@ -114,7 +114,7 @@ searchable by English or Russian names/descriptions. **Ctrl F** focuses settings
 | Permissions | Popups, JS dialogs, notifications, location, camera, microphone, clipboard, MIDI, sensors |
 | Downloads | Folder, filename prompt, date suffix, panel visibility/closing, notifications |
 | Protection | Ad/tracker blocking, cosmetic filters, Dark Reader, brightness/contrast/sepia, exceptions, extensions |
-| Data | Clear history, cookies, network cache; reset settings |
+| Data | Import bookmarks/history, clear history/cookies/cache, reset settings |
 | Start page | Scale 50–200%, width/background, greeting, logo, clock, wallpaper/palette, link columns/layout |
 
 Settings save automatically. Interface scale updates tabs, panels, controls and extension popups immediately.
@@ -126,6 +126,11 @@ History supports 100–10,000 entries and retention until cleared, 7/30/90 days 
 Disabling history does not erase existing entries. Clearing cookies signs you out of websites.
 Resetting settings retains history, bookmarks and downloads. Clear-on-exit requires normal shutdown.
 DNT requests cooperation from websites; it does not itself block tracking.
+
+**Data → Import browser data** previews Firefox/Chromium profiles, Chromium JSON
+bookmarks and HTML exports. Select bookmarks/history before applying; a profile
+backup is saved first. See [supported formats, limits and restoration](docs/importing-browser-data.md).
+This feature is in the current source; existing Preview 3.1 installers predate it.
 
 ### Start page
 
@@ -229,7 +234,7 @@ Clearing Aura history does not clear CEF cookies/site data. Private CEF contexts
 
 Requirements: C++20 Clang, CMake 3.31+, Python 3.12+, pkg-config, X11/EGL/GLES3,
 Xext/Xpresent/Xrandr and wayland-client development headers, Rust/Cargo 1.88+,
-OpenSSL/libarchive headers and your distribution's CEF runtime dependencies.
+OpenSSL/libarchive/SQLite3 headers and your distribution's CEF runtime dependencies.
 Bootstrap downloads GN/Ninja and locked dependencies, but does not install system packages.
 Allow several GB of disk space. URLs/checksums are pinned in `third_party/dependencies.lock.json`;
 Cargo dependencies are pinned in `core/adblock/Cargo.lock`.
@@ -262,7 +267,7 @@ ctest --preset windows-x64-release
 python scripts/package.py
 ```
 
-OpenSSL/libarchive use vcpkg's static CRT triplet. Chromium sandbox is enabled.
+OpenSSL/libarchive/SQLite3 use vcpkg's static CRT triplet. Chromium sandbox is enabled.
 `aura_browser.exe` is the CEF sandbox bootstrap and loads `aura_browser.dll`; both are required.
 Use `./run.ps1` to launch the source build from PowerShell.
 The optional legacy GPU harness requires bootstrap `--diagnostic-angle` and CMake

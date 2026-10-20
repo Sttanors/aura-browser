@@ -8,7 +8,7 @@
 namespace aura {
 class BrowserUi {
   public:
-    enum Panel { None, Bookmarks, History, Downloads, Settings, Extensions, Shortcuts, Updates };
+    enum Panel { None, Bookmarks, History, Downloads, Settings, Extensions, Shortcuts, Updates, Import };
     BrowserUi(BrowserController &owner, const std::filesystem::path &font);
     ~BrowserUi();
     void draw(SkCanvas &canvas);
@@ -29,6 +29,7 @@ class BrowserUi {
     std::string shortcuts_report() const;
     std::string settings_report() const;
     std::string updates_report() const;
+    std::string import_report() const;
     std::string extensions_report() const;
     std::string extension_popup_report() const;
     std::string extension_toolbar_report() const;
@@ -53,6 +54,8 @@ class BrowserUi {
     int settings_section_ = 0, settings_scroll_ = 0;
     TextEditor settings_search_, settings_text_, extension_input_;
     bool extension_input_focus_ = false;
+    TextEditor import_input_;
+    bool import_input_focus_ = false, import_bookmarks_ = true, import_history_ = true;
     bool settings_search_focus_ = false;
     std::string settings_edit_, settings_error_;
     struct SettingsRow {
@@ -103,6 +106,8 @@ class BrowserUi {
     void ensure_wallpaper();
     bool import_wallpaper(const std::string &path);
     void choose_wallpaper();
+    void choose_file(bool for_import);
+    bool picker_import_ = false;
     void poll_wallpaper_picker();
     int start_scroll_ = 0, start_tab_ = -1, start_zoom_ = 100;
     StartPageLayout start_page_layout() const;
@@ -112,6 +117,8 @@ class BrowserUi {
     void draw_settings(SkCanvas &canvas, Rect panel);
     void draw_updates(SkCanvas &canvas, Rect panel);
     void updates_pointer(Rect panel, int x, int y);
+    void draw_import(SkCanvas &canvas, Rect panel);
+    void import_pointer(Rect panel, int x, int y);
     void settings_pointer(Rect panel, int x, int y);
     int choice_columns(const SettingSpec &spec, Rect row) const;
     Rect setting_choice(const SettingSpec &spec, Rect row, int index) const;

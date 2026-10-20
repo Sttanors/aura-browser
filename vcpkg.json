@@ -2,5 +2,5 @@
   "name": "aura-browser",
   "version-string": "0.2.0",
   "builtin-baseline": "469a0504e4a6ebf6173d1c0f51a7fa34c382fd43",
-  "dependencies": ["openssl", "libarchive"]
+  "dependencies": ["openssl", "libarchive", "sqlite3"]
 }

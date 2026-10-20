@@ -6,6 +6,7 @@
 #include "core/browser/profile.hpp"
 #include "core/browser/protection.hpp"
 #include "core/browser/updates.hpp"
+#include "core/browser/imports.hpp"
 #include "core/cef/diagnostic_client.hpp"
 #include "include/cef_context_menu_handler.h"
 #include "include/cef_download_handler.h"
@@ -88,6 +89,7 @@ class BrowserController {
     std::map<std::string, int> audit;
     ExtensionManager extensions;
     UpdateManager updates;
+    BrowserImporter importer;
     bool install_update_on_exit = false;
     std::shared_ptr<ExtensionPopup> extension_popup;
     std::filesystem::path resources;
@@ -133,6 +135,7 @@ class BrowserController {
                         const std::string &suggested);
     void download_action(std::size_t index, bool cancel);
     void open_folder();
+    void open_directory(const std::filesystem::path &directory);
     std::string tr(std::string_view english) const;
     void apply_settings(bool update_zoom = false);
     void configure_font_preferences(CefRefPtr<CefRequestContext> context);

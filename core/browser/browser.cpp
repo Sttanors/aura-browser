@@ -266,6 +266,8 @@ void BrowserController::defer(std::function<void()> action) {
 void BrowserController::tick() {
     if (background_updates_ && profile.check_updates && updates.due())
         updates.check();
+    if (importer.tick())
+        changed();
     const int rate = window->refresh_rate();
     if (rate != browser_frame_rate_) {
         browser_frame_rate_ = rate;
@@ -693,6 +695,7 @@ bool BrowserController::finished() {
     return browsers_closed && data_tasks_ == 0;
 }
 void BrowserController::prepare_shutdown() {
+    importer.shutdown();
     updates.shutdown();
     extensions.shutdown();
     closing_popups_.clear();
@@ -742,6 +745,7 @@ std::string BrowserController::report() const {
         << ",\"start_page\":" << ui->start_page_report()
         << ",\"settings_ui\":" << ui->settings_report()
         << ",\"updates_ui\":" << ui->updates_report()
+        << ",\"import_ui\":" << ui->import_report()
         << ",\"updates\":{\"busy\":" << (updates.busy() ? "true" : "false")
         << ",\"status\":" << json_quote(updates.status)
         << ",\"installation\":" << json_quote(updates.installation_kind())
@@ -1013,12 +1017,15 @@ void BrowserController::clear_data(const std::string &kind) {
     }
 }
 void BrowserController::open_folder() {
-    const auto path = utf8_path(downloads_directory());
-    std::filesystem::create_directories(path_from_utf8(path));
+    std::filesystem::create_directories(downloads_directory());
+    open_directory(downloads_directory());
+}
+void BrowserController::open_directory(const std::filesystem::path &directory) {
+    const auto path = utf8_path(directory);
 #ifdef _WIN32
     const auto folder = path_from_utf8(path).wstring();
     if (reinterpret_cast<INT_PTR>(ShellExecuteW(window->handle(), L"open", folder.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
-        ui->toast(tr("Could not open the downloads folder"));
+        ui->toast(tr("Could not open the folder"));
 #else
     pid_t child{};
     char command[] = "xdg-open";
@@ -1030,7 +1037,7 @@ void BrowserController::open_folder() {
             }
         }).detach();
     else
-        ui->toast(tr("Could not open the downloads folder"));
+        ui->toast(tr("Could not open the folder"));
 #endif
 }
 } // namespace aura
