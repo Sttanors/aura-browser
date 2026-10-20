@@ -58,3 +58,16 @@ Linux and Windows build/integration checks. It does not silently replace CEF bin
 The first published signed channel, real old-to-new upgrades, Windows installer
 launch/closure and package-manager upgrades must be recorded in the progress journal.
 They must not be represented as passing merely because unit tests passed.
+
+## Reproduce the Linux installed-upgrade test
+
+With the current signed release metadata in `artifacts/channel-current` and its
+verified portable archive in `artifacts/aura2-linux64.zip`, run
+`python scripts/prepare_update_journey.py`, then
+`python scripts/verify_browser.py --suite=update-install`.
+The preparation builds an isolated copy with sequence N−1 and the same public key;
+it does not change repository sources or copy private signing material. The test
+installs into its own HOME under `artifacts/updates-journey`, uses a private CPU
+display, downloads the actual signed `.run` and checks replacement and profile
+retention. This is a synthetic previous-version fixture, not a claim that historical
+updater-less releases can update themselves.

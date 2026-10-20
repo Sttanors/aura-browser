@@ -85,7 +85,23 @@ def main():
             key_at(window, 'q', 4)
             proc.wait(timeout=20)
             assert proc.returncode == 0
-            (out/'PASS.txt').write_text('PASS: RU/EN updater UI, disabled startup checks, explicit check, cancel/error, clean shutdown.\n')
+            private_profile = out/'private-profile'
+            if private_profile.exists(): shutil.rmtree(private_profile)
+            private_profile.mkdir()
+            (private_profile/'profile.toml').write_text('check_updates=true\nrestore=false\n')
+            report.unlink(missing_ok=True)
+            proc = subprocess.Popen([str(binary), '--private', f'--data-dir={private_profile}', f'--report={report}'],
+                                    cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
+                                    env={**os.environ, 'XMODIFIERS': '@im=none', 'AURA_BACKGROUND_TEST': '1'})
+            wait_until(lambda: state().get('presentation_frames', 0) > 0, 'No private startup window')
+            time.sleep(1)
+            assert not state()['updates']['busy']
+            assert state()['updates']['status'] == 'Updates have not been checked yet.'
+            assert not (private_profile/'updates.toml').exists()
+            key_at(str(state()['window']), 'q', 4)
+            proc.wait(timeout=20)
+            assert proc.returncode == 0
+            (out/'PASS.txt').write_text('PASS: RU/EN updater UI, disabled startup checks, explicit check, cancel/error, private startup without checks, clean shutdown.\n')
             print('PASS: updater UI and cancellation')
         finally:
             if proc.poll() is None:

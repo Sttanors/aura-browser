@@ -168,5 +168,18 @@ TEST_F(UpdateManagerFlow, RejectsBadPayloadAndDeletesPartialDownloadsOnCancellat
     EXPECT_FALSE(manager.busy());
     EXPECT_TRUE(std::filesystem::is_empty(directory / "updates"));
 }
+TEST_F(UpdateManagerFlow, RequiresFreshMetadataAgainBeforeDownloadingAnExpiredOffer) {
+    UpdateManager manager(directory);
+    connect(manager);
+    manager.check();
+    settle(manager);
+    ASSERT_TRUE(manager.release);
+    manager.release->expires = std::time(nullptr) - 1;
+    manager.download();
+    EXPECT_FALSE(manager.busy());
+    EXPECT_FALSE(manager.release);
+    EXPECT_TRUE(manager.ready_file.empty());
+    EXPECT_EQ(manager.status, "The update metadata has expired. Check again.");
+}
 } // namespace
 } // namespace aura
