@@ -2356,6 +2356,10 @@ void BrowserUi::text(const std::string &value) {
         for (auto ch : CefString(value).ToString16()) {
             auto event = last_key_;
             event.type = KEYEVENT_CHAR;
+#ifdef _WIN32
+            // CEF's Windows backend maps this field to WM_CHAR's Unicode wParam.
+            event.windows_key_code = ch;
+#endif
             event.character = ch;
             event.unmodified_character = ch;
             p->browser->GetHost()->SendKeyEvent(event);
@@ -2380,6 +2384,10 @@ void BrowserUi::text(const std::string &value) {
             for (auto ch : CefString(value).ToString16()) {
                 CefKeyEvent event = last_key_;
                 event.type = KEYEVENT_CHAR;
+#ifdef _WIN32
+            // CEF's Windows backend maps this field to WM_CHAR's Unicode wParam.
+            event.windows_key_code = ch;
+#endif
                 event.character = ch;
                 event.unmodified_character = ch;
                 t->browser->GetHost()->SendKeyEvent(event);
