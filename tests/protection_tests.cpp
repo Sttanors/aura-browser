@@ -19,6 +19,12 @@ struct Temporary {
 std::filesystem::path fixture(const char *name) {
     return std::filesystem::path(AURA_SOURCE_DIR) / "tests/fixtures/extensions" / name;
 }
+std::string fixture_id() {
+    auto id = read_resource(fixture("id.txt"));
+    while (!id.empty() && (id.back() == '\r' || id.back() == '\n'))
+        id.pop_back();
+    return id;
+}
 } // namespace
 TEST(Protection, RulesRespectTypesAndSiteExceptions) {
     Protection engine(std::filesystem::path(AURA_SOURCE_DIR) / "resources");
@@ -53,10 +59,10 @@ TEST(Protection, CosmeticSelectorsAndExceptions) {
     EXPECT_EQ(toggle_site_exception("https://sub.example.org/", "example.org"), "");
 }
 TEST(Extensions, StoreURLsAreStrict) {
-    auto id = read_resource(fixture("id.txt"));
-    id.pop_back();
+    const auto id = fixture_id();
     EXPECT_EQ(chrome_store_id(id), id);
     EXPECT_EQ(chrome_store_id("  " + id + "\n"), id);
+    EXPECT_EQ(chrome_store_id(id + "\r\n"), id);
     EXPECT_EQ(chrome_store_id("https://chromewebstore.google.com/detail/test/" + id + "?hl=ru"),
               id);
     EXPECT_TRUE(
@@ -67,8 +73,7 @@ TEST(Extensions, StoreURLsAreStrict) {
 }
 TEST(Extensions, SignedCRXPreservesIdentityAndPermissions) {
     Temporary temp;
-    auto id = read_resource(fixture("id.txt"));
-    id.pop_back();
+    const auto id = fixture_id();
     auto c = inspect_crx(read_resource(fixture("valid.crx")), id, temp.path);
     EXPECT_EQ(c.extension.id, id);
     EXPECT_EQ(c.extension.name, "Aura MV3 integration test");

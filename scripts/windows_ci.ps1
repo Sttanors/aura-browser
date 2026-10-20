@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][ValidateSet('bootstrap','configure','build','test','package')][string]$Stage)
+param([Parameter(Mandatory=$true)][ValidateSet('bootstrap','configure','build','unit','integration','package')][string]$Stage)
 $ErrorActionPreference = 'Stop'
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
@@ -19,10 +19,8 @@ switch ($Stage) {
     }
     configure { $commands += 'cmake --preset windows-x64-release' }
     build { $commands += 'cmake --build --preset windows-x64-release --parallel 4 -- -k 0' }
-    test {
-        $commands += 'ctest --preset windows-x64-release'
-        $commands += 'python scripts/smoke_windows_browser.py'
-    }
+    unit { $commands += 'ctest --preset windows-x64-release' }
+    integration { $commands += 'python scripts/smoke_windows_browser.py' }
     package { $commands += 'python scripts/package.py' }
 }
 $path = Join-Path $env:RUNNER_TEMP "aura-$Stage.cmd"

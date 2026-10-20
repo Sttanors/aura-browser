@@ -151,6 +151,7 @@ CEF_BOOTSTRAP_EXPORT int RunWinMain(HINSTANCE instance, LPWSTR, int, void *sandb
     try {
         return run(args, command, sandbox_info);
     } catch (const std::exception &error) {
+        std::cerr << "Aura: " << error.what() << '\n';
         MessageBoxW(nullptr, CefString(error.what()).ToWString().c_str(),
                     L"Aura — initialization error", MB_OK | MB_ICONERROR);
         return 1;

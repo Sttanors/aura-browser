@@ -51,11 +51,16 @@ jobs:
           VCPKG_MAX_CONCURRENCY: '4'
         run: ./scripts/windows_ci.ps1 -Stage configure
       - name: Compile full Windows browser
+        id: build
         shell: pwsh
         run: ./scripts/windows_ci.ps1 -Stage build
-      - name: Unit tests and real browser integration
+      - name: Unit tests
         shell: pwsh
-        run: ./scripts/windows_ci.ps1 -Stage test
+        run: ./scripts/windows_ci.ps1 -Stage unit
+      - name: Real browser integration
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        shell: pwsh
+        run: ./scripts/windows_ci.ps1 -Stage integration
       - name: Package portable browser
         shell: pwsh
         run: ./scripts/windows_ci.ps1 -Stage package
