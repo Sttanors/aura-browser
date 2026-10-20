@@ -3,3 +3,6 @@
 *.ps1 text eol=crlf
 *.png binary
 *.crx binary
+
+# Bundled upstream snapshots are verified byte-for-byte on every OS.
+resources/** -text

@@ -8,7 +8,7 @@ import unittest
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
-from dependencies import extract_archive, download, lock
+from dependencies import extract_archive, download, lock, archive_tree_checksum, verified
 from generate_tokens import generate
 
 
@@ -45,6 +45,24 @@ class ArchiveTests(unittest.TestCase):
                 stream.addfile(member, io.BytesIO(b"ok"))
             extract_archive(archive, root / "out", True)
             self.assertEqual((root / "out/nested/file.txt").read_text(), "ok")
+
+
+class ContentIntegrityTests(unittest.TestCase):
+    def test_tree_digest_ignores_timestamps_but_rejects_changed_content(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            paths = [Path(temporary)/f"{i}.tar.gz" for i in range(3)]
+            for i, path in enumerate(paths):
+                with tarfile.open(path, "w:gz") as archive:
+                    member = tarfile.TarInfo("file.txt")
+                    member.size = 2
+                    member.mode = 0o644
+                    member.mtime = i
+                    archive.addfile(member, io.BytesIO(b"ok" if i < 2 else b"no"))
+            entry = {"sha256": "0"*64, "tree_sha256": archive_tree_checksum(paths[0])}
+            self.assertTrue(verified(paths[0], entry))
+            self.assertTrue(verified(paths[1], entry))
+            self.assertFalse(verified(paths[2], entry))
+            self.assertFalse(verified(paths[0], {"sha256": "0"*64}))
 
 
 class TokenTests(unittest.TestCase):

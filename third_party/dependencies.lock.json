@@ -87,10 +87,10 @@
     },
     "skia": {
       "version": "2466dcf3937437e217e7f284afe0e1aae15891ce",
-      "url": "https://skia.googlesource.com/skia/+archive/2466dcf3937437e217e7f284afe0e1aae15891ce.tar.gz",
+      "url": "https://codeload.github.com/google/skia/tar.gz/2466dcf3937437e217e7f284afe0e1aae15891ce",
       "archive": "skia.tar.gz",
-      "sha256": "ade6b5d5398fffae28fa6f922d3d87d5a2e68afeae32de4ef49f7dc4c1cc6e39",
-      "strip_root": false
+      "sha256": "19f8e878125609c353cec423301c28157d1336075edfc2e7c6f568c81655fe8a",
+      "strip_root": true
     },
     "inter-license": {
       "version": "4.1",
@@ -104,28 +104,32 @@
       "url": "https://chromium.googlesource.com/angle/angle/+archive/e12217f3e133cb1029b050d893b1806d141483be.tar.gz",
       "archive": "angle.tar.gz",
       "strip_root": false,
-      "sha256": "047f23334cad35af12fbeeab98e417b4f43609b3e80d932ffdd586e7fccd84ef"
+      "sha256": "047f23334cad35af12fbeeab98e417b4f43609b3e80d932ffdd586e7fccd84ef",
+      "tree_sha256": "865f22b133e9349a29476be7ef352e31ba4dce183a2d920839edcdcd213a07ca"
     },
     "zlib-google-utils": {
       "version": "646b7f569718921d7d4b5b8e22572ff6c76f2596",
       "url": "https://chromium.googlesource.com/chromium/src/third_party/zlib/+archive/646b7f569718921d7d4b5b8e22572ff6c76f2596/google.tar.gz",
       "archive": "zlib-google-utils.tar.gz",
       "strip_root": false,
-      "sha256": "e237dca2dcc7ac966f8b17d5ab432db4b1c6503c68edc2ff81db363f54cc5435"
+      "sha256": "e237dca2dcc7ac966f8b17d5ab432db4b1c6503c68edc2ff81db363f54cc5435",
+      "tree_sha256": "56d8bc79895d937f076be9119c02abb353aa9b93b3f6c6e4930e15672083c929"
     },
     "spirv-tools": {
       "version": "d693d2289e69f47135918089ab8038a929e43661",
       "url": "https://chromium.googlesource.com/external/github.com/KhronosGroup/SPIRV-Tools/+archive/d693d2289e69f47135918089ab8038a929e43661.tar.gz",
       "archive": "spirv-tools.tar.gz",
       "strip_root": false,
-      "sha256": "496dac66b546760e96f8c627d066487313dd0af074d09b566ab6d714850968d6"
+      "sha256": "496dac66b546760e96f8c627d066487313dd0af074d09b566ab6d714850968d6",
+      "tree_sha256": "e5bb566f63121cb00b1ccd43e301d1d02155437ae3e8816903a587be1e9bfa56"
     },
     "spirv-headers": {
       "version": "496543121ce6419f23d6fa5d7194ba66c36212d2",
       "url": "https://chromium.googlesource.com/external/github.com/KhronosGroup/SPIRV-Headers/+archive/496543121ce6419f23d6fa5d7194ba66c36212d2.tar.gz",
       "archive": "spirv-headers.tar.gz",
       "strip_root": false,
-      "sha256": "a90e6feb48b1edc1cdf7717b755f5af1bf9fb052bde819ef748b930a6d16f26d"
+      "sha256": "a90e6feb48b1edc1cdf7717b755f5af1bf9fb052bde819ef748b930a6d16f26d",
+      "tree_sha256": "b560c51dd0a96b976d9d1efc7af816b7d8fbb745c672a4536f6f7d1ba53d92a1"
     }
   }
 }

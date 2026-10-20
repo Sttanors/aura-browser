@@ -24,10 +24,45 @@ def checksum(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def archive_tree_checksum(path: Path) -> str:
+    """Authenticate Googlesource content while ignoring generated tar timestamps."""
+    records = []
+    names = set()
+    with tarfile.open(path) as archive:
+        members = archive.getmembers()
+        if sum(item.size for item in members) > 8 * 1024**3:
+            raise ValueError("Archive exceeds extraction budget")
+        for item in members:
+            name = PurePosixPath(item.name)
+            if name.is_absolute() or ".." in name.parts or any(":" in part for part in name.parts):
+                raise ValueError("Unsafe archive path")
+            if not (item.isfile() or item.isdir()) or item.name in names:
+                raise ValueError("Unsupported or duplicate archive entry")
+            names.add(item.name)
+            digest = ""
+            if item.isfile():
+                with archive.extractfile(item) as stream:
+                    digest = hashlib.file_digest(stream, "sha256").hexdigest()
+            records.append((item.name, "file" if item.isfile() else "dir", item.mode, digest))
+    canonical = json.dumps(sorted(records), ensure_ascii=True, separators=(",", ":")).encode("ascii")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def verified(path: Path, entry: dict) -> bool:
+    if not path.is_file():
+        return False
+    if checksum(path) == entry["sha256"]:
+        return True
+    # Some Googlesource archives contain the generation time in every tar entry.
+    # The separately pinned tree digest still covers every path, mode and file byte.
+    expected = entry.get("tree_sha256")
+    return bool(expected and archive_tree_checksum(path) == expected)
+
+
 def download(name: str, offline: bool = False) -> Path:
     entry = lock()[name]
     target = ROOT / "third_party/cache" / entry["archive"]
-    if target.is_file() and checksum(target) == entry["sha256"]:
+    if verified(target, entry):
         return target
     if offline:
         raise RuntimeError(f"Missing or corrupt cached dependency: {name}")
@@ -38,7 +73,7 @@ def download(name: str, offline: bool = False) -> Path:
         request = urllib.request.Request(entry["url"], headers={"User-Agent": "Aura2-bootstrap/0.1"})
         with urllib.request.urlopen(request, timeout=120) as response, partial.open("wb") as stream:
             shutil.copyfileobj(response, stream, 1024 * 1024)
-        if checksum(partial) != entry["sha256"]:
+        if not verified(partial, entry):
             raise RuntimeError(f"SHA-256 mismatch: {name}")
         partial.replace(target)
     finally:
