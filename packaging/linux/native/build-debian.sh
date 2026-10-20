@@ -8,7 +8,9 @@ cp /source/CMakeLists.txt /source/CMakePresets.json /source/vcpkg.json /work/
 [ -L /work/third_party/src ] || ln -s /source/third_party/src /work/third_party/src
 [ -L /work/third_party/tools ] || ln -s /source/third_party/tools /work/third_party/tools
 mkdir -p /work/third_party/cargo-home
-cp -a /source/third_party/cargo-home/. /work/third_party/cargo-home/
+if [ -d /source/third_party/cargo-home ]; then
+    cp -a /source/third_party/cargo-home/. /work/third_party/cargo-home/
+fi
 cp -a /source/resources/. /work/resources/
 cd /work
 python3 scripts/build_skia.py --jobs 4
