@@ -9,7 +9,10 @@ task_rustup=$(rustup show home)
 task_cargo_bin=$(dirname -- "$(command -v cargo)")
 mkdir -p "$task_root/artifacts/native-build-root" "$task_root/artifacts/native-packages"
 docker build -t aura-package-build:debian13 "$task_root/packaging/linux/native" -f "$task_root/packaging/linux/native/Dockerfile.debian"
-task_mounts=(-v "$task_root:/source:ro" -v "$task_root/artifacts/native-build-root:/work" -v "$task_root/artifacts/native-packages:/output")
+task_mounts=(-v "$task_root:/source:ro" -v "$task_root/artifacts/native-build-root:/work" -v "$task_root/artifacts/native-packages:/output"
+    --mount type=tmpfs,destination=/source/local
+    --mount type=tmpfs,destination=/source/.aura-profile
+    --mount type=tmpfs,destination=/source/.git)
 docker run --rm --user "$(id -u):$(id -g)" --cpus=4 --memory=6g --memory-swap=6g --pids-limit=512 \
     -e HOME=/tmp/aura-build-home -e RUSTUP_HOME=/opt/rustup -e CARGO_HOME=/work/third_party/cargo-home \
     -e PATH=/opt/cargo-bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
@@ -27,6 +30,9 @@ if [[ ${1:-} == --test ]]; then
         esac
         docker run --rm --cpus=2 --memory=2g --memory-swap=2g --pids-limit=512 \
             -e AURA_PACKAGE_TEST_CONTAINER=1 -v "$task_root:/source:ro" \
+            --mount type=tmpfs,destination=/source/local \
+            --mount type=tmpfs,destination=/source/.aura-profile \
+            --mount type=tmpfs,destination=/source/.git \
             -v "$task_root/artifacts/native-packages:/packages:ro" "$task_image" \
             sh /source/packaging/linux/native/test-installed.sh "$task_family" "/packages/$task_package"
     done
