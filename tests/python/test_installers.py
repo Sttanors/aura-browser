@@ -75,6 +75,30 @@ class LinuxInstallerTests(unittest.TestCase):
             self.assertNotEqual(p.returncode, 0)
             self.assertEqual((app/'unrelated').read_text(), 'keep')
 
+    def test_incompatible_upgrade_preserves_working_installation_and_profile(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home = root/'home'
+            home.mkdir()
+            data = home/'data'
+            app = data/'aura-browser'
+            app.mkdir(parents=True)
+            (app/'.aura-installed').touch()
+            (app/'aura_browser').write_text('previous executable')
+            profile = data/'aura-browser-profile'
+            profile.mkdir()
+            (profile/'profile.toml').write_text('keep')
+            archive = root/'bad-runtime.zip'
+            with zipfile.ZipFile(archive, 'w') as z:
+                z.writestr('Aura2/aura_browser', '#!/usr/bin/env bash\nexit 1\n')
+            installer = root/'bad.run'
+            build(archive, installer)
+            p = subprocess.run(['bash', str(installer)], env=dict(os.environ, HOME=str(home), XDG_DATA_HOME=str(data)),
+                               capture_output=True)
+            self.assertNotEqual(p.returncode, 0)
+            self.assertEqual((app/'aura_browser').read_text(), 'previous executable')
+            self.assertEqual((profile/'profile.toml').read_text(), 'keep')
+
 
 if __name__ == '__main__':
     unittest.main()

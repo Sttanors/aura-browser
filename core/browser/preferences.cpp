@@ -5,6 +5,9 @@
 namespace aura {
 std::span<const SettingSpec> settings_catalog() {
     static const std::vector<SettingSpec> catalog = {
+        {"check_updates", "General", "Check for Aura updates",
+         "Check the signed release channel once a day. Downloads require your approval.",
+         &BrowserPreferences::check_updates},
         {"adblock", "Protection", "Block ads and trackers",
          "Brave engine with bundled EasyList and EasyPrivacy.", &BrowserPreferences::adblock},
         {"cosmetic_filtering", "Protection", "Hide advertising placeholders",

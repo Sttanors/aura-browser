@@ -5,6 +5,7 @@
 #include "core/browser/i18n.hpp"
 #include "core/browser/profile.hpp"
 #include "core/browser/protection.hpp"
+#include "core/browser/updates.hpp"
 #include "core/cef/diagnostic_client.hpp"
 #include "include/cef_context_menu_handler.h"
 #include "include/cef_download_handler.h"
@@ -86,6 +87,8 @@ class BrowserController {
     int find_matches = 0, find_active = 0, tools_open = 0;
     std::map<std::string, int> audit;
     ExtensionManager extensions;
+    UpdateManager updates;
+    bool install_update_on_exit = false;
     std::shared_ptr<ExtensionPopup> extension_popup;
     std::filesystem::path resources;
     std::shared_ptr<RequestPolicy> request_policy = std::make_shared<RequestPolicy>();
@@ -164,6 +167,7 @@ class BrowserController {
     std::chrono::steady_clock::time_point save_at_ = std::chrono::steady_clock::now();
     bool needs_save_ = false;
     bool restoring_ = false, quit_confirmed_ = false, cleanup_started_ = false;
+    bool background_updates_ = false;
     int data_tasks_ = 0;
     int browser_frame_rate_ = 60;
     void ensure_browser(Tab &tab, const std::string &url);

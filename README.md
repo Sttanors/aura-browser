@@ -55,7 +55,10 @@ Installation requires Bash, tar, gzip and sha256sum. Your distribution must prov
 
 The per-user Windows and `.run` installers preserve the profile on reinstall and uninstall. Close Aura before reinstalling.
 Portable profiles are not migrated automatically. Installation does not change your default browser.
-This preview has **no binary signing or automatic updater**.
+This preview has **no trusted Windows publisher signature**. The source now includes
+daily update checks and an Ed25519-authenticated download/install flow; channel
+publication and release validation are tracked in [the progress journal](docs/browser-roadmap-progress.md).
+See [signed updates](docs/update-channel.md) for the release procedure.
 
 ### Portable downloads
 
@@ -80,8 +83,9 @@ Keep all runtime files together. Direct launches create `profile/` beside the ex
 
 Private browsing currently opens a **tab in the current window**. Private tabs are excluded from Aura's
 history and saved session, but downloaded files remain on disk. Restoring a session restores tab URLs
-and order, not their back/forward stacks. Password management, synchronization and automatic updates
-are not implemented. Full CJK IME, DRM/codecs, printing and different window managers need further validation.
+and order, not their back/forward stacks. Password management and synchronization
+are not implemented. Update installation requires an explicit action; native Linux
+packages use their package manager. Full CJK IME, DRM/codecs, printing and different window managers need further validation.
 
 ### Rendering and scrolling
 
@@ -96,7 +100,7 @@ test machine after a complete system freeze. Native Wayland and Vulkan are not i
 
 ## Settings and customization
 
-Open **Settings** from the sidebar or the toolbar gear. There are **85 settings in ten categories**,
+Open **Settings** from the sidebar or the toolbar gear. There are **86 settings in ten categories**,
 searchable by English or Russian names/descriptions. **Ctrl F** focuses settings search.
 **General → Interface language** switches between English and Russian immediately; website text is unaffected.
 

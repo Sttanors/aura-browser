@@ -1,5 +1,6 @@
 #include "common/platform.hpp"
 #include "common/branding_data.hpp"
+#include "common/update_key.hpp"
 #include "ui/browser_ui.hpp"
 #include "aura/design_tokens.hpp"
 #include "common/config.hpp"
@@ -639,7 +640,7 @@ void BrowserUi::draw(SkCanvas &c) {
                                       app_.tr("Downloads"),
                                       app_.tr("Settings"),
                                       app_.tr("Extensions"),
-                                      app_.tr("Quick links")};
+                                      app_.tr("Quick links"), app_.tr("About Aura and updates")};
         label(c, medium_, titles[panel_], r.x + 28, r.y + 47, 23, ink);
         icon(c, "close", r.x + r.width - 43, r.y + 26, 19, muted);
         if (panel_ == History || panel_ == Bookmarks) {
@@ -727,6 +728,8 @@ void BrowserUi::draw(SkCanvas &c) {
             draw_extensions(c, r);
         if (panel_ == Shortcuts)
             draw_shortcuts(c, r);
+        if (panel_ == Updates)
+            draw_updates(c, r);
     }
 
     if (editing) {
@@ -1475,6 +1478,78 @@ std::string BrowserUi::shortcuts_report() const {
     }
     return out + "]}";
 }
+void BrowserUi::draw_updates(SkCanvas &c, Rect r) {
+    const auto &t = interface_theme(app_.profile);
+    label(c, medium_, "Aura " + std::string(browser_version), r.x + 28, r.y + 94, 18, t.text, r.width - 56);
+    auto &updates = app_.updates;
+    label(c, regular_, app_.tr(updates.status) + (updates.status == "Downloading the update..."
+              ? " " + std::to_string(updates.download_percent()) + "%" : ""),
+          r.x + 28, r.y + 127, 12, t.muted, r.width - 56);
+    if (updates.release)
+        label(c, medium_, app_.tr("Available version: ") + updates.release->version,
+              r.x + 28, r.y + 157, 13, t.accent, r.width - 56);
+    const auto kind = updates.installation_kind();
+    auto button = [&](int index, const std::string &text, bool enabled) {
+        Rect b{r.x + 28, r.y + 185 + index * 46, r.width - 56, 36};
+        if (enabled)
+            focus_target(b);
+        fill(c, b, 9, SkColorSetA(t.accent, enabled && inside(b, hover_x_, hover_y_) ? 30 : 12));
+        border(c, b, 9, SkColorSetA(t.muted, enabled ? 180 : 60));
+        centered_label(c, medium_, app_.tr(text), b, 12, enabled ? t.text : t.muted, 12, 12);
+    };
+    button(0, updates.busy() ? "Cancel" : "Check for updates", updates.ready_file.empty());
+    button(1, "Download verified update", bool(updates.release) && !updates.busy() &&
+                                          updates.ready_file.empty() && kind != "system");
+    const bool installer = kind == "run" || kind == "setup";
+    button(2, installer ? "Close Aura and install update" : "Show verified download",
+           !updates.ready_file.empty());
+    button(3, "Release notes and downloads", !updates.busy());
+    const auto help = kind == "system" ? "Update this installation with your Linux package manager."
+        : kind == "portable" ? "Unpack the verified ZIP separately. Keep your existing profile."
+        : "Your profile is kept. Installation starts after Aura closes.";
+    label(c, regular_, app_.tr(help), r.x + 28, r.y + 405, 12, t.muted, r.width - 56);
+}
+void BrowserUi::updates_pointer(Rect r, int x, int y) {
+    auto &updates = app_.updates;
+    for (int index = 0; index < 4; ++index) {
+        if (!inside({r.x + 28, r.y + 185 + index * 46, r.width - 56, 36}, x, y))
+            continue;
+        if (index == 0 && updates.ready_file.empty()) {
+            if (updates.busy())
+                updates.cancel();
+            else
+                updates.check();
+        } else if (index == 1)
+            updates.download();
+        else if (index == 2 && !updates.ready_file.empty()) {
+            const auto kind = updates.installation_kind();
+            if (kind == "run" || kind == "setup")
+                app_.confirm_action("Install Aura update", "Your profile is kept. Installation starts after Aura closes.", [this] {
+                    app_.install_update_on_exit = true;
+                    app_.request_quit(true);
+                });
+            else
+                updates.open_download_folder();
+        } else if (index == 3 && !updates.busy())
+            app_.new_tab(updates.release ? updates.release->page_url() :
+                         "https://github.com/Sttanors/aura-browser/releases/latest");
+        app_.changed();
+        return;
+    }
+}
+std::string BrowserUi::updates_report() const {
+    if (panel_ != Updates)
+        return "null";
+    const auto r = panel_bounds();
+    std::string out = "{\"buttons\":[";
+    for (int index = 0; index < 4; ++index) {
+        if (index)
+            out += ',';
+        out += "[" + std::to_string(r.x + 28) + "," + std::to_string(r.y + 185 + index * 46) +
+               "," + std::to_string(r.width - 56) + ",36]";
+    }
+    return out + "]}";
+}
 std::vector<BrowserUi::SettingsRow> BrowserUi::settings_rows(Rect panel) const {
     std::vector<SettingsRow> rows;
     const auto query = fold_settings(settings_search_.value);
@@ -1507,7 +1582,9 @@ std::vector<BrowserUi::SettingsRow> BrowserUi::settings_rows(Rect panel) const {
     }
     const struct {
         const char *id, *section, *title, *description;
-    } actions[] = {{"shortcuts", "Start page", "Manage quick links",
+    } actions[] = {{"updates", "General", "About Aura and updates",
+                    "View your version and check for verified browser updates."},
+                   {"shortcuts", "Start page", "Manage quick links",
                     "Add, edit, remove and reorder your shortcuts."},
                    {"wallpaper_clear", "Start page", "Remove background image",
                     "Return to the Aura background. Your original image is kept."},
@@ -1800,6 +1877,8 @@ void BrowserUi::settings_pointer(Rect r, int x, int y) {
             if (inside({b.x, b.y + 66, std::min(300, b.width), 32}, x, y)) {
                 if (row.action == "shortcuts")
                     open_shortcuts();
+                else if (row.action == "updates")
+                    panel(Updates);
                 else if (row.action == "wallpaper_clear")
                     import_wallpaper("");
                 else if (row.action == "extensions")
@@ -2684,6 +2763,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                 extensions_pointer(r, x, y);
             else if (panel_ == Shortcuts)
                 shortcuts_pointer(r, x, y);
+            else if (panel_ == Updates)
+                updates_pointer(r, x, y);
         }
         return;
     }

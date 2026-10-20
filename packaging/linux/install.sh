@@ -34,6 +34,12 @@ tar -xzf "$stage/payload.tar.gz" -C "$stage/app" --no-same-owner
 [[ -f $stage/app/Aura2/aura_browser ]] || { echo 'Incomplete payload.' >&2; exit 1; }
 chmod +x "$stage/app/Aura2/aura_browser"
 touch "$stage/app/Aura2/.aura-installed"
+# Refuse incompatible runtimes before touching a working installation.
+"$stage/app/Aura2/aura_browser" --help > "$stage/runtime-check.log" 2>&1 || {
+    cat "$stage/runtime-check.log" >&2
+    echo 'The new Aura runtime cannot start. The existing installation was kept.' >&2
+    exit 1
+}
 # Profile stays outside the application, including on reinstall and uninstall.
 if [[ -d $app_root ]]; then mv -- "$app_root" "$stage/previous"; fi
 if ! mv -- "$stage/app/Aura2" "$app_root"; then

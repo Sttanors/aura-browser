@@ -30,6 +30,7 @@ struct BrowserPreferences {
          ask_download_name = false, date_downloads = false, notify_downloads = true,
          close_downloads = false;
     bool adblock = true, cosmetic_filtering = true;
+    bool check_updates = true;
     std::string adblock_exceptions, darkreader_mode = "off", darkreader_exceptions;
     int darkreader_brightness = 100, darkreader_contrast = 100, darkreader_sepia = 0;
     std::string notifications = "block", geolocation = "block", camera = "block",

@@ -8,7 +8,7 @@
 namespace aura {
 class BrowserUi {
   public:
-    enum Panel { None, Bookmarks, History, Downloads, Settings, Extensions, Shortcuts };
+    enum Panel { None, Bookmarks, History, Downloads, Settings, Extensions, Shortcuts, Updates };
     BrowserUi(BrowserController &owner, const std::filesystem::path &font);
     ~BrowserUi();
     void draw(SkCanvas &canvas);
@@ -28,6 +28,7 @@ class BrowserUi {
     std::string start_page_report() const;
     std::string shortcuts_report() const;
     std::string settings_report() const;
+    std::string updates_report() const;
     std::string extensions_report() const;
     std::string extension_popup_report() const;
     std::string extension_toolbar_report() const;
@@ -109,6 +110,8 @@ class BrowserUi {
     void zoom_start_page(int delta, bool reset = false);
     Rect settings_category_bounds(Rect panel, int index) const;
     void draw_settings(SkCanvas &canvas, Rect panel);
+    void draw_updates(SkCanvas &canvas, Rect panel);
+    void updates_pointer(Rect panel, int x, int y);
     void settings_pointer(Rect panel, int x, int y);
     int choice_columns(const SettingSpec &spec, Rect row) const;
     Rect setting_choice(const SettingSpec &spec, Rect row, int index) const;

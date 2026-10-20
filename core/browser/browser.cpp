@@ -120,7 +120,7 @@ class ToolsClient final : public CefClient, public CefLifeSpanHandler {
 } // namespace
 BrowserController::BrowserController(std::filesystem::path path, std::filesystem::path font,
                                      double factor, bool accelerated)
-    : profile(std::move(path)), scale(factor), extensions(profile.directory) {
+    : profile(std::move(path)), scale(factor), extensions(profile.directory), updates(profile.directory) {
     resources = font.parent_path().parent_path();
     request_policy->protection = std::make_shared<Protection>(resources);
     ui = std::make_unique<BrowserUi>(*this, font);
@@ -233,6 +233,7 @@ void BrowserController::open_new_tab(bool private_tab) {
             private_tab);
 }
 void BrowserController::start(const std::string &initial, bool private_mode) {
+    background_updates_ = !private_mode;
     apply_settings();
     if (private_mode)
         new_tab(initial.empty() ? "aura://newtab" : initial, true);
@@ -248,6 +249,8 @@ void BrowserController::start(const std::string &initial, bool private_mode) {
         activate(std::min(selected, static_cast<int>(tabs.size()) - 1));
     } else
         new_tab(profile.startup_page == "home" ? profile.home_page : "aura://newtab");
+    if (!private_mode && profile.check_updates && updates.due())
+        updates.check();
 }
 void BrowserController::changed(bool persistent) {
     if (window)
@@ -261,6 +264,8 @@ void BrowserController::defer(std::function<void()> action) {
     pending_.push_back(std::move(action));
 }
 void BrowserController::tick() {
+    if (background_updates_ && profile.check_updates && updates.due())
+        updates.check();
     const int rate = window->refresh_rate();
     if (rate != browser_frame_rate_) {
         browser_frame_rate_ = rate;
@@ -273,6 +278,12 @@ void BrowserController::tick() {
     std::erase_if(closing_popups_, [](const auto &p) { return p->page.closed; });
     const bool extension_busy = extensions.busy;
     extensions.tick();
+    const bool had_update = bool(updates.release);
+    if (updates.tick()) {
+        changed();
+        if (!had_update && updates.release && !updates.busy())
+            ui->toast(tr("A new Aura release is available."));
+    }
     if (extension_busy != extensions.busy)
         changed();
     auto work = std::move(pending_);
@@ -682,6 +693,7 @@ bool BrowserController::finished() {
     return browsers_closed && data_tasks_ == 0;
 }
 void BrowserController::prepare_shutdown() {
+    updates.shutdown();
     extensions.shutdown();
     closing_popups_.clear();
     extension_popup.reset();
@@ -728,7 +740,13 @@ std::string BrowserController::report() const {
         << ",\"extension_toolbar\":" << ui->extension_toolbar_report()
         << ",\"shortcuts_ui\":" << ui->shortcuts_report()
         << ",\"start_page\":" << ui->start_page_report()
-        << ",\"settings_ui\":" << ui->settings_report() << ",\"dialog_count\":" << dialogs.size()
+        << ",\"settings_ui\":" << ui->settings_report()
+        << ",\"updates_ui\":" << ui->updates_report()
+        << ",\"updates\":{\"busy\":" << (updates.busy() ? "true" : "false")
+        << ",\"status\":" << json_quote(updates.status)
+        << ",\"installation\":" << json_quote(updates.installation_kind())
+        << ",\"ready\":" << (!updates.ready_file.empty() ? "true" : "false") << "}"
+        << ",\"dialog_count\":" << dialogs.size()
         << ",\"tabs\":" << (quit_snapshot_.empty() ? tabs_json(tabs) : quit_snapshot_)
         << ",\"settings\":{";
     bool first_setting = true;

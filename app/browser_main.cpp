@@ -134,6 +134,10 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
         throw;
     }
     write_report(report);
+    if (browser.install_update_on_exit && !browser.updates.launch_installer()) {
+        spdlog::error("Could not launch the verified Aura installer");
+        std::cerr << "Aura: could not launch the verified update installer.\n";
+    }
     spdlog::info("Aura closed; all browser callbacks completed before CefShutdown");
     spdlog::shutdown();
     return 0;

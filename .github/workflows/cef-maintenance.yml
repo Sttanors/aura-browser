@@ -1,0 +1,17 @@
+name: CEF security maintenance
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '20 7 * * 1,4'
+permissions:
+  contents: read
+jobs:
+  check-stable:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python scripts/check_cef_updates.py

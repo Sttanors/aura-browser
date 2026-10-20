@@ -26,13 +26,13 @@ def stop(process):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--suite', choices=('browser', 'settings', 'features', 'startpage', 'wallpaper', 'interface', 'scrolling', 'all'), default='browser')
+    parser.add_argument('--suite', choices=('browser', 'settings', 'features', 'startpage', 'wallpaper', 'interface', 'scrolling', 'updates', 'all'), default='browser')
     parser.add_argument("--refresh", type=int, choices=(60, 75, 120, 144, 165, 240), default=60)
     args = parser.parse_args()
     for tool in ('weston', 'Xwayland', 'xdotool', 'import'):
         if not shutil.which(tool):
             raise RuntimeError(f'Isolated GUI verification requires {tool}; no desktop test was started')
-    if args.suite in ('settings', 'features', 'startpage', 'wallpaper', 'all') and not shutil.which('xclip'):
+    if args.suite in ('settings', 'features', 'startpage', 'wallpaper', 'updates', 'all') and not shutil.which('xclip'):
         raise RuntimeError('GUI verification requires xclip for UTF-8 clipboard input')
     if args.suite in ('wallpaper', 'all') and not shutil.which('zenity'):
         raise RuntimeError('Native file chooser verification requires zenity; no desktop test was started')
@@ -80,7 +80,7 @@ def main():
                         os.close(write_fd)
                 print(f'Isolated display {env["DISPLAY"]}: Weston Pixman + Xwayland SHM, GLX disabled', flush=True)
                 scripts = {'browser': ['smoke_browser.py'], 'settings': ['smoke_settings.py'],
-                           'features': ['smoke_features.py'], 'startpage': ['smoke_startpage.py'], 'wallpaper': ['smoke_wallpaper.py'], 'scrolling': ['smoke_scrolling.py'], 'interface': ['smoke_interface.py'], 'all': ['smoke_scrolling.py', 'smoke_interface.py', 'smoke_browser.py', 'smoke_settings.py', 'smoke_startpage.py', 'smoke_wallpaper.py', 'smoke_features.py']}[args.suite]
+                           'features': ['smoke_features.py'], 'startpage': ['smoke_startpage.py'], 'wallpaper': ['smoke_wallpaper.py'], 'scrolling': ['smoke_scrolling.py'], 'interface': ['smoke_interface.py'], 'updates': ['smoke_updates.py'], 'all': ['smoke_scrolling.py', 'smoke_interface.py', 'smoke_browser.py', 'smoke_settings.py', 'smoke_startpage.py', 'smoke_wallpaper.py', 'smoke_features.py', 'smoke_updates.py']}[args.suite]
                 for script in scripts:
                     subprocess.run([sys.executable, str(ROOT / 'scripts' / script)],
                         cwd=ROOT, env=env, check=True, timeout=240)
