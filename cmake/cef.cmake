@@ -27,6 +27,8 @@ if(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
   # GetProcAddress returns FARPROC; the SDK casts it to the exported signature.
   # Sized C API aggregates intentionally zero-initialize their remaining fields.
   target_compile_options(libcef_dll_wrapper PRIVATE
-    -Wno-error=cast-function-type-mismatch -Wno-missing-field-initializers)
+    -Wno-error=cast-function-type-mismatch -Wno-missing-field-initializers
+    # The SDK already applies this to Clang on Linux for cross-TU specializations.
+    -Wno-undefined-var-template)
 endif()
 ADD_LOGICAL_TARGET("libcef_lib" "${CEF_LIB_DEBUG}" "${CEF_LIB_RELEASE}")
