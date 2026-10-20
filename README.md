@@ -6,9 +6,15 @@ HTML используется только для посещаемых стра�
 
 Windows-порт использует то же приложение и интерфейс, что и Linux: **Win32 + Skia raster + CEF OSR**.
 Статус его сборки и проверок виден в [GitHub Actions](https://github.com/Sttanors/aura-browser/actions).
-Готовый Windows ZIP появляется в артефактах успешного запуска workflow **Windows browser**.
+Готовые portable-сборки Windows и Linux доступны в [GitHub Releases](https://github.com/Sttanors/aura-browser/releases/tag/v0.2.0-preview.1).
+Для Windows скачайте `aura2-windows64.zip`, для Linux — `aura2-linux64.zip`.
 Распакуйте архив целиком и запустите **Aura2/aura_browser.exe**. Windows 10/11 x64.
 Сборка пока не подписана; автоматического обновления нет.
+
+Windows x64 проверена в CI: сборка, 38 тестов CTest (один тест с внешним CRX пропущен),
+запуск настоящей страницы, ввод `Windows Привет`, переходы и JavaScript-диалог,
+переключение языка и сохранение масштаба интерфейса 125% после перезапуска.
+[Проверенный запуск](https://github.com/Sttanors/aura-browser/actions/runs/39395547988).
 
 ## Сборка Windows
 
