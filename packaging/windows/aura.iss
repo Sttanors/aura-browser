@@ -7,7 +7,7 @@
 [Setup]
 AppId={{9B640453-B1CB-4653-A0B7-7DCCBA5F3D6E}
 AppName=Aura Browser
-AppVersion=0.2.0-preview.1
+AppVersion=0.2.0-preview.2
 AppPublisher=Sttanors
 AppPublisherURL=https://github.com/Sttanors/aura-browser
 AppSupportURL=https://github.com/Sttanors/aura-browser/issues

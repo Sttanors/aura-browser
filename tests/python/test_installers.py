@@ -1,0 +1,77 @@
+"""Exercise Linux installation in a temporary HOME without launching Chromium."""
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+import zipfile
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]/'scripts'))
+from build_linux_installer import build
+
+
+@unittest.skipUnless(sys.platform == 'linux' and os.geteuid() != 0, 'per-user Linux installer')
+class LinuxInstallerTests(unittest.TestCase):
+    def test_install_launch_upgrade_uninstall_preserves_profile(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home = root/'Дом с пробелами'
+            home.mkdir()
+            data = home/'data $cash %value'
+            archive = root/'runtime.zip'
+            with zipfile.ZipFile(archive, 'w') as z:
+                z.writestr('Aura2/aura_browser', '#!/usr/bin/env bash\nprintf "%s\\n" "$@"\n')
+                z.writestr('Aura2/resources.pak', 'runtime')
+            installer = root/'Aura setup.run'
+            build(archive, installer)
+            env = dict(os.environ, HOME=str(home), XDG_DATA_HOME=str(data))
+            def run(*args, **kw):
+                return subprocess.run(args, env=env, check=True, text=True, capture_output=True, **kw)
+            run('bash', str(installer))
+            launcher = home/'.local/bin/aura-browser'
+            result = run(str(launcher), '--url=https://example.com/')
+            self.assertEqual(result.stdout.splitlines(), [f'--data-dir={data}/aura-browser-profile', '--url=https://example.com/'])
+            desktop = data/'applications/aura-browser.desktop'
+            if shutil.which('desktop-file-validate'):
+                run('desktop-file-validate', str(desktop))
+            profile = data/'aura-browser-profile'
+            profile.mkdir()
+            (profile/'history').write_text('keep')
+            run('bash', str(installer))
+            self.assertEqual((profile/'history').read_text(), 'keep')
+            self.assertTrue((data/'aura-browser/resources.pak').is_file())
+            run(str(home/'.local/bin/aura-browser-uninstall'))
+            self.assertFalse((data/'aura-browser').exists())
+            self.assertFalse(launcher.exists())
+            self.assertFalse(desktop.exists())
+            self.assertEqual((profile/'history').read_text(), 'keep')
+
+    def test_rejects_corrupt_payload_and_unmanaged_directory(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            archive = root/'runtime.zip'
+            with zipfile.ZipFile(archive, 'w') as z:
+                z.writestr('Aura2/aura_browser', 'test')
+            installer = root/'setup.run'
+            build(archive, installer)
+            home = root/'home'
+            home.mkdir()
+            env = dict(os.environ, HOME=str(home), XDG_DATA_HOME=str(home/'data'))
+            original = installer.read_bytes()
+            installer.write_bytes(original[:-4]+b'bad!')
+            p = subprocess.run(['bash', str(installer)], env=env, capture_output=True)
+            self.assertNotEqual(p.returncode, 0)
+            self.assertFalse((home/'data/aura-browser').exists())
+            installer.write_bytes(original)
+            app = home/'data/aura-browser'
+            app.mkdir()
+            (app/'unrelated').write_text('keep')
+            p = subprocess.run(['bash', str(installer)], env=env, capture_output=True)
+            self.assertNotEqual(p.returncode, 0)
+            self.assertEqual((app/'unrelated').read_text(), 'keep')
+
+
+if __name__ == '__main__':
+    unittest.main()

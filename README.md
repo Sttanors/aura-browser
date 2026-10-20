@@ -1,25 +1,229 @@
-# Aura 2 — браузер для Linux и Windows
+# Aura 2 — browser for Linux and Windows
 
-Рабочая браузерная оболочка на **C++20 + CEF OSR + Skia**. Обычный запуск открывает браузер:
-вкладки, адресную строку, навигацию и собственную новую вкладку. Весь интерфейс нарисован Skia;
-HTML используется только для посещаемых страниц.
+**English** | [Русский](README.ru.md)
 
-Windows-порт использует то же приложение и интерфейс, что и Linux: **Win32 + Skia raster + CEF OSR**.
-Статус его сборки и проверок виден в [GitHub Actions](https://github.com/Sttanors/aura-browser/actions).
-Готовые portable-сборки Windows и Linux доступны в [GitHub Releases](https://github.com/Sttanors/aura-browser/releases/tag/v0.2.0-preview.1).
-Для Windows скачайте `aura2-windows64.zip`, для Linux — `aura2-linux64.zip`.
-Распакуйте архив целиком и запустите **Aura2/aura_browser.exe**. Windows 10/11 x64.
-Сборка пока не подписана; автоматического обновления нет.
+Aura is a desktop browser built with **C++20, Chromium Embedded Framework (CEF OSR), and Skia**.
+The browser interface is drawn natively with Skia; HTML is used for the websites you visit.
+Linux uses X11/XWayland; Windows uses Win32. Both versions share the browser and interface code.
 
-Windows x64 проверена в CI: сборка, 38 тестов CTest (один тест с внешним CRX пропущен),
-запуск настоящей страницы, ввод `Windows Привет`, переходы и JavaScript-диалог,
-переключение языка и сохранение масштаба интерфейса 125% после перезапуска.
-[Проверенный запуск](https://github.com/Sttanors/aura-browser/actions/runs/39395547988).
+**Developed with substantial AI assistance (OpenAI Codex)** for design, implementation,
+documentation and automated checks. The project owner directs the product and makes product decisions.
+AI assistance does not imply that the software is error-free. Aura is currently a preview.
 
-## Сборка Windows
+## Download and install
 
-Нужны Visual Studio 2022 C++ / Windows SDK, LLVM clang-cl, CMake 3.31+, Python 3.12+,
-Git и Rust 1.90+. В **x64 Native Tools Command Prompt**:
+Get the files from [GitHub Releases](https://github.com/Sttanors/aura-browser/releases/tag/v0.2.0-preview.2).
+SHA-256 checksum files accompany each download. Installers contain the same browser as the portable archives
+and do not download browser components during installation.
+
+| Platform | Installer | How to install |
+|---|---|---|
+| Windows 10/11 x64 | `aura2-windows64-setup.exe` | Open the installer; choose English or Russian |
+| Linux x86_64 | `aura2-linux64.run` | Run `bash ~/Downloads/aura2-linux64.run` (adjust the path) |
+
+On Windows, Aura installs for the current user into `%LOCALAPPDATA%\Programs\Aura Browser`.
+Open **Aura Browser** from the Start menu; a desktop shortcut is optional.
+Remove it through Windows **Installed apps**. Shortcut launches use the profile at
+`%LOCALAPPDATA%\Aura Browser\profile`.
+
+On Linux, run the installer as your regular user, **without sudo**. It installs into
+`${XDG_DATA_HOME:-~/.local/share}/aura-browser` and adds an applications-menu entry.
+The launcher is `~/.local/bin/aura-browser`; use the menu if that directory is not on your PATH.
+Remove the application with `~/.local/bin/aura-browser-uninstall`.
+The separate profile lives in `${XDG_DATA_HOME:-~/.local/share}/aura-browser-profile`.
+Installation requires Bash, tar, gzip and sha256sum. Your distribution must provide the CEF/X11 runtime libraries.
+
+Both installers preserve the profile on reinstall and uninstall. Close Aura before reinstalling.
+Portable profiles are not migrated automatically. Installation does not change your default browser.
+This preview has **no binary signing or automatic updater**.
+
+### Portable downloads
+
+Download `aura2-windows64.zip` or `aura2-linux64.zip`, then extract the **complete** archive.
+Launch `Aura2/aura_browser.exe` on Windows or `Aura2/aura_browser` on Linux.
+Keep all runtime files together. Direct launches create `profile/` beside the executable.
+
+## Features
+
+- Independent Chromium tabs: create, close, restore, reorder, pin, duplicate and mute.
+- Unicode address bar, clipboard, history/bookmark suggestions and selectable search engines:
+  DuckDuckGo, Google, Bing and Yandex.
+- Navigation, reload/stop, site zoom, favicons, page titles and loading/error states.
+- Native start page with search, editable quick links, imported wallpaper and automatic theme colors.
+- Persistent cookies, cache, history, bookmarks, settings and URL-session restoration.
+- Private tabs with a separate in-memory CEF request context.
+- Downloads with progress, pause/resume, cancellation and folder opening.
+- Find in page, context menus, JavaScript dialogs, Chromium DevTools and CEF printing.
+- Six light/dark themes, accent colors and independently adjustable interface and start-page scales.
+- Russian and English interface, including settings, menus and notifications.
+- Built-in ad/tracker blocking, Dark Reader and signed Manifest V3 extensions.
+
+Private browsing currently opens a **tab in the current window**. Private tabs are excluded from Aura's
+history and saved session, but downloaded files remain on disk. Restoring a session restores tab URLs
+and order, not their back/forward stacks. Password management, synchronization and automatic updates
+are not implemented. Full CJK IME, DRM/codecs, printing and different window managers need further validation.
+
+### Rendering and scrolling
+
+Software rendering is the default on both platforms; Chromium's sandbox remains enabled.
+Linux uses Skia raster/X11 with MIT-SHM and a two-buffer XPresent queue when available,
+falling back to an offscreen-pixmap copy. Windows uses Skia raster and a persistent native DIB.
+CEF frame rate follows the monitor, including 120/144/165 Hz; actual smoothness depends on page,
+window size and CPU performance. Linux reads refresh rate through Wayland output information or RandR.
+
+The experimental Linux EGL/GLES path remains in the source. It is not considered stable on the original
+test machine after a complete system freeze. Native Wayland and Vulkan are not implemented.
+
+## Settings and customization
+
+Open **Settings** from the sidebar or the toolbar gear. There are **85 settings in ten categories**,
+searchable by English or Russian names/descriptions. **Ctrl F** focuses settings search.
+**General → Interface language** switches between English and Russian immediately; website text is unaffected.
+
+| Category | Options |
+|---|---|
+| General | Language, search engine, session restore, homepage, startup and new-tab behavior, site languages |
+| Tabs | Position, background links, selection after close, exit confirmation, middle-click, wheel, sound |
+| Appearance | Interface scale 75–200%, six themes, accent, site icons/addresses, link previews, animations |
+| Web pages | Zoom, font family/size/minimum, JavaScript, images, website fonts, Local Storage, form/Tab navigation |
+| Privacy | History size/retention, suggestion sources/count, clear on exit, DNT and Referer |
+| Permissions | Popups, JS dialogs, notifications, location, camera, microphone, clipboard, MIDI, sensors |
+| Downloads | Folder, filename prompt, date suffix, panel visibility/closing, notifications |
+| Protection | Ad/tracker blocking, cosmetic filters, Dark Reader, brightness/contrast/sepia, exceptions, extensions |
+| Data | Clear history, cookies, network cache; reset settings |
+| Start page | Scale 50–200%, width/background, greeting, logo, clock, wallpaper/palette, link columns/layout |
+
+Settings save automatically. Interface scale updates tabs, panels, controls and extension popups immediately.
+Small windows cap the applied scale to keep controls accessible; enlarging the window restores your chosen
+scale. **Ctrl Shift 0** resets interface scale. Site zoom and start-page scale remain independent.
+Some page-content settings apply to new tabs; changing preferred website languages requires a restart.
+
+History supports 100–10,000 entries and retention until cleared, 7/30/90 days or one year.
+Disabling history does not erase existing entries. Clearing cookies signs you out of websites.
+Resetting settings retains history, bookmarks and downloads. Clear-on-exit requires normal shutdown.
+DNT requests cooperation from websites; it does not itself block tracking.
+
+### Start page
+
+Use **Customize page** on the new tab page. Scale controls **− / 100% / +**, Ctrl +/−,
+Ctrl+wheel and Ctrl+0 adjust its independent zoom. Scroll overflow with the wheel or Page Up/Down/Home/End.
+Set width, glow, greeting, subtitle, logo, link cards/rows and up to six columns.
+
+**Quick links** lets you add, rename, edit addresses, reorder, delete and undo deletion.
+HTTP/HTTPS links are supported, with a safety limit of 1,000 entries. Right-click a link to manage it.
+
+Import PNG/JPEG wallpaper through **Settings → Start page → Background image → Browse**,
+or enter an absolute path. Aura copies the image into the profile. Fill/Fit and 0–80% dimming are available.
+**Match theme to image** adapts shell colors while retaining your light/dark choice.
+Images may be up to 20 MB and 8192 pixels per side; there is no 16-megapixel limit.
+Dimensions are checked before decoding, and the in-memory copy is reduced. The original is unchanged.
+Windows uses its native file dialog; Linux uses `zenity` when installed, with manual path entry as a fallback.
+
+## Ad blocking, Dark Reader and extensions
+
+The **shield** shows blocked requests and per-site controls. Blocking is enabled by default using
+**Brave adblock-rust 0.13.3 + EasyList/EasyPrivacy**. Matching requests are canceled before loading;
+cosmetic filters also hide dynamically inserted elements. Filter exceptions are respected.
+Lists are bundled snapshots, with sources/checksums in `resources/protection/dependencies.json`.
+Automatic list updates, advanced scriptlets, procedural filters and redirect-resource substitution
+are not implemented. Blocking every ad, including embedded video ads, is not guaranteed.
+
+Built-in **Dark Reader 4.9.133** offers Off, Always on and Follow Aura theme, plus brightness,
+contrast, sepia and domain exceptions. Changes apply to open pages. Protection scripts run in a separate
+CEF world; global CSP/web security is not disabled. Third-party notices are in `resources/vendor/`.
+
+Open the **puzzle** menu to manage extensions. On a Chrome Web Store extension page, select
+**Install in Aura**, or paste a store URL, extension ID or path to a signed `.crx` into the manager.
+Aura verifies the CRX3 signature and ID, then asks you to review permissions and confirm installation.
+Installing, updating, disabling or removing extensions takes effect after restarting Aura.
+To update, download the same ID again and confirm its permissions.
+
+Extension popups appear as overlays below the toolbar. Escape, clicking outside, close or clicking the
+icon again dismisses them. Options pages open in tabs. Use **Pin** or the popup pin icon for quick toolbar
+access; pinning persists immediately. Right-click a toolbar icon to unpin it. Overflow remains in the puzzle menu.
+Popups are unavailable in private tabs.
+
+**Manifest V3** content scripts, service workers, messaging, storage, declarativeNetRequest and extension
+pages have been exercised. CEF OSR/Alloy does not provide Chrome's full toolbar or `chrome.tabs` model;
+`tabs.query`, for example, may return an empty list. Extensions depending on these APIs may work only
+partially. Full Chrome Web Store compatibility is not claimed. MV2 is rejected with an explanation.
+Extensions are available only to the regular profile.
+
+## Keyboard shortcuts
+
+| Shortcut | Action |
+|---|---|
+| Ctrl L / Alt Home | Address bar / homepage |
+| Ctrl T / Ctrl W / Ctrl Shift T | New / close / restore tab |
+| Ctrl Tab / Ctrl Shift Tab | Next / previous tab |
+| Ctrl 1…8 / Ctrl 9 | Select tab / last tab |
+| Ctrl Shift N | New private tab |
+| Alt ← / Alt → | Back / forward |
+| Ctrl R or F5 / Ctrl Shift R | Reload/stop / reload without cache |
+| Ctrl + / Ctrl − / Ctrl 0 | Site zoom, or independent start-page zoom |
+| Ctrl Shift 0 | Reset interface scale |
+| Ctrl D / Ctrl B | Bookmark / bookmarks panel |
+| Ctrl H / Ctrl J | History / downloads |
+| Ctrl F / F3 / Shift F3 | Find / next / previous match |
+| Ctrl P / F12 | Print / DevTools |
+| F6 / F7 | Cycle theme / toggle light/dark |
+| F10 | Focus browser interface from page |
+| Tab / Shift Tab | Navigate controls in open panel |
+| Enter / Space | Activate focused native control |
+| Page Up / Page Down / Home / End | Scroll open panel |
+| Ctrl Q / Ctrl Shift W | Close browser |
+
+Right-click a tab for pin/mute/duplicate/close; middle-click closes it.
+The caption and borders move/resize the window; native caption controls minimize, maximize and close.
+
+## Profiles and command-line use
+
+Source launchers `./run.sh` and `./run.ps1` use `.aura-profile/` beside the project.
+Installer profiles and portable profiles have separate locations described above.
+
+| File/directory | Contents |
+|---|---|
+| `profile.toml` | Quick links, history, bookmarks, session, language and settings |
+| `wallpaper.png` / `wallpaper.jpg` | Imported wallpaper copy |
+| `cache/` | Persistent CEF profile, cookies and site storage |
+| `extensions/` | Verified packages and enabled-extension registry |
+| `downloads/` | Default download folder (configurable) |
+| `aura.log`, `cef.log` | Logs |
+
+Clearing Aura history does not clear CEF cookies/site data. Private CEF contexts stay in memory until exit.
+
+```bash
+./run.sh --url=https://example.com/ --theme=ember-light
+./run.sh --data-dir=/tmp/aura-test-profile --scale=1.5
+```
+
+`--report=FILE.json` writes local state and a final shutdown summary; reports may contain visited URLs.
+
+## Build from source
+
+### Linux
+
+Requirements: C++20 Clang, CMake 3.31+, Python 3.12+, pkg-config, X11/EGL/GLES3,
+Xext/Xpresent/Xrandr and wayland-client development headers, Rust/Cargo 1.88+,
+OpenSSL/libarchive headers and your distribution's CEF runtime dependencies.
+Bootstrap downloads GN/Ninja and locked dependencies, but does not install system packages.
+Allow several GB of disk space. URLs/checksums are pinned in `third_party/dependencies.lock.json`;
+Cargo dependencies are pinned in `core/adblock/Cargo.lock`.
+
+```bash
+python3 scripts/bootstrap.py --jobs 8
+cmake --preset linux-x64-release
+cmake --build --preset linux-x64-release --parallel 8
+ctest --preset linux-x64-release
+./run.sh
+```
+
+Use `python3 scripts/bootstrap.py --offline --jobs 8` to reuse populated dependency caches.
+
+### Windows
+
+Requirements: Visual Studio 2022 C++ tools/Windows SDK, LLVM clang-cl, CMake 3.31+,
+Python 3.12+, Git and Rust 1.90+. In **x64 Native Tools Command Prompt**:
 
 ```bat
 git clone https://github.com/Sttanors/aura-browser.git
@@ -34,314 +238,59 @@ ctest --preset windows-x64-release
 python scripts/package.py
 ```
 
-Зависимости OpenSSL/libarchive собираются vcpkg со статическим CRT; CEF sandbox включён.
-`aura_browser.exe` — sandbox bootstrap CEF, загружающий `aura_browser.dll`. Оба файла обязательны.
-Windows-сборка по умолчанию включает полноценный браузер с программным выводом.
-Для старого диагностического GPU-стенда отдельно запустите bootstrap с `--diagnostic-angle`
-и CMake с `-DAURA_BUILD_COMPATIBILITY_HARNESS=ON`. Он не требуется для обычного браузера.
-Из PowerShell запуск исходной сборки: `./run.ps1`. Профиль в `.aura-profile`.
-В portable ZIP профиль создаётся в папке `profile` рядом с приложением.
+OpenSSL/libarchive use vcpkg's static CRT triplet. Chromium sandbox is enabled.
+`aura_browser.exe` is the CEF sandbox bootstrap and loads `aura_browser.dll`; both are required.
+Use `./run.ps1` to launch the source build from PowerShell.
+The optional legacy GPU harness requires bootstrap `--diagnostic-angle` and CMake
+`-DAURA_BUILD_COMPATIBILITY_HARNESS=ON`; normal browser builds do not need it.
 
-## Запуск Linux
+## Validation
 
-```bash
-./run.sh
-./run.sh --url=https://example.com/
-./run.sh --theme=ember-light
-```
-
-Linux — основная рабочая платформа. В Wayland-сессии окно использует **XWayland**.
-После сообщения о полном зависании ПК аппаратный путь отключён **по умолчанию**:
-оболочка использует **Skia raster / X11**, CEF запускается без аппаратного GPU/video acceleration.
-Обычный запуск не создаёт EGL context Aura. Sandbox Chromium остаётся включённым.
-Экспериментальный EGL/GLES путь сохранён в коде, но не считается стабильным на текущей системе.
-Нативный Wayland и Vulkan ещё не реализованы.
-
-## Возможности
-
-- Независимые CEF-вкладки: создание, переключение, закрытие, восстановление закрытой вкладки,
-  перетаскивание порядка в sidebar, закрепление, дублирование и выключение звука через меню вкладки.
-- Адресная строка с выделением, Unicode-редактированием, clipboard и подсказками из истории/закладок.
-  Адреса открываются напрямую; для поиска можно выбрать DuckDuckGo, Google, Bing или Yandex.
-- Назад/вперёд, reload/stop, zoom, favicon, title, индикатор загрузки, обработка ошибки страницы.
-- Новая вкладка на Skia с собственным поиском и работающими быстрыми ссылками.
-- Постоянный профиль: cookies/cache CEF, история Aura, закладки, тема и восстановление URL вкладок.
-- Приватные вкладки с отдельным CEF request context в памяти; они не попадают в историю Aura и сохранённую сессию.
-- Панель загрузок: прогресс, пауза/возобновление, отмена и открытие папки.
-- Поиск по странице, собственное контекстное меню, JavaScript alert/confirm/prompt и before-unload dialog.
-- Отдельное окно Chromium DevTools и вызов CEF печати.
-- Aurora, Ember и Monolith, каждая в светлом и тёмном варианте; переключение без перезапуска.
-- Русский и English для собственного интерфейса Aura: панели, новая вкладка, меню и уведомления.
-- Настройки поисковика, масштаба, истории, подсказок, восстановления вкладок и оформления.
-
-Приватный режим сейчас открывает **вкладку в текущем окне**. Это ещё не отдельное приватное окно.
-Восстанавливаются URL и порядок обычных вкладок; back/forward stack между запусками не сохраняется.
-Менеджера паролей, автоматического обновления браузера и синхронизации пока нет.
-Полный CJK IME, DRM/кодеки, печать и разные оконные менеджеры требуют отдельных проверок.
-
-Прокрутка страниц использует анимацию Chromium. Частота CEF автоматически подстраивается
-под монитор, включая 120/144/165 Гц. В Wayland-сессии частота читается из wl_output,
-в X11 — из RandR; при изменении режима открытые вкладки обновляются автоматически.
-Программный вывод использует MIT-SHM и синхронизированную очередь XPresent из двух буферов.
-Если расширения недоступны, готовое изображение копируется из offscreen pixmap.
-Буфер окна сохраняется между кадрами, при прокрутке обновляется область сайта.
-Фактическая частота кадров зависит от страницы, размера окна и производительности CPU.
-Для сборки нужны headers wayland-client, X11/Xext, Xpresent и Xrandr;
-для запуска — libwayland-client.so.0 и прежние зависимости X11/CEF.
-
-## Настройки и язык
-
-Откройте **Settings / Настройки** внизу боковой панели или шестерёнку в тулбаре.
-Каталог содержит **85 настроек** в десяти разделах и поиск по английским / русским названиям
-и описаниям. **Ctrl F** внутри настроек фокусирует поиск. Выбор **Основные → Язык интерфейса**
-сразу переключает панели, новую вкладку, меню и уведомления между Русским и English.
-
-| Раздел | Возможности |
-|---|---|
-| Основные | Язык, поисковик, восстановление сессии, домашняя страница, запуск и новая вкладка, язык сайтов |
-| Вкладки | Открытие рядом / в конце, фоновые ссылки, выбор после закрытия, подтверждение выхода, средняя кнопка, колесо, звук |
-| Внешний вид | Масштаб интерфейса 75–200%, шесть тем, акцентный цвет, значки и адреса сайтов, предпросмотр ссылок, анимация |
-| Веб-страницы | Масштаб, размер / семейство / минимум шрифта, JavaScript, картинки, шрифты сайтов, Local Storage, поля и Tab-навигация |
-| Приватность | Лимит / срок истории, источники / число подсказок, очистка при выходе, DNT и Referer |
-| Разрешения | Нежелательные окна, JS-диалоги, уведомления, местоположение, камера, микрофон, clipboard, MIDI, датчики |
-| Загрузки | Собственная папка, запрос имени, дата в имени, показ / закрытие панели, уведомления |
-| Защита | Реклама / трекеры, косметические фильтры, Dark Reader, яркость / контраст / сепия, исключения сайтов и расширения |
-| Данные | Очистка истории, cookie, сетевого кэша и сброс настроек |
-| Начальная страница | Масштаб 50–200%, ширина и фон, свой заголовок и подпись, логотип, часы, фоновое изображение и автопалитра, колонки / вид быстрых ссылок |
-
-**Внешний вид → Масштаб интерфейса** меняет вкладки, панели, кнопки, надписи и окна расширений
-сразу, без перезапуска. Выбор сохраняется. В маленьком окне масштаб автоматически ограничивается,
-чтобы элементы оставались доступны; рядом показан фактически применённый процент. При увеличении
-окна выбранный масштаб восстанавливается. **Ctrl Shift 0** сбрасывает интерфейс до 100%.
-Масштаб сайтов и отдельная настройка начальной страницы сохраняют свои значения.
-
-Настройки сохраняются автоматически. Масштаб сразу меняет открытые страницы; **Ctrl 0** возвращает
-выбранное значение. Параметры содержимого с пометкой **«Для новых вкладок»** применяются при создании
-новой CEF-вкладки. Изменение предпочтительного языка сайтов требует перезапуска Aura.
-**Alt Home** открывает домашнюю страницу. Язык интерфейса не переводит тексты сайтов.
-
-История может хранить 100–10 000 записей; срок — до очистки, 7 / 30 / 90 дней или год.
-Отключение записи не удаляет прежнюю историю. Очистка cookie завершает сессии на сайтах;
-сброс настроек сохраняет историю, закладки и скачанные файлы. Для очистки данных есть подтверждение.
-Очистка при выходе выполняется при обычном завершении, а не при аварийной остановке процесса.
-DNT отправляет запрос сайтам, а не блокирует отслеживание.
-
-В небольшом окне содержимое прокручивается колесом, Page Up / Page Down / Home / End или нажатием
-на полосу прокрутки. Заголовок, поиск и категории остаются на месте. Профили прежних версий
-читаются с сохранением истории, закладок и вкладок; новые параметры получают значения по умолчанию.
-
-## Кастомизация начальной страницы
-
-Кнопка **Настроить страницу** внизу новой вкладки открывает отдельный раздел настроек.
-Слева находятся **− / 100% / +**: процент возвращает 100%. Также работают Ctrl +/−,
-Ctrl+колесо и Ctrl+0. Масштаб начальной страницы хранится отдельно от масштаба сайтов.
-Если при крупном масштабе содержимое не помещается, используйте колесо или Page Up / Page Down,
-Home / End. Кнопки настройки и масштаба остаются видимыми.
-
-Можно изменить ширину, убрать свечение, логотип или подпись, задать собственное приветствие,
-выбрать карточки / строки и число колонок ссылок (до шести).
-Кнопка **Быстрые ссылки** открывает список с добавлением, изменением названия / адреса,
-удалением, отменой удаления и стрелками изменения порядка. Три прежних адреса автоматически
-переносятся в этот список. Поддерживаются http:// и https://; список рассчитан на сотни ссылок
-(защитный предел — 1000). Правый клик по карточке также открывает управление ссылкой. Приватные вкладки сохраняют
-собственное пояснение о приватности. Акцентный цвет всей оболочки меняется в **Внешний вид**.
-
-**Настройки → Начальная страница → Фоновое изображение → Обзор…** — выбор PNG / JPEG
-с компьютера. Можно также вставить абсолютный путь и нажать «Сохранить» или Enter.
-Изображение копируется в профиль: перемещение исходного файла не убирает фон.
-«Заполнить» обрезает края, «Вписать» показывает изображение целиком. Есть затемнение 0–80%.
-**Подобрать тему по изображению** автоматически меняет цвета всей оболочки, сохраняя
-выбранный светлый / тёмный режим. Выключите эту настройку для собственной темы и акцента.
-Для читаемости на изображении используется общая подложка под содержимым.
-
-Поддерживаются PNG / JPEG до 20 МБ, до 8192 пикселей по стороне. Ограничения в 16 мегапикселей больше нет. Размеры проверяются до декодирования;
-изображение уменьшается для хранения в оперативной памяти. Оригинал не изменяется.
-Выбор файла использует установленный `zenity` с программной отрисовкой; при его отсутствии
-можно ввести путь вручную. Команда «Убрать фоновое изображение» удаляет только копию в профиле.
-
-
-## Клавиатура
-
-| Комбинация | Действие |
-|---|---|
-| Ctrl L | Адресная строка |
-| Alt Home | Домашняя страница |
-| Ctrl T / Ctrl W | Новая / закрыть вкладку |
-| Ctrl Shift T | Восстановить закрытую вкладку |
-| Ctrl Tab / Ctrl Shift Tab | Следующая / предыдущая вкладка |
-| Ctrl 1…8 / Ctrl 9 | Выбрать вкладку / последнюю |
-| Ctrl Shift N | Новая приватная вкладка |
-| Alt ← / Alt → | Назад / вперёд |
-| Ctrl R / F5 | Обновить или остановить загрузку |
-| Ctrl Shift R | Reload без cache |
-| Ctrl + / Ctrl − / Ctrl 0 | Масштаб сайта; на начальной странице — её отдельный масштаб |
-| Ctrl D / Ctrl B | Закладка / панель закладок |
-| Ctrl H / Ctrl J | История / загрузки |
-| Ctrl F / F3 / Shift F3 | Поиск / следующее / предыдущее совпадение |
-| Ctrl P / F12 | Печать / DevTools |
-| F6 / F7 | Сменить ауру / светлую-тёмную тему |
-| F10 | Перенести фокус со страницы в интерфейс браузера |
-| Tab / Shift Tab | Следующий / предыдущий элемент открытой панели |
-| Enter / Space | Активировать выделенный нативный элемент |
-| Page Up / Page Down / Home / End | Прокрутка открытой панели |
-| Ctrl Q / Ctrl Shift W | Закрыть браузер |
-
-Правый клик по вкладке открывает меню pin/mute/duplicate/close. Средний клик закрывает вкладку.
-Заголовок и края окна позволяют перемещать и менять размер окна; справа — minimize/maximize/close.
-
-## Блокировка рекламы, Dark Reader и расширения
-
-Кнопка **щита** справа от адресной строки показывает число заблокированных запросов,
-позволяет приостановить блокировку или Dark Reader на текущем сайте и открыть настройки защиты.
-Блокировщик включён по умолчанию: **Brave adblock-rust 0.13.3 + EasyList / EasyPrivacy**.
-Он отменяет подходящие сетевые запросы до загрузки и скрывает рекламные элементы,
-в том числе добавленные после загрузки. Исключения фильтров учитываются; localhost,
-например, исключён из общих косметических фильтров самим EasyList.
-
-В разделе **Защита → Dark Reader** доступны «Выключен», «Всегда включён» и «Как тема Aura»,
-а также яркость, контраст, сепия и домены-исключения. Это встроенная библиотека
-**Dark Reader 4.9.133** с динамической темой. Параметры применяются к открытым страницам.
-Скрипты защиты исполняются в отдельном мире CEF; глобальная CSP / web security не отключаются.
-
-Кнопка **пазла** открывает менеджер расширений. Откройте магазин Chrome и на странице
-расширения нажмите собственную кнопку **«Установить в Aura»**. Другой способ — вставить в менеджер
-ссылку из Chrome Web Store, ID расширения или полный путь к подписанному `.crx`.
-Aura скачает пакет, проверит подпись CRX3 и соответствие ID, затем покажет разрешения.
-Для завершения нажмите «Установить». Доступны отключение, удаление, страницы параметров
-и открытие popup поверх текущей страницы. Для обновления повторно загрузите тот же ID и подтвердите разрешения.
-**Установка, обновление, отключение и удаление вступают в силу после перезапуска Aura.**
-
-Popup расширения открывается как компактный оверлей под панелью браузера: он подстраивается
-под содержимое и закрывается по Escape, клику снаружи, кнопке закрытия или повторному
-нажатию иконки. Отдельная вкладка для popup не создаётся; страницы параметров открываются во вкладке.
-
-Нажмите **«Закрепить»** в карточке расширения или значок булавки в заголовке popup,
-чтобы добавить его иконку рядом с адресной строкой. Закрепление сохраняется сразу и действует
-после перезапуска. Открепить можно там же или через правый клик по иконке на панели.
-Если все иконки не помещаются, остальные расширения доступны через кнопку пазла.
-В приватных вкладках закреплённые иконки остаются видимыми, но popup недоступен.
-
-
-Поддерживаются расширения **Manifest V3**. Проверены content scripts, service workers,
-runtime messaging, storage, declarativeNetRequest и страницы расширений. CEF OSR / Alloy
-не предоставляет обычную панель Chrome и полноценную модель `chrome.tabs`: например,
-`tabs.query` может вернуть пустой список. Расширения с такими зависимостями могут работать частично;
-совместимость со всем магазином не заявляется. MV2 отклоняется с объяснением.
-Расширения устанавливаются для обычного профиля; приватным вкладкам доступ не предоставляется.
-
-Списки блокировки поставляются локальными снимками (источники и SHA-256 —
-`resources/protection/dependencies.json`); автоматическое обновление пока не реализовано.
-Продвинутые scriptlets, процедурные косметические фильтры и подмена redirect-ресурсов
-пока не подключены. Блокировка всей рекламы, включая встроенную видеорекламу, не гарантируется.
-Сведения о лицензиях находятся в `resources/vendor/`.
-
-## Данные
-
-`run.sh` хранит профиль рядом с проектом в `.aura-profile/`:
-
-- `wallpaper.png` / `wallpaper.jpg` — импортированная копия фонового изображения;
-- `profile.toml` — быстрые ссылки, история Aura (лимит настраивается), закладки, сессия, язык и настройки;
-- `cache/` — постоянный профиль CEF, cookies и site storage;
-- `extensions/` — проверенные пакеты и отдельный реестр включённых расширений;
-- `downloads/` — папка скачанных файлов по умолчанию; можно выбрать другую;
-- `aura.log`, `cef.log` — журналы.
-
-«Очистить историю Aura / Clear Aura history» очищает список истории Aura; cookies/site data и внутренние данные CEF остаются.
-Приватный CEF context живёт в памяти до завершения процесса. Скачанные файлы остаются на диске.
-
-```bash
-./run.sh --data-dir=/tmp/aura-test-profile --scale=1.5
-```
-
-При прямом запуске `aura_browser` без launcher профиль создаётся в `profile/` рядом с executable.
-`--report=FILE.json` включает локальный отчёт состояния и финальную сводку при закрытии;
-отчёт может содержать URL открытых вкладок.
-
-## Сборка
-
-Нужны Clang с C++20, CMake 3.31+, Python 3.12+, pkg-config, заголовки X11/EGL/GLES3,
-Rust / Cargo 1.88+, заголовки OpenSSL и libarchive,
-и runtime-библиотеки CEF для вашего дистрибутива. При первой сборке Cargo скачивает
-зафиксированные в `core/adblock/Cargo.lock` зависимости; повторная сборка использует локальный кэш. GN/Ninja скачиваются bootstrap-скриптом.
-
-```bash
-python3 scripts/bootstrap.py --jobs 8
-cmake --preset linux-x64-release
-cmake --build --preset linux-x64-release --parallel 8
-ctest --preset linux-x64-release
-./run.sh
-```
-
-Первичная сборка использует несколько гигабайт диска. Зависимости находятся в `third_party/`;
-bootstrap не устанавливает системные пакеты. URL и SHA-256 закреплены в `third_party/dependencies.lock.json`.
-Повторная сборка из кэша: `python3 scripts/bootstrap.py --offline --jobs 8`.
-
-## Проверка настоящего браузера
+[Windows browser CI](https://github.com/Sttanors/aura-browser/actions/runs/39395547988)
+passed compilation and 38 CTest cases (one optional external CRX fixture skipped), plus real native
+browser integration: page rendering, `Windows Привет` Unicode input, navigation, JavaScript dialog,
+English selection and interface scale 125% retained after restarting.
+Linux passed 37 CTest cases and isolated browser/interface integration at scales 75–200%.
 
 ```bash
 python3 scripts/verify_browser.py --suite=all
 ```
 
-Нужны `weston`, `Xwayland`, `xdotool` и ImageMagick `import`; для UTF-8 clipboard в сценариях настроек и расширений — `xclip`.
-Wrapper создаёт собственный Weston headless/Pixman и Xwayland SHM с отключённым GLX.
-Он не использует DISPLAY/Wayland-сокет пользовательского рабочего стола.
-Прямой `smoke_browser.py` отказывается запускаться вне изолированного дисплея.
-Системная раскладка не меняется; для воспроизводимости используется локальный XIM.
-Проверяются адресная строка, ввод в страницу, навигация, вкладки, bookmark, find, JavaScript dialog,
-скачивание с проверкой байтов, изоляция cookie приватной вкладки и повторный запуск с восстановлением сессии.
-Сценарий настроек проверяет поиск по каталогу, сохранение параметров, реальный CEF zoom 125%,
-выполнение / блокировку JavaScript, размер шрифта, изображения и Local Storage, заголовки DNT / Referer,
-запрос разрешения, подавление JS-диалогов, выбор папки / имени файла, очистку cookie и кэша,
-перезапуск с домашней страницей / языком сайтов, очистку при выходе и сброс настроек.
-Сценарий защиты проверяет реальные сетевые / косметические фильтры, Dark Reader,
-подпись и разрешения CRX3, MV3 worker / storage / DNR, popup / options, приватность,
-перезапуск, отключение, удаление и загрузку Chrome Web Store.
-Можно запускать отдельно: `--suite=browser`, `--suite=settings` или `--suite=features`.
-Отчёты и настоящие снимки окна: `artifacts/browser-smoke/`, `artifacts/settings-smoke/`
-и `artifacts/features-smoke/`.
+Linux GUI checks require `weston`, `Xwayland`, `xdotool`, ImageMagick `import` and `xclip`.
+Wallpaper checks also use `zenity` and Pillow. The wrapper creates its own headless Weston/Pixman
+and Xwayland SHM display with GLX disabled; it does not use your desktop display sockets.
+Direct GUI smoke scripts refuse to run outside that isolated display.
+Checks cover navigation/input, tabs, bookmarks/find, dialogs/downloads, private cookies,
+settings/content permissions, protection/extensions and persistence.
+Individual suites include `browser`, `settings`, `features`, `interface` and `wallpaper`.
+Reports/screenshots are written under `artifacts/`. Windows GUI checks run only on disposable CI runners.
 
-## Код
-
-| Каталог | Назначение |
-|---|---|
-| `app/browser_main.cpp` | Запуск обычного браузера и CEF lifecycle |
-| `core/browser/` | Вкладки, request contexts, профиль, история, загрузки, CEF handlers |
-| `ui/browser_ui.*` | Skia UI, адресная строка, NTP, панели и маршрутизация ввода |
-| `platform/linux/x11/browser_window.*` | Linux-окно, EGL/Ganesh, XIM, clipboard, caption controls |
-| `common/` | Paint buffers, UTF-8 editor, геометрия и message-pump schedule |
-| `design/tokens.json` | Палитры, типографика, spacing и motion tokens |
-| `docs/milestones/M1.md` | Объём и результаты проверки браузера |
-| `docs/milestones/M2.md` | Первые настройки и локализация |
-| `docs/milestones/M7.md` | Динамические ссылки, локальный фон и автоматическая палитра |
-| `docs/milestones/M6.md` | Кастомизация и отдельный масштаб начальной страницы |
-| `docs/milestones/M3.md` | Расширенный каталог настроек и проверки поведения CEF |
-| `docs/milestones/M4.md` | Блокировка рекламы, Dark Reader, расширения MV3 и проверка CRX3 |
-| `docs/milestones/M5.md` | Popup-оверлей, иконки и закрепление расширений |
-
-## Диагностический стенд M0
-
-M0 сохранён как отдельный executable; `run.sh` его больше не запускает:
-
-```bash
-./build/linux-x64-release/aura_diagnostic
-python3 scripts/smoke.py --software-rendering --extension-probe
-python3 scripts/verify_m0.py --software-rendering
-```
-
-Windows x64 host M0 сохранён; его аппаратная проверка в текущей Linux-среде не выполнена.
-Обычный браузерный executable этого этапа собирается для Linux.
-GUI-проверка M0 также защищена от запуска на реальном рабочем столе; headless captures доступны отдельно.
-
-## Архивы
+## Packaging and source layout
 
 ```bash
 python3 scripts/package.py --source
 python3 scripts/package.py
+python3 scripts/build_linux_installer.py
+python3 -m unittest discover -s tests/python -p test_installers.py
 ```
 
-Исходный архив включает код браузера, UI, тесты и bootstrap. Runtime-архив содержит CEF, executable,
-ресурсы и лицензии; системные библиотеки Linux в него не входят.
+Runtime archives include CEF, the application, resources and third-party notices.
+Linux system libraries are not bundled. Source archives contain code, tests, packaging and bootstrap scripts.
+The Windows installer is built with [Inno Setup](https://jrsoftware.org/isinfo.php);
+`Preview installers` CI packages the checksum-pinned preview.1 runtime and tests install/reinstall/uninstall.
 
-Изменения интерфейса и границы доступности описаны в [дизайн-заметках](docs/design/interface-refinement.md).
+| Directory | Purpose |
+|---|---|
+| `app/` | Browser entry point and CEF lifecycle |
+| `core/browser/` | Tabs, request contexts, profiles, history, downloads and CEF handlers |
+| `ui/` | Native Skia interface and input routing |
+| `platform/linux/x11/`, `platform/windows/` | Platform windows, rendering and input |
+| `common/` | Paint buffers, UTF-8 editor, geometry and scheduling |
+| `design/` | Theme, typography, spacing and motion tokens |
+| `packaging/` | Linux shell installer and Windows Inno Setup definitions |
+| `docs/milestones/` | Detailed development/validation notes (currently mostly Russian) |
 
-GUI-сценарий `--suite=wallpaper` дополнительно использует `zenity` и Python Pillow для тестовых PNG/JPEG.
+The legacy M0 diagnostic executable remains separate from the browser:
+`./build/linux-x64-release/aura_diagnostic` and `scripts/verify_m0.py --software-rendering`.
+GPU validation is separate and is not covered by normal software-rendered browser checks.
+See [interface design notes](docs/design/interface-refinement.md) for implementation/accessibility details.

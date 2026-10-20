@@ -9,8 +9,8 @@ from dependencies import ROOT, host
 
 
 def source_archive(output: Path):
-    directories = ("app", "common", "core", "render", "ui", "platform", "cmake", "design", "scripts", "tests", "docs", ".github")
-    files = [ROOT / name for name in ("CMakeLists.txt", "CMakePresets.json", "README.md", ".gitignore", ".clang-format", "run.sh", "run.ps1", "vcpkg.json", ".gitattributes")]
+    directories = ("app", "common", "core", "render", "ui", "platform", "cmake", "design", "scripts", "tests", "docs", ".github", "packaging")
+    files = [ROOT / name for name in ("CMakeLists.txt", "CMakePresets.json", "README.md", "README.ru.md", ".gitignore", ".clang-format", "run.sh", "run.ps1", "vcpkg.json", ".gitattributes")]
     for directory in directories:
         files += [p for p in (ROOT / directory).rglob("*") if p.is_file() and "__pycache__" not in p.parts]
     files += [ROOT / "resources/default.toml", ROOT / "third_party/dependencies.lock.json"]
