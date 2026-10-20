@@ -58,7 +58,7 @@ struct BrowserDialog {
     TextEditor input;
     CefRefPtr<CefJSDialogCallback> callback;
     std::function<void(bool, const std::string &)> action;
-    bool owned = false, permission = false;
+    bool owned = false, permission = false, sensitive = false;
     uint64_t permission_id = ~uint64_t{0};
 };
 struct RequestPolicy {
@@ -158,7 +158,7 @@ class BrowserController {
     void open_new_tab(bool private_tab = false);
     std::filesystem::path downloads_directory() const;
     void clear_data(const std::string &kind);
-    void confirm_action(std::string title, std::string message, std::function<void()> action);
+    void confirm_action(std::string title, std::string message, std::function<void()> action, bool sensitive = false);
     void cancel_permissions(int tab_id);
     void configure_permissions(CefRefPtr<CefRequestContext> context, const std::string &url = "",
                                const std::string &top = "");

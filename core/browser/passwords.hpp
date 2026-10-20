@@ -1,6 +1,7 @@
 #pragma once
 #include <array>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <future>
@@ -51,6 +52,7 @@ class PasswordManager {
     ~PasswordManager();
     PasswordVault vault;
     bool busy = false;
+    uint64_t generation = 0;
     std::string status;
     void run(std::function<std::string()> action);
     bool tick(std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());

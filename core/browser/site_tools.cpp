@@ -246,6 +246,7 @@ void BrowserController::page_login(bool fill, size_t index) {
     const auto url = t->page.url, origin = password_origin(url);
     const int id = t->id;
     const auto navigation = t->navigation_serial;
+    const auto generation = passwords.generation;
     if (fill) {
         if (index >= passwords.vault.logins().size())
             return;
@@ -257,11 +258,11 @@ void BrowserController::page_login(bool fill, size_t index) {
     }
     passwords.touch();
     // Bind the request to the current document. It cannot survive navigation or locking.
-    auto valid = [this, id, url, navigation] {
+    auto valid = [this, id, url, navigation, generation] {
         auto tab = this->tab(id);
         return tab && tab->browser && tab->devtools && !tab->closing && !tab->private_tab &&
                !tab->loading && tab->navigation_serial == navigation && tab->page.url == url &&
-               !passwords.busy && passwords.vault.unlocked();
+               !passwords.busy && passwords.generation == generation && passwords.vault.unlocked();
     };
     t->devtools->call(
         "Page.getFrameTree", "{}",
@@ -324,13 +325,15 @@ void BrowserController::page_login(bool fill, size_t index) {
                             login->password = value->GetString("password");
                             if (login->origin.empty() || login->password.empty())
                                 return;
-                            confirm_action(tr("Save this login?"),
-                                           login->origin + "\n" + login->username, [this, login] {
-                                               passwords.run([this, login] {
-                                                   passwords.vault.save(*login);
-                                                   return "Login saved.";
-                                               });
-                                           });
+                            confirm_action(
+                                tr("Save this login?"), login->origin + "\n" + login->username,
+                                [this, login] {
+                                    passwords.run([this, login] {
+                                        passwords.vault.save(*login);
+                                        return "Login saved.";
+                                    });
+                                },
+                                true);
                         });
                     erase_secret(expression);
                     erase_secret(params);

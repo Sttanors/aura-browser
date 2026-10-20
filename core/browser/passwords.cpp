@@ -419,6 +419,7 @@ PasswordManager::~PasswordManager() {
 void PasswordManager::run(std::function<std::string()> action) {
     if (busy)
         return;
+    ++generation;
     status = "Working...";
     busy = true;
     touch();
@@ -453,6 +454,7 @@ void PasswordManager::touch() {
 }
 void PasswordManager::lock() {
     if (!busy) {
+        ++generation;
         vault.lock();
         status = "Password vault locked.";
     }

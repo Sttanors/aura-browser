@@ -169,7 +169,9 @@ TEST_F(Passwords, WorkerCompletesBeforeIdleLockAndSecretsAreDiscarded) {
     }
     ASSERT_FALSE(manager.busy);
     ASSERT_TRUE(manager.vault.unlocked());
+    const auto generation = manager.generation;
     EXPECT_TRUE(manager.tick(std::chrono::steady_clock::now() + std::chrono::minutes(16)));
+    EXPECT_GT(manager.generation, generation);
     EXPECT_FALSE(manager.vault.unlocked());
     EXPECT_TRUE(manager.vault.logins().empty());
 }

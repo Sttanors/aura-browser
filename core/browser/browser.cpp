@@ -267,7 +267,10 @@ void BrowserController::tick() {
     if (background_updates_ && profile.check_updates && updates.due())
         updates.check();
     if (passwords.tick()) {
-        if (!passwords.vault.unlocked()) ui->passwords_locked();
+        if (!passwords.vault.unlocked()) {
+            ui->passwords_locked();
+            std::erase_if(dialogs, [](const auto &d) { return d.sensitive; });
+        }
         changed();
     }
     if (importer.tick())
@@ -956,8 +959,9 @@ void BrowserController::download_action(std::size_t i, bool cancel) {
         d.callback->Pause();
 }
 void BrowserController::confirm_action(std::string title, std::string message,
-                                       std::function<void()> action) {
+                                       std::function<void()> action, bool sensitive) {
     BrowserDialog dialog;
+    dialog.sensitive = sensitive;
     dialog.origin = std::move(title);
     dialog.message = std::move(message);
     dialog.owned = true;
