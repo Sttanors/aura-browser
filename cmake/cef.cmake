@@ -9,6 +9,9 @@ if(WIN32)
   set(USE_SANDBOX ON CACHE BOOL "" FORCE)
   # Aura uses Win32/WRL directly. Avoid the SDK ATL search walking outside VS.
   set(USE_ATL OFF CACHE BOOL "Aura does not require ATL" FORCE)
+  # llvm-mt does not support updating bootstrap.exe resources in place.
+  find_program(AURA_WINDOWS_MT mt.exe HINTS "$ENV{WindowsSdkVerBinPath}/x64" REQUIRED)
+  set(CMAKE_MT "${AURA_WINDOWS_MT}")
 else()
   set(AURA_PLATFORM linux64)
 endif()

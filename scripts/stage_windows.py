@@ -2,6 +2,8 @@
 import shutil
 import subprocess
 import sys
+import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 destination, cef, skia = map(Path, sys.argv[1:4])
@@ -15,3 +17,12 @@ for filename in (() if executable.stem == "aura_browser" else ("libEGL.dll", "li
 manifest = Path(__file__).resolve().parents[1] / "platform/windows/aura.manifest"
 mt = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] else "mt.exe"
 subprocess.run([mt, "-nologo", "-manifest", str(manifest), f"-outputresource:{executable};#1"], check=True)
+
+# Verify the actual PE resource, not just the manifest tool's return code.
+with tempfile.TemporaryDirectory(prefix="aura-manifest-") as temporary:
+    extracted = Path(temporary) / "embedded.manifest"
+    subprocess.run([mt, "-nologo", f"-inputresource:{executable};#1", f"-out:{extracted}"], check=True)
+    tree = ET.parse(extracted)
+    dpi = tree.find(".//{http://schemas.microsoft.com/SMI/2016/WindowsSettings}dpiAwareness")
+    if dpi is None or dpi.text != "PerMonitorV2":
+        raise RuntimeError("The browser bootstrap is missing its per-monitor DPI manifest")
