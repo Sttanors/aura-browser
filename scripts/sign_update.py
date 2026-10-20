@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 import subprocess
 import time
@@ -28,7 +29,10 @@ def sign(key: Path, version: str, sequence: int, artifacts: dict[str, Path], out
         raise ValueError('Invalid version, sequence or artifact kinds')
     public = subprocess.run(['openssl', 'pkey', '-in', str(key), '-pubout'],
                             check=True, capture_output=True).stdout.decode('ascii')
-    if public not in (ROOT/'common/update_key.hpp').read_text():
+    def identity(text):
+        match = re.search(r'-----BEGIN PUBLIC KEY-----(.*?)-----END PUBLIC KEY-----', text, re.S)
+        return ''.join(match[1].split()) if match else None
+    if not identity(public) or identity(public) != identity((ROOT/'common/update_key.hpp').read_text()):
         raise ValueError('Signing key does not match the public key trusted by Aura')
     now = int(time.time())
     expires = expires if expires is not None else now + 90 * 86400

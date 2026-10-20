@@ -43,6 +43,9 @@ class SigningTests(unittest.TestCase):
             artifact.write_bytes(b'abc')
             with patch.object(sign_update, 'ROOT', root):
                 manifest, signature = sign_update.sign(key, '0.3.0', 5, {'linux-run': artifact}, root/'output')
+                # PEM identity must survive native OpenSSL / Git LF and CRLF differences.
+                (root/'common/update_key.hpp').write_bytes(public.replace(b'\r', b'').replace(b'\n', b'\r\n'))
+                manifest, signature = sign_update.sign(key, '0.3.0', 5, {'linux-run': artifact}, root/'output')
                 data = tomllib.loads(manifest.read_text())
                 self.assertEqual(data['artifacts'][0]['size'], 3)
                 self.assertEqual(data['artifacts'][0]['sha256'],
