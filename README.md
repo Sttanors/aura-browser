@@ -32,8 +32,8 @@ Close Aura before upgrading.
 | Distribution (x86_64) | Install downloaded package | Remove |
 |---|---|---|
 | Arch Linux / CachyOS (current rolling) | `sudo pacman -U ./aura-browser-0.2.0rc3-1-x86_64.pkg.tar.gz` | `sudo pacman -R aura-browser` |
-| Debian 13+ | `sudo apt install './aura-browser_0.2.0~preview.3-1_amd64.deb'` | `sudo apt remove aura-browser` |
-| Fedora 44 | `sudo dnf install './aura-browser-0.2.0~preview.3-1.x86_64.rpm'` | `sudo dnf remove aura-browser` |
+| Debian 13+ | `sudo apt install './aura-browser_0.2.0-preview.3-1_amd64.deb'` | `sudo apt remove aura-browser` |
+| Fedora 44 | `sudo dnf install './aura-browser-0.2.0-preview.3-1.x86_64.rpm'` | `sudo dnf remove aura-browser` |
 
 Native package managers install required system libraries. These packages are built against Debian 13's
 ABI, rather than the newer ABI of the original development machine; Debian 12 is not a supported target.

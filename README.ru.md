@@ -44,8 +44,8 @@ Windows x64 проверена в CI: сборка, 38 тестов CTest (од�
 | Дистрибутив (x86_64) | Установка скачанного пакета | Удаление |
 |---|---|---|
 | Arch Linux / CachyOS (актуальный rolling) | `sudo pacman -U ./aura-browser-0.2.0rc3-1-x86_64.pkg.tar.gz` | `sudo pacman -R aura-browser` |
-| Debian 13+ | `sudo apt install './aura-browser_0.2.0~preview.3-1_amd64.deb'` | `sudo apt remove aura-browser` |
-| Fedora 44 | `sudo dnf install './aura-browser-0.2.0~preview.3-1.x86_64.rpm'` | `sudo dnf remove aura-browser` |
+| Debian 13+ | `sudo apt install './aura-browser_0.2.0-preview.3-1_amd64.deb'` | `sudo apt remove aura-browser` |
+| Fedora 44 | `sudo dnf install './aura-browser-0.2.0-preview.3-1.x86_64.rpm'` | `sudo dnf remove aura-browser` |
 
 Пакетный менеджер установит необходимые системные библиотеки. Сборка использует ABI Debian 13,
 а не более новые библиотеки компьютера разработчика. Debian 12 не поддерживается.

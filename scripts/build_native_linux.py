@@ -148,9 +148,9 @@ def build(archive: Path, output: Path):
         stage_runtime(archive.resolve(),stage)
         subprocess.run([str(stage/'opt/aura-browser/aura_browser'),'--help'],check=True,stdout=subprocess.DEVNULL)
         for name, builder in [
-            ('aura-browser_0.2.0~preview.3-1_amd64.deb',build_deb),
+            ('aura-browser_0.2.0-preview.3-1_amd64.deb',build_deb),
             ('aura-browser-0.2.0rc3-1-x86_64.pkg.tar.gz',build_arch),
-            ('aura-browser-0.2.0~preview.3-1.x86_64.rpm',build_rpm),
+            ('aura-browser-0.2.0-preview.3-1.x86_64.rpm',build_rpm),
         ]:
             path=output.resolve()/name
             builder(stage,path)

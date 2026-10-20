@@ -21,9 +21,9 @@ docker run --rm --user "$(id -u):$(id -g)" --cpus=4 --memory=6g --memory-swap=6g
 if [[ ${1:-} == --test ]]; then
     for task_family in debian arch fedora; do
         case $task_family in
-            debian) task_image=debian:trixie-slim; task_package='aura-browser_0.2.0~preview.3-1_amd64.deb' ;;
+            debian) task_image=debian:trixie-slim; task_package='aura-browser_0.2.0-preview.3-1_amd64.deb' ;;
             arch) task_image=archlinux:base; task_package=aura-browser-0.2.0rc3-1-x86_64.pkg.tar.gz ;;
-            fedora) task_image=fedora:44; task_package='aura-browser-0.2.0~preview.3-1.x86_64.rpm' ;;
+            fedora) task_image=fedora:44; task_package='aura-browser-0.2.0-preview.3-1.x86_64.rpm' ;;
         esac
         docker run --rm --cpus=2 --memory=2g --memory-swap=2g --pids-limit=512 \
             -e AURA_PACKAGE_TEST_CONTAINER=1 -v "$task_root:/source:ro" \
