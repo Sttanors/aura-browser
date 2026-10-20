@@ -15,7 +15,7 @@ def source_archive(output: Path):
         files += [p for p in (ROOT / directory).rglob("*") if p.is_file() and "__pycache__" not in p.parts]
     files += [ROOT / "resources/default.toml", ROOT / "third_party/dependencies.lock.json"]
     files += list((ROOT / "third_party/patches").glob("*"))
-    files += [p for folder in ("vendor", "protection") for p in (ROOT/"resources"/folder).rglob("*") if p.is_file()]
+    files += [p for folder in ("vendor", "protection", "branding") for p in (ROOT/"resources"/folder).rglob("*") if p.is_file()]
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED, strict_timestamps=False) as archive:
         for file in sorted(set(files)):
             if file.is_file(): archive.write(file, Path("Aura2") / file.relative_to(ROOT))
@@ -31,7 +31,7 @@ def runtime_archive(output: Path):
         cef = ROOT / "third_party/src" / f"cef-{platform}"
         for folder in ("Release", "Resources"):
             for source in (cef / folder).rglob("*"):
-                if source.is_file() and source.suffix not in {".lib", ".a", ".pdb"}:
+                if source.is_file() and source.name != "bootstrap.exe" and source.suffix not in {".lib", ".a", ".pdb"}:
                     target = stage / source.relative_to(cef / folder)
                     target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(source, target)
@@ -40,7 +40,7 @@ def runtime_archive(output: Path):
             for name in ("aura_browser.dll",):
                 shutil.copy2(build / name, stage / name)
         shutil.copytree(ROOT / "resources/fonts", stage / "fonts")
-        for folder in ("vendor", "protection"):
+        for folder in ("vendor", "protection", "branding"):
             shutil.copytree(ROOT/"resources"/folder, stage/folder)
         shutil.copy2(ROOT / "resources/default.toml", stage / "default.toml")
         license_names = ("LICENSE", "LICENSE.txt", "LICENSE.TXT", "OFL.txt", "CREDITS.html", "FTL.TXT", "zlib.h")

@@ -72,6 +72,9 @@ jobs:
       - name: Package portable browser
         shell: pwsh
         run: ./scripts/windows_ci.ps1 -Stage package
+      - name: Build and verify branded installer
+        shell: pwsh
+        run: ./scripts/windows_installer_ci.ps1 -UseLocalArchive
       - uses: actions/cache/save@v4
         if: always() && steps.configure.outcome == 'success' && steps.dependencies.outputs.cache-hit != 'true'
         with:
@@ -89,6 +92,8 @@ jobs:
           path: |
             artifacts/aura2-windows64.zip
             artifacts/aura2-windows64.zip.sha256
+            artifacts/aura2-windows64-setup.exe
+            artifacts/aura2-windows64-setup.exe.sha256
           compression-level: 0
       - uses: actions/upload-artifact@v4
         if: always()

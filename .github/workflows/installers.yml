@@ -1,12 +1,6 @@
 name: Preview installers
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'packaging/windows/**'
-      - 'scripts/windows_installer_ci.ps1'
-      - '.github/workflows/installers.yml'
 permissions:
   contents: read
 jobs:

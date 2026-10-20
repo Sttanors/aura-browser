@@ -54,6 +54,10 @@ def main():
                 state = wait(lambda s: any(t.get('title') == 'Alpha' and t.get('frames', 0) > 0 for t in s.get('tabs', [])), 'Alpha must load and paint')
                 window = state['window']
                 assert user.IsWindow(window), 'Report must identify the real native browser window'
+                user.GetClassLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
+                user.GetClassLongPtrW.restype = ctypes.c_size_t
+                assert user.GetClassLongPtrW(window, -14), 'Window class must expose the Aura large icon'
+                assert user.GetClassLongPtrW(window, -34), 'Window class must expose the Aura small icon'
                 assert state['adblock_ready'], 'Rust ad blocker must initialize'
                 assert 'DIB' in state['renderer'], state['renderer']
                 def click(x, y):

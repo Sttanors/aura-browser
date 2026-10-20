@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 64 64">
+  <title>Aura Browser</title>
+  <rect x="1" y="1" width="62" height="62" rx="18" fill="#11182B"/>
+  <path d="M13 39 C6 18 25 7 41 13 C47 15 51 20 53 26" fill="none" stroke="#39BFB6" stroke-width="4" stroke-linecap="round"/>
+  <path d="M18 48 L29 22 Q32 16 35 22 L47 48 H39 L32 30 L26 48 Z" fill="#A7B6FF"/>
+  <path d="M23 41 Q34 47 49 36" fill="none" stroke="#EDF3FF" stroke-width="4" stroke-linecap="round"/>
+</svg>

@@ -24,6 +24,7 @@ class LinuxInstallerTests(unittest.TestCase):
             with zipfile.ZipFile(archive, 'w') as z:
                 z.writestr('Aura2/aura_browser', '#!/usr/bin/env bash\nprintf "%s\\n" "$@"\n')
                 z.writestr('Aura2/resources.pak', 'runtime')
+                z.writestr('Aura2/branding/aura.png', 'icon')
             installer = root/'Aura setup.run'
             build(archive, installer)
             env = dict(os.environ, HOME=str(home), XDG_DATA_HOME=str(data))
@@ -34,6 +35,8 @@ class LinuxInstallerTests(unittest.TestCase):
             result = run(str(launcher), '--url=https://example.com/')
             self.assertEqual(result.stdout.splitlines(), [f'--data-dir={data}/aura-browser-profile', '--url=https://example.com/'])
             desktop = data/'applications/aura-browser.desktop'
+            self.assertIn(f'Icon={data}/aura-browser/branding/aura.png',desktop.read_text())
+            self.assertIn('StartupWMClass=Aura2',desktop.read_text())
             if shutil.which('desktop-file-validate'):
                 run('desktop-file-validate', str(desktop))
             profile = data/'aura-browser-profile'

@@ -1,5 +1,7 @@
 # Aura 2 — браузер для Linux и Windows
 
+<img src="resources/branding/aura.svg" width="96" alt="Логотип Aura Browser">
+
 [English](README.md) | **Русский**
 
 Aura разрабатывается с существенной помощью ИИ — **OpenAI Codex**: при проектировании,
@@ -12,7 +14,7 @@ HTML используется только для посещаемых стра�
 
 Windows-порт использует то же приложение и интерфейс, что и Linux: **Win32 + Skia raster + CEF OSR**.
 Статус его сборки и проверок виден в [GitHub Actions](https://github.com/Sttanors/aura-browser/actions).
-Готовые portable-сборки Windows и Linux доступны в [GitHub Releases](https://github.com/Sttanors/aura-browser/releases/tag/v0.2.0-preview.2).
+Готовые portable-сборки Windows и Linux доступны в [GitHub Releases](https://github.com/Sttanors/aura-browser/releases/tag/v0.2.0-preview.3).
 Для Windows скачайте `aura2-windows64.zip`, для Linux — `aura2-linux64.zip`.
 Распакуйте архив целиком и запустите **Aura2/aura_browser.exe**. Windows 10/11 x64.
 Сборка пока не подписана; автоматического обновления нет.
@@ -24,7 +26,7 @@ Windows x64 проверена в CI: сборка, 38 тестов CTest (од�
 
 ## Установка в систему
 
-Все варианты доступны в [релизе](https://github.com/Sttanors/aura-browser/releases/tag/v0.2.0-preview.2).
+Все варианты доступны в [релизе](https://github.com/Sttanors/aura-browser/releases/tag/v0.2.0-preview.3).
 Установщики содержат тот же браузер, что и portable-архивы, и работают без скачивания его компонентов.
 
 | Платформа | Файл | Запуск |

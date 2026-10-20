@@ -1,13 +1,19 @@
+param([switch]$UseLocalArchive)
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path '.').Path
 $payload = Join-Path $root 'artifacts/installer-payload'
 New-Item -ItemType Directory -Force artifacts | Out-Null
-# Package the exact runtime already validated and published as preview.1.
-gh release download v0.2.0-preview.1 --repo Sttanors/aura-browser --pattern aura2-windows64.zip --dir artifacts --clobber
-if ($LASTEXITCODE -ne 0) { throw 'Runtime download failed' }
-$hash = (Get-FileHash artifacts/aura2-windows64.zip -Algorithm SHA256).Hash.ToLower()
-if ($hash -ne '99ad6844132b3583a7970e27897851fb1b044e969e6cc926454bdc31f38d7b37') { throw 'Runtime SHA256 mismatch' }
+if (-not $UseLocalArchive) {
+    gh release download v0.2.0-preview.3 --repo Sttanors/aura-browser --pattern aura2-windows64.zip --pattern aura2-windows64.zip.sha256 --dir artifacts --clobber
+    if ($LASTEXITCODE -ne 0) { throw 'Runtime download failed' }
+    $expected = ((Get-Content artifacts/aura2-windows64.zip.sha256) -split '\s+')[0]
+    if ((Get-FileHash artifacts/aura2-windows64.zip -Algorithm SHA256).Hash.ToLower() -ne $expected) { throw 'Runtime SHA256 mismatch' }
+}
 Expand-Archive artifacts/aura2-windows64.zip -DestinationPath $payload -Force
+$version = (Get-Item (Join-Path $payload 'Aura2/aura_browser.exe')).VersionInfo
+if ($version.ProductName -ne 'Aura Browser' -or $version.FileDescription -ne 'Aura Browser') { throw 'Executable identity missing' }
+if (-not (Test-Path (Join-Path $payload 'Aura2/branding/aura.ico'))) { throw 'Branding assets missing' }
+if (Test-Path (Join-Path $payload 'Aura2/bootstrap.exe')) { throw 'Unbranded CEF bootstrap leaked into package' }
 $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
 if (-not (Test-Path $iscc)) { throw 'Inno Setup 6 missing from CI image' }
 & $iscc "/DPayloadDir=$payload\Aura2" "/DOutputDir=$root\artifacts" packaging/windows/aura.iss

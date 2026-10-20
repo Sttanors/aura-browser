@@ -68,6 +68,8 @@ def main():
                         window=str(report.get('window',0))
                         return int(window)>0 and report.get('presentation_frames',0)>0
                     wait_until(mapped,'No browser window')
+                    branding=subprocess.check_output(['xprop','-id',window,'_NET_WM_ICON','WM_CLASS'],text=True)
+                    assert '_NET_WM_ICON(CARDINAL)' in branding and 'Aura2' in branding, 'Window icon/class missing'
                     def xdo(*args):return subprocess.check_output(['xdotool',*map(str,args)],text=True,timeout=5)
                     def title():return xdo('getwindowname',window)
                     def expect(value):wait_until(lambda:value in title(),f'Expected title {value!r}, got {title()!r}')

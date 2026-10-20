@@ -7,7 +7,7 @@
 [Setup]
 AppId={{9B640453-B1CB-4653-A0B7-7DCCBA5F3D6E}
 AppName=Aura Browser
-AppVersion=0.2.0-preview.2
+AppVersion=0.2.0-preview.3
 AppPublisher=Sttanors
 AppPublisherURL=https://github.com/Sttanors/aura-browser
 AppSupportURL=https://github.com/Sttanors/aura-browser/issues
@@ -22,6 +22,7 @@ OutputBaseFilename=aura2-windows64-setup
 Compression=lzma2/fast
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=..\..\resources\branding\aura.ico
 UninstallDisplayIcon={app}\aura_browser.exe
 CloseApplications=yes
 RestartApplications=no

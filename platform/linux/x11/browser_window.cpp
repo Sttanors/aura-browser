@@ -1,3 +1,4 @@
+#include "common/branding_data.hpp"
 #include "platform/linux/x11/browser_window.hpp"
 #include "platform/linux/x11/software_presenter.hpp"
 
@@ -655,6 +656,13 @@ BrowserWindow::BrowserWindow(int width, int height, double scale, WindowCallback
     XStoreName(p.display, p.window, "Aura");
     XClassHint hint{const_cast<char *>("aura2"), const_cast<char *>("Aura2")};
     XSetClassHint(p.display, p.window, &hint);
+    // EWMH icon pixels are CARDINALs, stored as native unsigned longs by Xlib.
+    std::vector<unsigned long> brand_icon{64, 64};
+    for (const auto pixel : brand::argb)
+        brand_icon.push_back(pixel);
+    XChangeProperty(p.display, p.window, p.atom("_NET_WM_ICON"), XA_CARDINAL, 32,
+                    PropModeReplace, reinterpret_cast<const unsigned char *>(brand_icon.data()),
+                    static_cast<int>(brand_icon.size()));
     const unsigned long pid = static_cast<unsigned long>(getpid());
     XChangeProperty(p.display, p.window, p.atom("_NET_WM_PID"), XA_CARDINAL, 32, PropModeReplace,
                     reinterpret_cast<const unsigned char *>(&pid), 1);

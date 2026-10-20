@@ -1,5 +1,7 @@
 # Aura 2 — browser for Linux and Windows
 
+<img src="resources/branding/aura.svg" width="96" alt="Aura Browser logo">
+
 **English** | [Русский](README.ru.md)
 
 Aura is a desktop browser built with **C++20, Chromium Embedded Framework (CEF OSR), and Skia**.
@@ -12,7 +14,7 @@ AI assistance does not imply that the software is error-free. Aura is currently 
 
 ## Download and install
 
-Get the files from [GitHub Releases](https://github.com/Sttanors/aura-browser/releases/tag/v0.2.0-preview.2).
+Get the files from [GitHub Releases](https://github.com/Sttanors/aura-browser/releases/tag/v0.2.0-preview.3).
 SHA-256 checksum files accompany each download. Installers contain the same browser as the portable archives
 and do not download browser components during installation.
 

@@ -1,4 +1,5 @@
 """Package CEF's sandbox bootstrap and privately built ANGLE without modifying the SDK."""
+from brand_windows import brand
 import shutil
 import subprocess
 import sys
@@ -14,6 +15,9 @@ for filename in (() if executable.stem == "aura_browser" else ("libEGL.dll", "li
     if not source.is_file():
         raise RuntimeError(f"ANGLE build output missing: {source}")
     shutil.copyfile(source, destination / filename)
+if executable.stem == "aura_browser":
+    brand(executable)
+    brand(destination / "aura_browser.dll")
 manifest = Path(__file__).resolve().parents[1] / "platform/windows/aura.manifest"
 mt = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] else "mt.exe"
 subprocess.run([mt, "-nologo", "-manifest", str(manifest), f"-outputresource:{executable};#1"], check=True)

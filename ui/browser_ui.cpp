@@ -1,4 +1,5 @@
 #include "common/platform.hpp"
+#include "common/branding_data.hpp"
 #include "ui/browser_ui.hpp"
 #include "aura/design_tokens.hpp"
 #include "common/config.hpp"
@@ -188,6 +189,12 @@ void image(SkCanvas &c, const PaintBuffer &buffer, Rect r) {
     if (im)
         c.drawImageRect(im, box(r), SkSamplingOptions(SkFilterMode::kLinear));
 }
+void brand_logo(SkCanvas &c, Rect r) {
+    static const auto logo = SkImages::DeferredFromEncodedData(
+        SkData::MakeWithoutCopy(brand::png, sizeof(brand::png)));
+    if (logo)
+        c.drawImageRect(logo, box(r), SkSamplingOptions(SkFilterMode::kLinear));
+}
 void icon(SkCanvas &c, const std::string &name, float x, float y, float size, SkColor color) {
     static const std::map<std::string, const char *> paths = {
         {"shield", "M12 2 L21 6 L20 14 Q18 20 12 23 Q6 20 4 14 L3 6 Z M8 12 L11 15 L17 9"},
@@ -370,8 +377,7 @@ void BrowserUi::draw(SkCanvas &c) {
         glow(c, {static_cast<float>(width_), static_cast<float>(height_)}, 800, t.mesh[1]);
     }
     fill(c, {240, 0, width_ - 240, height_}, 0, SkColorSetA(t.background, 80));
-    fill(c, {22, 20, 25, 25}, 9, t.accent);
-    fill(c, {29, 27, 11, 11}, 5, t.background);
+    brand_logo(c, {20, 17, 30, 30});
     label(c, medium_, "aura", 58, 40, 23, ink);
     label(c, regular_, app_.tr("Personal space"), 24, 65, 11, muted);
     auto button = [&](Rect rect, const std::string &name, bool enabled = true,
@@ -1016,10 +1022,7 @@ void BrowserUi::draw_start_page(SkCanvas &c) {
     }
     if (l.logo.height) {
         const auto r = l.logo;
-        fill(c, r, 16 * z, SkColorSetA(t.accent, 35));
-        fill(c, {r.x + int(12 * z), r.y + int(12 * z), int(22 * z), int(22 * z)}, 8 * z, t.accent);
-        fill(c, {r.x + int(18 * z), r.y + int(18 * z), int(10 * z), int(10 * z)}, 4 * z,
-             t.background);
+        brand_logo(c, r);
     }
     for (size_t i = 0; i < l.heading_lines.size(); ++i)
         centered_label(c, medium_, l.heading_lines[i],

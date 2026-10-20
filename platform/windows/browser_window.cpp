@@ -55,6 +55,10 @@ struct BrowserWindow::Impl {
         type.style = CS_DBLCLKS;
         type.lpfnWndProc = procedure;
         type.hInstance = GetModuleHandleW(nullptr);
+        type.hIcon = static_cast<HICON>(LoadImageW(type.hInstance, MAKEINTRESOURCEW(1), IMAGE_ICON,
+                                                  GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_SHARED));
+        type.hIconSm = static_cast<HICON>(LoadImageW(type.hInstance, MAKEINTRESOURCEW(1), IMAGE_ICON,
+                                                    GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED));
         type.hCursor = LoadCursorW(nullptr, IDC_ARROW);
         type.lpszClassName = L"AuraBrowserWindow";
         RegisterClassExW(&type);

@@ -73,7 +73,8 @@ Name[ru]=Браузер Aura
 Comment=Browse the web with Aura
 Comment[ru]=Просмотр веб-страниц в Aura
 Exec="$desktop_exec/aura-browser"
-Icon=web-browser
+Icon=$app_root/branding/aura.png
+StartupWMClass=Aura2
 Terminal=false
 Categories=Network;WebBrowser;
 DESKTOP
