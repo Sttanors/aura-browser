@@ -30,7 +30,9 @@ python scripts/package.py
 
 Зависимости OpenSSL/libarchive собираются vcpkg со статическим CRT; CEF sandbox включён.
 `aura_browser.exe` — sandbox bootstrap CEF, загружающий `aura_browser.dll`. Оба файла обязательны.
-`aura_diagnostic` остаётся отдельным техническим стендом. Обычная сборка запускает браузер.
+Windows-сборка по умолчанию включает полноценный браузер с программным выводом.
+Для старого диагностического GPU-стенда отдельно запустите bootstrap с `--diagnostic-angle`
+и CMake с `-DAURA_BUILD_COMPATIBILITY_HARNESS=ON`. Он не требуется для обычного браузера.
 Из PowerShell запуск исходной сборки: `./run.ps1`. Профиль в `.aura-profile`.
 В portable ZIP профиль создаётся в папке `profile` рядом с приложением.
 

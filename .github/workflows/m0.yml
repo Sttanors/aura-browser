@@ -22,6 +22,7 @@ jobs:
           ref: 469a0504e4a6ebf6173d1c0f51a7fa34c382fd43
           path: third_party/vcpkg
       - uses: actions/cache@v4
+        id: dependencies
         with:
           path: |
             third_party/cache
@@ -62,6 +63,16 @@ jobs:
           Get-FileHash artifacts/aura2-windows64.zip -Algorithm SHA256 | ForEach-Object {
             "$($_.Hash.ToLower())  aura2-windows64.zip" | Set-Content artifacts/aura2-windows64.zip.sha256
           }
+      - uses: actions/cache/save@v4
+        if: always() && steps.dependencies.outputs.cache-hit != 'true'
+        with:
+          path: |
+            third_party/cache
+            third_party/skia-build
+            third_party/cargo-home
+            third_party/adblock-build
+            ~/AppData/Local/vcpkg/archives
+          key: windows-x64-${{ hashFiles('third_party/dependencies.lock.json', 'scripts/build_skia.py', 'third_party/patches/*', 'core/adblock/Cargo.lock', 'vcpkg.json') }}
       - uses: actions/upload-artifact@v4
         if: success()
         with:

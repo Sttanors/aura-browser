@@ -7,7 +7,7 @@ from pathlib import Path
 destination, cef, skia = map(Path, sys.argv[1:4])
 executable = destination / ((sys.argv[5] if len(sys.argv) > 5 else "aura_diagnostic") + ".exe")
 shutil.copyfile(cef / "Release/bootstrap.exe", executable)
-for filename in ("libEGL.dll", "libGLESv2.dll"):
+for filename in (() if executable.stem == "aura_browser" else ("libEGL.dll", "libGLESv2.dll")):
     source = skia / filename
     if not source.is_file():
         raise RuntimeError(f"ANGLE build output missing: {source}")

@@ -9,7 +9,7 @@ import subprocess
 from dependencies import ROOT, host
 
 
-def build(jobs: int) -> None:
+def build(jobs: int, diagnostic_angle: bool = False) -> None:
     platform = host()
     source = ROOT / "third_party/src/skia"
     tools = ROOT / "third_party/tools" / platform
@@ -21,8 +21,8 @@ def build(jobs: int) -> None:
         "skia_enable_tools": False, "skia_enable_skottie": False,
         "skia_enable_svg": False, "skia_enable_pdf": False,
         "skia_enable_ganesh": True, "skia_enable_graphite": False,
-        "skia_use_gl": True, "skia_use_vulkan": False,
-        "skia_use_angle": os.name == "nt", "skia_use_partition_alloc": False,
+        "skia_use_gl": os.name != "nt" or diagnostic_angle, "skia_use_vulkan": False,
+        "skia_use_angle": os.name == "nt" and diagnostic_angle, "skia_use_partition_alloc": False,
         "skia_use_harfbuzz": False, "skia_use_icu": False,
         "skia_use_fontconfig": False, "skia_use_freetype": os.name != "nt",
         "skia_use_system_freetype2": False, "skia_use_freetype_zlib_bundled": False,
@@ -48,7 +48,7 @@ def build(jobs: int) -> None:
     output.mkdir(parents=True, exist_ok=True)
     (output / "args.gn").write_text(text, encoding="utf-8")
     subprocess.run([str(tools / f"gn{suffix}"), "gen", str(output)], cwd=source, check=True)
-    targets = ["skia", "aura_angle"] if os.name == "nt" else ["skia"]
+    targets = ["skia", "aura_angle"] if os.name == "nt" and diagnostic_angle else ["skia"]
     subprocess.run([str(tools / f"ninja{suffix}"), "-C", str(output), f"-j{jobs}", *targets], check=True)
 
 

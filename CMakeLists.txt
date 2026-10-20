@@ -6,6 +6,12 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 option(AURA_BUILD_DIAGNOSTIC "Build the CEF + Skia M0 executable" ON)
+if(WIN32)
+  set(AURA_COMPATIBILITY_DEFAULT OFF)
+else()
+  set(AURA_COMPATIBILITY_DEFAULT ON)
+endif()
+option(AURA_BUILD_COMPATIBILITY_HARNESS "Build the legacy M0 diagnostic harness" ${AURA_COMPATIBILITY_DEFAULT})
 include(CTest)
 find_package(Python3 3.12 REQUIRED COMPONENTS Interpreter)
 include(cmake/dependencies.cmake)
@@ -41,6 +47,7 @@ endif()
 if(AURA_BUILD_DIAGNOSTIC)
   include(cmake/cef.cmake)
   include(cmake/skia.cmake)
+  if(AURA_BUILD_COMPATIBILITY_HARNESS)
   set(AURA_SOURCES app/main.cpp core/cef/diagnostic_client.cpp render/diagnostic_scene.cpp)
   if(WIN32)
     list(APPEND AURA_SOURCES platform/windows/diagnostic_window.cpp
@@ -95,6 +102,8 @@ if(AURA_BUILD_DIAGNOSTIC)
   endif()
 endif()
 
+endif()
+
 # The normal desktop application. M0 remains a separate compatibility harness.
 if(AURA_BUILD_DIAGNOSTIC AND NOT APPLE)
   find_package(OpenSSL REQUIRED)
@@ -126,16 +135,13 @@ if(AURA_BUILD_DIAGNOSTIC AND NOT APPLE)
   set(AURA_BROWSER_SOURCES app/browser_main.cpp core/browser/browser.cpp core/browser/client.cpp core/browser/devtools.cpp core/browser/protection.cpp core/browser/extensions.cpp core/browser/site_tools.cpp core/browser/extension_popup.cpp
     core/cef/diagnostic_client.cpp ui/browser_ui.cpp ui/wallpaper.cpp)
   if(WIN32)
-    add_library(aura_browser SHARED ${AURA_BROWSER_SOURCES} platform/windows/browser_window.cpp)
+    add_library(aura_browser SHARED ${AURA_BROWSER_SOURCES} platform/windows/browser_window.cpp render/cef_bridge/shared_texture_probe.cpp)
+    target_link_libraries(aura_browser PRIVATE d3d11 dxgi)
     target_compile_definitions(aura_browser PRIVATE CEF_USE_BOOTSTRAP)
     target_compile_options(aura_browser PRIVATE /EHsc /utf-8 /W4)
     target_link_options(aura_browser PRIVATE /DELAYLOAD:libcef.dll ${CEF_DELAYLOAD_FLAGS})
     target_link_libraries(aura_browser PRIVATE ${CEF_STANDARD_LIBS})
     set_target_properties(aura_browser PROPERTIES PREFIX "")
-    add_custom_command(TARGET aura_browser POST_BUILD
-      COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/scripts/stage_windows.py"
-        "$<TARGET_FILE_DIR:aura_browser>" "${CEF_ROOT}"
-        "${PROJECT_SOURCE_DIR}/third_party/skia-build/windows64" "${CMAKE_MT}" aura_browser VERBATIM)
   else()
     add_executable(aura_browser ${AURA_BROWSER_SOURCES} platform/linux/x11/browser_window.cpp
       platform/linux/x11/software_presenter.cpp platform/linux/x11/wayland_refresh.cpp)
@@ -157,9 +163,23 @@ if(AURA_BUILD_DIAGNOSTIC AND NOT APPLE)
     get_target_property(AURA_TEST_DEFINITIONS aura_protection_tests COMPILE_DEFINITIONS)
     list(REMOVE_ITEM AURA_TEST_DEFINITIONS _HAS_EXCEPTIONS=0)
     set_target_properties(aura_protection_tests PROPERTIES BUILD_RPATH "$ORIGIN" COMPILE_DEFINITIONS "${AURA_TEST_DEFINITIONS}")
-    gtest_discover_tests(aura_protection_tests)
+    gtest_discover_tests(aura_protection_tests DISCOVERY_MODE PRE_TEST)
   endif()
-  add_dependencies(aura_browser aura_diagnostic)
+  if(TARGET aura_diagnostic)
+    add_dependencies(aura_browser aura_diagnostic)
+  endif()
+  add_custom_command(TARGET aura_browser POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory "${CEF_ROOT}/Release" "$<TARGET_FILE_DIR:aura_browser>"
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory "${CEF_ROOT}/Resources" "$<TARGET_FILE_DIR:aura_browser>"
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory "${PROJECT_SOURCE_DIR}/resources/fonts" "$<TARGET_FILE_DIR:aura_browser>/fonts"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${PROJECT_SOURCE_DIR}/resources/default.toml" "$<TARGET_FILE_DIR:aura_browser>/default.toml"
+    VERBATIM)
+  if(WIN32)
+    add_custom_command(TARGET aura_browser POST_BUILD
+      COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/scripts/stage_windows.py"
+        "$<TARGET_FILE_DIR:aura_browser>" "${CEF_ROOT}"
+        "${PROJECT_SOURCE_DIR}/third_party/skia-build/windows64" "${CMAKE_MT}" aura_browser VERBATIM)
+  endif()
   add_custom_target(aura_protection_resources ALL
     COMMAND "${CMAKE_COMMAND}" -E copy_directory "${PROJECT_SOURCE_DIR}/resources/protection" "$<TARGET_FILE_DIR:aura_browser>/protection"
     COMMAND "${CMAKE_COMMAND}" -E copy_directory "${PROJECT_SOURCE_DIR}/resources/vendor" "$<TARGET_FILE_DIR:aura_browser>/vendor" VERBATIM)

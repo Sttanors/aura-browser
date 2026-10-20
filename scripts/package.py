@@ -37,7 +37,7 @@ def runtime_archive(output: Path):
                     shutil.copy2(source, target)
         shutil.copy2(executable, stage / executable.name)
         if platform == "windows64":
-            for name in ("aura_browser.dll", "libEGL.dll", "libGLESv2.dll"):
+            for name in ("aura_browser.dll",):
                 shutil.copy2(build / name, stage / name)
         shutil.copytree(ROOT / "resources/fonts", stage / "fonts")
         for folder in ("vendor", "protection"):

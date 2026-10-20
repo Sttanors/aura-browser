@@ -13,6 +13,7 @@ def main() -> None:
         raise RuntimeError("Python 3.12+ is required")
     parser = argparse.ArgumentParser()
     parser.add_argument("--offline", action="store_true")
+    parser.add_argument("--diagnostic-angle", action="store_true", help="Build the optional Windows M0 GPU harness")
     parser.add_argument("--fetch-only", action="store_true")
     parser.add_argument("--jobs", type=int, default=min(os.cpu_count() or 2, 8))
     args = parser.parse_args()
@@ -23,7 +24,7 @@ def main() -> None:
         install(name, ROOT / "third_party/src" / name, args.offline)
     for name in ["freetype", "libpng", "zlib"]:
         install(name, skia / "third_party/externals" / name, args.offline)
-    if os.name == "nt":
+    if os.name == "nt" and args.diagnostic_angle:
         install("angle", skia / "third_party/externals/angle2", args.offline)
         install("zlib-google-utils", skia / "third_party/externals/zlib/google", args.offline)
         for name in ("spirv-tools", "spirv-headers"):
@@ -46,7 +47,7 @@ def main() -> None:
     install_file("inter-license", ROOT / "resources/fonts/OFL.txt", args.offline)
     if not args.fetch_only:
         from build_skia import build
-        build(max(1, args.jobs))
+        build(max(1, args.jobs), args.diagnostic_angle)
     print(f"Aura M0 dependencies ready: {platform}")
 
 
