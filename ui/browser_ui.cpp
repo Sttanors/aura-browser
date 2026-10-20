@@ -190,10 +190,25 @@ void image(SkCanvas &c, const PaintBuffer &buffer, Rect r) {
         c.drawImageRect(im, box(r), SkSamplingOptions(SkFilterMode::kLinear));
 }
 void brand_logo(SkCanvas &c, Rect r) {
-    static const auto logo = SkImages::DeferredFromEncodedData(
-        SkData::MakeWithoutCopy(brand::png, sizeof(brand::png)));
-    if (logo)
-        c.drawImageRect(logo, box(r), SkSamplingOptions(SkFilterMode::kLinear));
+    c.save();
+    c.translate(r.x, r.y);
+    c.scale(r.width / 64.f, r.height / 64.f);
+    SkPaint paint;
+    paint.setAntiAlias(true);
+    paint.setColor(0xff11182b);
+    c.drawRoundRect(SkRect::MakeXYWH(1, 1, 62, 62), 18, 18, paint);
+    for (const auto &item : brand::paths) {
+        const auto path = SkParsePath::FromSVGString(item.data);
+        if (!path)
+            continue;
+        paint.setColor(item.color);
+        paint.setStyle(item.stroke ? SkPaint::kStroke_Style : SkPaint::kFill_Style);
+        paint.setStrokeWidth(item.stroke);
+        paint.setStrokeCap(SkPaint::kRound_Cap);
+        paint.setStrokeJoin(SkPaint::kRound_Join);
+        c.drawPath(*path, paint);
+    }
+    c.restore();
 }
 void icon(SkCanvas &c, const std::string &name, float x, float y, float size, SkColor color) {
     static const std::map<std::string, const char *> paths = {

@@ -279,7 +279,7 @@ python3 -m unittest discover -s tests/python -p test_installers.py
 Runtime archives include CEF, the application, resources and third-party notices.
 Linux system libraries are not bundled. Source archives contain code, tests, packaging and bootstrap scripts.
 The Windows installer is built with [Inno Setup](https://jrsoftware.org/isinfo.php);
-`Preview installers` CI packages the checksum-pinned preview.1 runtime and tests install/reinstall/uninstall.
+Windows CI packages the freshly built browser and tests install/reinstall/uninstall, executable identity and native window icons.
 
 | Directory | Purpose |
 |---|---|

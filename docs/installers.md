@@ -1,7 +1,7 @@
 # Installer packaging
 
-The preview.2 release adds installer packages around the tested preview.1 browser runtime.
-It does not change Chromium, rendering, profiles or extension compatibility.
+Preview.3 rebuilds the browser with Aura branding in the native window, UI and Windows PE resources.
+The installers package that freshly tested runtime. Chromium, profiles and extension compatibility are unchanged.
 
 ## Linux
 
@@ -38,13 +38,11 @@ To build from an extracted portable runtime in PowerShell:
   "/DPayloadDir=C:\path\to\Aura2" "/DOutputDir=C:\output" packaging/windows/aura.iss
 ```
 
-`Preview installers` CI downloads the published preview.1 ZIP with a pinned SHA-256,
-compiles the EXE and runs it on a disposable Windows runner. Checks cover Start menu/desktop shortcut
-targets and profile arguments, full GUI integration from the installed binary, reinstall,
-uninstall and retention of a profile marker. `scripts/smoke_windows_browser.py` accepts
-`AURA_TEST_BINARY` for that installed-runtime check; normal browser CI uses the build output.
-The packaging workflow remains pinned to preview.1 intentionally. Future browser releases must update
-that input/hash and the Inno Setup version before producing new installers.
+The main `Windows browser` CI packages its freshly built portable ZIP, builds the installer,
+and verifies Start menu/desktop shortcut targets, real installed-browser GUI behavior,
+reinstall/uninstall and profile preservation. It also verifies the executable product identity,
+window icons and absence of the unused CEF bootstrap. `Preview installers` is a manual workflow
+for repackaging the published preview.3 archive; it checks the downloaded SHA-256 first.
 
 Portable archives remain available alongside installers. Existing portable profiles are not automatically migrated.
 Neither installer is signed or provides an updater.
