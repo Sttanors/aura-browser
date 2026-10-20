@@ -22,7 +22,7 @@ def version_resource(dll=False):
     table = b''.join(block(k,(v+'\0').encode('utf-16le'),text=True) for k,v in strings.items())
     info = block('StringFileInfo',children=block('040904B0',children=table,text=True),text=True)
     var = block('VarFileInfo',children=block('Translation',struct.pack('<HH',0x409,1200)),text=True)
-    fixed = struct.pack('<13I',0xFEEF04BD,0x10000,0x00020000,3,0x00020000,3,0x3f,0,0x40004,2 if dll else 1,0,0,0)
+    fixed = struct.pack('<13I',0xFEEF04BD,0x10000,2,3,2,3,0x3f,0,0x40004,2 if dll else 1,0,0,0)
     return block('VS_VERSION_INFO',fixed,info+var)
 
 

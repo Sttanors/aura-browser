@@ -11,6 +11,7 @@ if (-not $UseLocalArchive) {
 }
 Expand-Archive artifacts/aura2-windows64.zip -DestinationPath $payload -Force
 $version = (Get-Item (Join-Path $payload 'Aura2/aura_browser.exe')).VersionInfo
+if ($version.FileMajorPart -ne 0 -or $version.FileMinorPart -ne 2 -or $version.FileBuildPart -ne 0 -or $version.FilePrivatePart -ne 3) { throw 'Executable numeric version mismatch' }
 if ($version.ProductName -ne 'Aura Browser' -or $version.FileDescription -ne 'Aura Browser') { throw 'Executable identity missing' }
 if (-not (Test-Path (Join-Path $payload 'Aura2/branding/aura.ico'))) { throw 'Branding assets missing' }
 if (Test-Path (Join-Path $payload 'Aura2/bootstrap.exe')) { throw 'Unbranded CEF bootstrap leaked into package' }
