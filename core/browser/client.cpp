@@ -45,6 +45,7 @@ bool BrowserClient::OnBeforeBrowse(CefRefPtr<CefBrowser> browser, CefRefPtr<CefF
             browser->GetHost()->GetRequestContext(), url,
             frame->IsMain() ? url : browser->GetMainFrame()->GetURL().ToString());
     if (frame->IsMain()) {
+        if (auto t = owner_.tab(id_)) ++t->navigation_serial;
         if (owner_.current() && owner_.current()->id == id_)
             owner_.close_extension_popup();
         owner_.cancel_permissions(id_);

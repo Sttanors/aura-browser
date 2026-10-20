@@ -7,6 +7,7 @@
 #include "core/browser/protection.hpp"
 #include "core/browser/updates.hpp"
 #include "core/browser/imports.hpp"
+#include "core/browser/passwords.hpp"
 #include "core/cef/diagnostic_client.hpp"
 #include "include/cef_context_menu_handler.h"
 #include "include/cef_download_handler.h"
@@ -16,9 +17,11 @@
 #include <deque>
 #include <map>
 namespace aura {
+std::string password_origin(const std::string &url);
 class BrowserUi;
 struct Tab {
     int id = 0;
+    uint64_t navigation_serial = 0;
     DiagnosticState page;
     CefRefPtr<DiagnosticClient> client;
     CefRefPtr<CefBrowser> browser;
@@ -90,6 +93,8 @@ class BrowserController {
     ExtensionManager extensions;
     UpdateManager updates;
     BrowserImporter importer;
+    PasswordManager passwords;
+    void page_login(bool fill, size_t index = 0);
     bool install_update_on_exit = false;
     std::shared_ptr<ExtensionPopup> extension_popup;
     std::filesystem::path resources;

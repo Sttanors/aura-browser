@@ -323,3 +323,10 @@ The legacy M0 diagnostic executable remains separate from the browser:
 `./build/linux-x64-release/aura_diagnostic` and `scripts/verify_m0.py --software-rendering`.
 GPU validation is separate and is not covered by normal software-rendered browser checks.
 See [interface design notes](docs/design/interface-refinement.md) for implementation/accessibility details.
+
+### Passwords and encrypted transfer
+
+Source builds provide a master-password vault, explicit HTTPS login filling and
+manual transfer through an encrypted file. Open **Settings → Data → Passwords**
+or press **Ctrl+Shift+Y**. [Usage, backup and limitations](docs/password-vault.md).
+This is not included in the older preview.3.1 installers.

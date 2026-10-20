@@ -8,7 +8,7 @@
 namespace aura {
 class BrowserUi {
   public:
-    enum Panel { None, Bookmarks, History, Downloads, Settings, Extensions, Shortcuts, Updates, Import };
+    enum Panel { None, Bookmarks, History, Downloads, Settings, Extensions, Shortcuts, Updates, Import, Passwords };
     BrowserUi(BrowserController &owner, const std::filesystem::path &font);
     ~BrowserUi();
     void draw(SkCanvas &canvas);
@@ -30,6 +30,8 @@ class BrowserUi {
     std::string settings_report() const;
     std::string updates_report() const;
     std::string import_report() const;
+    std::string passwords_report() const;
+    void passwords_locked() { clear_password_fields(); password_mode_ = 0; password_selected_ = -1; }
     std::string extensions_report() const;
     std::string extension_popup_report() const;
     std::string extension_toolbar_report() const;
@@ -54,6 +56,11 @@ class BrowserUi {
     int settings_section_ = 0, settings_scroll_ = 0;
     TextEditor settings_search_, settings_text_, extension_input_;
     bool extension_input_focus_ = false;
+    std::array<TextEditor, 3> password_fields_;
+    int password_focus_ = -1, password_mode_ = 0, password_selected_ = -1, password_edit_ = -1;
+    void clear_password_fields();
+    void draw_passwords(SkCanvas &, Rect);
+    void passwords_pointer(Rect, int, int);
     TextEditor import_input_;
     bool import_input_focus_ = false, import_bookmarks_ = true, import_history_ = true;
     bool settings_search_focus_ = false;

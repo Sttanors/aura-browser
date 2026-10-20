@@ -294,12 +294,14 @@ Rect BrowserUi::panel_bounds() const {
     const int w = std::min(panel_ == Settings     ? 1000
                            : panel_ == Extensions ? 900
                            : panel_ == Shortcuts  ? 900
+                           : panel_ == Passwords  ? 900
                            : panel_ == Import     ? 900
                                                   : 660,
                            r.width - 24);
     const int h = std::min(panel_ == Settings     ? 760
                            : panel_ == Extensions ? 700
                            : panel_ == Shortcuts  ? 700
+                           : panel_ == Passwords  ? 700
                            : panel_ == Import     ? 700
                                                   : 580,
                            height_ - 124);
@@ -642,7 +644,7 @@ void BrowserUi::draw(SkCanvas &c) {
                                       app_.tr("Downloads"),
                                       app_.tr("Settings"),
                                       app_.tr("Extensions"),
-                                      app_.tr("Quick links"), app_.tr("About Aura and updates"), app_.tr("Import browser data")};
+                                      app_.tr("Quick links"), app_.tr("About Aura and updates"), app_.tr("Import browser data"), app_.tr("Passwords")};
         label(c, medium_, titles[panel_], r.x + 28, r.y + 47, 23, ink);
         icon(c, "close", r.x + r.width - 43, r.y + 26, 19, muted);
         if (panel_ == History || panel_ == Bookmarks) {
@@ -734,6 +736,8 @@ void BrowserUi::draw(SkCanvas &c) {
             draw_updates(c, r);
         if (panel_ == Import)
             draw_import(c, r);
+        if (panel_ == Passwords)
+            draw_passwords(c, r);
     }
 
     if (editing) {
@@ -1140,6 +1144,7 @@ std::string BrowserUi::start_page_report() const {
     return out;
 }
 BrowserUi::~BrowserUi() {
+    clear_password_fields();
 #ifndef _WIN32
     if (picker_fd_ >= 0)
         close(picker_fd_);
@@ -1739,7 +1744,8 @@ std::vector<BrowserUi::SettingsRow> BrowserUi::settings_rows(Rect panel) const {
     }
     const struct {
         const char *id, *section, *title, *description;
-    } actions[] = {{"import", "Data", "Import browser data",
+    } actions[] = {{"passwords", "Data", "Passwords", "Manage saved logins and encrypted transfer files."},
+                   {"import", "Data", "Import browser data",
                     "Preview bookmarks and history from Firefox, Chrome or an HTML export."},
                    {"updates", "General", "About Aura and updates",
                     "View your version and check for verified browser updates."},
@@ -2040,6 +2046,8 @@ void BrowserUi::settings_pointer(Rect r, int x, int y) {
                     panel(Updates);
                 else if (row.action == "import")
                     panel(Import);
+                else if (row.action == "passwords")
+                    panel(Passwords);
                 else if (row.action == "wallpaper_clear")
                     import_wallpaper("");
                 else if (row.action == "extensions")
@@ -2153,6 +2161,7 @@ std::vector<Visit> BrowserUi::suggestions() const {
         address.value, std::min(app_.profile.suggestion_limit, std::max(1, (height_ - 205) / 54)));
 }
 void BrowserUi::focus_address(bool select) {
+    clear_password_fields();
     app_.close_extension_popup();
     editing = true;
     panel_ = None;
@@ -2173,6 +2182,8 @@ void BrowserUi::panel(Panel value) {
     app_.close_extension_popup();
     popup_buttons_ = 0;
     keyboard_focus_ = -1;
+    clear_password_fields();
+    password_mode_ = 0;
     panel_ = value;
     shortcut_focus_ = -1;
     panel_scroll_ = 0;
@@ -2193,6 +2204,7 @@ void BrowserUi::commit_address() {
     app_.navigate(value);
 }
 void BrowserUi::dismiss() {
+    clear_password_fields();
     editing = false;
     panel_ = None;
     app_.close_menu();
@@ -2207,6 +2219,8 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
     if (ctrl && code == 'A')
         e.select_all();
     else if (ctrl && (code == 'C' || code == 'X')) {
+        bool secret = panel_ == Passwords && (&e == &password_fields_[0] || &e == &password_fields_[1] || &e == &password_fields_[2]);
+        if (secret) return true;
         app_.window->copy(e.selected());
         if (code == 'X')
             e.insert("");
@@ -2233,9 +2247,11 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
                 live = &extension_input_;
             else if (panel_ == Import && target == &import_input_ && import_input_focus_ && !app_.importer.busy)
                 live = &import_input_;
+            else if (panel_ == Passwords && password_focus_ >= 0 && !app_.passwords.busy && target == &password_fields_[password_focus_])
+                live = target;
             else if (!app_.dialogs.empty() && target == &app_.dialogs.front().input)
                 live = target;
-            if (live && !text.empty())
+            if (live && !text.empty() && (panel_ != Passwords || live->value.size() + text.size() <= 8192))
                 live->insert(text);
             if (live == &find)
                 app_.find_text(find.value);
@@ -2245,6 +2261,7 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
                 app_.importer.candidate.reset();
                 app_.importer.result.reset();
             }
+            erase_secret(text);
             app_.changed();
         });
     } else if (code == 0x08)
@@ -2292,6 +2309,7 @@ bool BrowserUi::key(const CefKeyEvent &key) {
         extension_input_focus_ = false;
         import_input_focus_ = false;
         shortcut_focus_ = -1;
+        password_focus_ = -1;
         if (auto tab = app_.current(); tab && tab->browser)
             tab->browser->GetHost()->SetFocus(false);
         if (!focus_targets_.empty()) {
@@ -2307,7 +2325,7 @@ bool BrowserUi::key(const CefKeyEvent &key) {
     if (!app_.extension_popup && down && keyboard_focus_ >= 0 &&
         keyboard_focus_ < int(focus_targets_.size()) && (code == 0x0D || code == 0x20) &&
         !settings_search_focus_ && settings_edit_.empty() && !extension_input_focus_ && !import_input_focus_ &&
-        shortcut_focus_ < 0 && !editing) {
+        shortcut_focus_ < 0 && password_focus_ < 0 && !editing) {
         const auto r = focus_targets_[keyboard_focus_];
         const int previous = keyboard_focus_;
         const auto previous_panel = panel_;
@@ -2370,6 +2388,11 @@ bool BrowserUi::key(const CefKeyEvent &key) {
                 app_.changed();
                 return code < 0x20 || ctrl || (code >= 0x21 && code <= 0x2E);
             }
+        }
+        if (panel_ == Passwords && password_focus_ >= 0) {
+            if (code == 0x1B || code == 0x0D) {password_focus_ = -1; app_.changed(); return true;}
+            if (!app_.passwords.busy) {editor_key(password_fields_[password_focus_], key); app_.passwords.touch(); app_.changed();}
+            return code < 0x20 || ctrl || (code >= 0x21 && code <= 0x2E);
         }
         if (panel_ == Import && import_input_focus_) {
             if (code == 0x1B) {
@@ -2511,6 +2534,10 @@ bool BrowserUi::key(const CefKeyEvent &key) {
         }
         if (ctrl && code == 'J') {
             panel(Downloads);
+            return true;
+        }
+        if (ctrl && shift && code == 'Y') {
+            panel(Passwords);
             return true;
         }
         if (ctrl && code == 'P') {
@@ -2695,6 +2722,9 @@ void BrowserUi::text(const std::string &value) {
     } else if (panel_ == Shortcuts) {
         if (shortcut_focus_ >= 0)
             (shortcut_focus_ == 0 ? shortcut_title_ : shortcut_url_).insert(clean);
+    } else if (panel_ == Passwords) {
+        if (password_focus_ >= 0 && !app_.passwords.busy && password_fields_[password_focus_].value.size() + clean.size() <= 8192) {password_fields_[password_focus_].insert(clean); app_.passwords.touch();}
+        erase_secret(clean);
     } else if (panel_ == Import) {
         if (import_input_focus_ && !app_.importer.busy) {
             import_input_.insert(clean);
@@ -2797,6 +2827,11 @@ void BrowserUi::pointer(const PointerInput &input) {
     if (input.kind == PointerInput::Wheel && panel_ == Shortcuts) {
         panel_scroll_ = std::clamp(panel_scroll_ + (input.dy < 0 ? 1 : -1), 0,
                                    std::max(0, int(app_.profile.shortcuts.size()) - 1));
+        return;
+    }
+    if (input.kind == PointerInput::Wheel && panel_ == Passwords) {
+        if (!app_.passwords.busy && inside(panel_bounds(), x, y))
+            panel_scroll_ = std::clamp(panel_scroll_ + (input.dy < 0 ? 1 : -1), 0, std::max(0, int(app_.passwords.vault.logins().size()) - 1));
         return;
     }
     if (input.kind == PointerInput::Wheel && panel_ == Extensions) {
@@ -2965,6 +3000,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                 updates_pointer(r, x, y);
             else if (panel_ == Import)
                 import_pointer(r, x, y);
+            else if (panel_ == Passwords)
+                passwords_pointer(r, x, y);
         }
         return;
     }
@@ -3517,5 +3554,303 @@ std::string BrowserUi::extension_toolbar_report() const {
                std::to_string(b.width) + "," + std::to_string(b.height) + "]}";
     }
     return out + "]";
+}
+} // namespace aura
+
+namespace aura {
+namespace {
+using PasswordControls = std::vector<std::pair<std::string, Rect>>;
+PasswordControls password_controls(Rect r, bool locked, int mode) {
+    PasswordControls out;
+    if (locked || mode != 0) {
+        int count = mode == 1 && !locked ? 3 : 2;
+        for (int i = 0; i < count; ++i)
+            out.push_back(
+                {"field" + std::to_string(i), {r.x + 28, r.y + 128 + i * 70, r.width - 56, 36}});
+        if (locked)
+            out.push_back({"unlock", {r.x + 28, r.y + 285, r.width - 56, 36}});
+        else if (mode == 1)
+            out.push_back({"save", {r.x + 28, r.y + 350, r.width - 56, 36}});
+        else if (mode == 3)
+            out.push_back({"change", {r.x + 28, r.y + 285, r.width - 56, 36}});
+        else {
+            int w = (r.width - 68) / 2;
+            out.push_back({"export", {r.x + 28, r.y + 285, w, 36}});
+            out.push_back({"import", {r.x + 40 + w, r.y + 285, w, 36}});
+        }
+        if (!locked)
+            out.push_back({"back", {r.x + 28, r.y + r.height - 66, r.width - 56, 36}});
+    } else {
+        const char *ids[] = {"capture", "fill",     "add",         "edit",
+                             "delete",  "transfer", "change_mode", "lock"};
+        int w = (r.width - 68) / 2;
+        for (int i = 0; i < 8; ++i)
+            out.push_back(
+                {ids[i],
+                 {r.x + 28 + (i % 2) * (w + 12), r.y + r.height - 202 + (i / 2) * 43, w, 34}});
+    }
+    return out;
+}
+std::shared_ptr<std::string> secret_text(std::string value) {
+    return {new std::string(std::move(value)), [](std::string *p) {
+                erase_secret(*p);
+                delete p;
+            }};
+}
+} // namespace
+void BrowserUi::clear_password_fields() {
+    for (auto &field : password_fields_) {
+        erase_secret(field.value);
+        field.caret = field.anchor = 0;
+    }
+    password_focus_ = -1;
+}
+void BrowserUi::draw_passwords(SkCanvas &c, Rect r) {
+    auto &p = app_.passwords;
+    const auto &t = interface_theme(app_.profile);
+    label(c, regular_, app_.tr(p.status), r.x + 28, r.y + 87, 12, t.muted, r.width - 56);
+    if (p.busy)
+        return;
+    bool locked = !p.vault.unlocked();
+    auto controls = password_controls(r, locked, password_mode_);
+    bool exists = p.vault.exists();
+    const char *titles[3] = {};
+    if (locked) {
+        titles[0] = exists ? "Master password" : "Create master password";
+        titles[1] = exists ? "" : "Confirm master password";
+    } else if (password_mode_ == 1) {
+        titles[0] = "HTTPS site";
+        titles[1] = "Username";
+        titles[2] = "Password";
+    } else if (password_mode_ == 2) {
+        titles[0] = "Transfer file path";
+        titles[1] = "Transfer password";
+    } else if (password_mode_ == 3) {
+        titles[0] = "New master password";
+        titles[1] = "Confirm master password";
+    }
+    for (const auto &[id, b] : controls) {
+        if (id.starts_with("field")) {
+            int i = id.back() - '0';
+            if (!titles[i] || !*titles[i])
+                continue;
+            focus_target(b);
+            label(c, regular_, app_.tr(titles[i]), b.x, b.y - 9, 12, t.muted, b.width);
+            fill(c, b, 9, SkColorSetA(t.text, 7));
+            border(c, b, 9, password_focus_ == i ? t.accent : SkColorSetA(t.muted, 190));
+            bool secret = locked || password_mode_ == 3 || (password_mode_ == 1 && i == 2) ||
+                          (password_mode_ == 2 && i == 1);
+            if (secret) {
+                TextEditor masked;
+                masked.value.assign(password_fields_[i].value.size(), '*');
+                masked.caret = password_fields_[i].caret;
+                masked.anchor = password_fields_[i].anchor;
+                draw_editor(c, masked, {b.x + 10, b.y + 2, b.width - 20, 32}, 13,
+                            password_focus_ == i);
+            } else
+                draw_editor(c, password_fields_[i], {b.x + 10, b.y + 2, b.width - 20, 32}, 12,
+                            password_focus_ == i);
+            continue;
+        }
+        bool selected =
+            password_selected_ >= 0 && password_selected_ < int(p.vault.logins().size());
+        bool enabled = (id != "fill" && id != "edit" && id != "delete") || selected;
+        if (enabled)
+            focus_target(b);
+        const char *title = id == "unlock"        ? (exists ? "Unlock vault" : "Create vault")
+                            : id == "save"        ? "Save login"
+                            : id == "change"      ? "Change master password"
+                            : id == "export"      ? "Export encrypted file"
+                            : id == "import"      ? "Import encrypted file"
+                            : id == "back"        ? "Back"
+                            : id == "capture"     ? "Save login from page"
+                            : id == "fill"        ? "Fill selected login"
+                            : id == "add"         ? "Add login"
+                            : id == "edit"        ? "Edit selected login"
+                            : id == "delete"      ? "Delete selected login"
+                            : id == "transfer"    ? "Transfer passwords"
+                            : id == "change_mode" ? "Change master password"
+                                                  : "Lock vault";
+        fill(c, b, 9, SkColorSetA(t.accent, enabled && inside(b, hover_x_, hover_y_) ? 30 : 12));
+        border(c, b, 9, SkColorSetA(t.muted, enabled ? 180 : 60));
+        centered_label(c, medium_, app_.tr(title), b, 12, enabled ? t.text : t.muted, 8, 8);
+    }
+    if (!locked && password_mode_ == 0) {
+        int visible = std::max(1, (r.height - 320) / 48),
+            start = std::min(panel_scroll_, std::max(0, int(p.vault.logins().size()) - visible));
+        if (p.vault.logins().empty())
+            label(c, regular_, app_.tr("No saved logins yet."), r.x + 28, r.y + 135, 13, t.muted,
+                  r.width - 56);
+        for (int i = start; i < std::min(int(p.vault.logins().size()), start + visible); ++i) {
+            const auto &v = p.vault.logins()[i];
+            Rect b{r.x + 28, r.y + 108 + (i - start) * 48, r.width - 56, 44};
+            focus_target(b);
+            fill(c, b, 8, SkColorSetA(t.accent, i == password_selected_ ? 30 : 8));
+            label(c, medium_, v.origin, b.x + 10, b.y + 19, 12, t.text, b.width - 20);
+            label(c, regular_, v.username.empty() ? app_.tr("No username") : v.username, b.x + 10,
+                  b.y + 36, 11, t.muted, b.width - 20);
+        }
+    }
+    const char *hint =
+        locked ? "Use at least 12 characters. A lost master password cannot be recovered."
+        : password_mode_ == 2
+            ? "Existing logins are kept. Import saves an encrypted backup."
+            : "Explicit filling only, on the same HTTPS site. Locks after 15 minutes.";
+    label(c, regular_, app_.tr(hint), r.x + 28, r.y + r.height - 13, 10, t.muted, r.width - 56);
+}
+void BrowserUi::passwords_pointer(Rect r, int x, int y) {
+    auto &p = app_.passwords;
+    if (p.busy)
+        return;
+    bool locked = !p.vault.unlocked();
+    password_focus_ = -1;
+    for (const auto &[id, b] : password_controls(r, locked, password_mode_))
+        if (inside(b, x, y)) {
+            if (id.starts_with("field")) {
+                int i = id.back() - '0';
+                if (locked && p.vault.exists() && i == 1)
+                    return;
+                password_focus_ = i;
+                p.touch();
+                return;
+            }
+            auto field = [&](int i) { return secret_text(password_fields_[i].value); };
+            if (id == "unlock" || id == "change") {
+                if ((!p.vault.exists() || id == "change") &&
+                    password_fields_[0].value != password_fields_[1].value) {
+                    toast(app_.tr("Passwords do not match."));
+                    return;
+                }
+                auto password = field(0);
+                bool exists = p.vault.exists();
+                bool change = id == "change";
+                p.run([&p, password, exists, change] {
+                    if (change)
+                        p.vault.change_password(*password);
+                    else if (exists)
+                        p.vault.unlock(*password);
+                    else
+                        p.vault.create(*password);
+                    return change ? "Master password changed." : "Password vault unlocked.";
+                });
+                clear_password_fields();
+                password_mode_ = 0;
+            } else if (id == "lock") {
+                p.lock();
+                clear_password_fields();
+                password_selected_ = -1;
+            } else if (id == "back") {
+                clear_password_fields();
+                password_mode_ = 0;
+            } else if (id == "add" || id == "edit") {
+                clear_password_fields();
+                password_edit_ = -1;
+                if (id == "edit") {
+                    if (password_selected_ < 0 ||
+                        password_selected_ >= int(p.vault.logins().size()))
+                        return;
+                    password_edit_ = password_selected_;
+                    auto &v = p.vault.logins()[password_selected_];
+                    password_fields_[0].set(v.origin);
+                    password_fields_[1].set(v.username);
+                    password_fields_[2].set(v.password);
+                }
+                password_mode_ = 1;
+            } else if (id == "transfer" || id == "change_mode") {
+                clear_password_fields();
+                password_mode_ = id == "transfer" ? 2 : 3;
+            } else if (id == "save") {
+                auto origin = password_origin(password_fields_[0].value);
+                if (origin.empty()) {
+                    toast(app_.tr("Choose a valid HTTPS site and a nonempty password."));
+                    return;
+                }
+                auto user = field(1), password = field(2);
+                int edit = password_edit_;
+                p.run([&p, origin, user, password, edit] {
+                    if (edit >= 0)
+                        p.vault.replace(edit, {origin, *user, *password});
+                    else
+                        p.vault.save({origin, *user, *password});
+                    return "Login saved.";
+                });
+                clear_password_fields();
+                password_mode_ = 0;
+            } else if (id == "delete") {
+                if (password_selected_ < 0 || password_selected_ >= int(p.vault.logins().size()))
+                    return;
+                const auto index = password_selected_;
+                app_.confirm_action(app_.tr("Delete selected login"),
+                                    p.vault.logins()[index].origin, [this, index] {
+                                        auto &p = app_.passwords;
+                                        p.run([&p, index] {
+                                            p.vault.remove(index);
+                                            return "Login deleted.";
+                                        });
+                                        password_selected_ = -1;
+                                    });
+            } else if (id == "capture")
+                app_.page_login(false);
+            else if (id == "fill") {
+                if (password_selected_ >= 0)
+                    app_.page_login(true, password_selected_);
+            } else if (id == "export" || id == "import") {
+                auto path = path_from_utf8(password_fields_[0].value);
+                auto password = field(1);
+                bool exporting = id == "export";
+                p.run([&p, path, password, exporting] {
+                    if (exporting) {
+                        p.vault.export_file(path, *password);
+                        return std::string("Encrypted file exported.");
+                    }
+                    auto n = p.vault.import_file(path, *password);
+                    (void)n;
+                    return std::string("Encrypted file imported.");
+                });
+                clear_password_fields();
+            }
+            app_.changed();
+            return;
+        }
+    if (!locked && password_mode_ == 0) {
+        int visible = std::max(1, (r.height - 320) / 48),
+            start = std::min(panel_scroll_, std::max(0, int(p.vault.logins().size()) - visible));
+        int index = start + (y - r.y - 108) / 48;
+        if (y >= r.y + 108 && y < r.y + 108 + visible * 48 && index < int(p.vault.logins().size()))
+            password_selected_ = index;
+    }
+}
+std::string BrowserUi::passwords_report() const {
+    if (panel_ != Passwords)
+        return "null";
+    auto &p = app_.passwords;
+    bool locked = p.busy || !p.vault.unlocked();
+    std::string out = "{\"busy\":" + std::string(p.busy ? "true" : "false") +
+                      ",\"locked\":" + (locked ? "true" : "false") +
+                      ",\"mode\":" + std::to_string(password_mode_) +
+                      ",\"count\":" + std::to_string(locked ? 0 : p.vault.logins().size()) +
+                      ",\"status\":" + json_quote(p.status) + ",\"controls\":{";
+    bool comma = false;
+    for (const auto &[id, r] : password_controls(panel_bounds(), locked, password_mode_)) {
+        if (comma)
+            out += ",";
+        comma = true;
+        out += json_quote(id) + ":[" + std::to_string(r.x) + "," + std::to_string(r.y) + "," +
+               std::to_string(r.width) + "," + std::to_string(r.height) + "]";
+    }
+    out += "},\"rows\":[";
+    if (!locked && password_mode_ == 0) {
+        auto r = panel_bounds();
+        int visible = std::max(1, (r.height - 320) / 48),
+            start = std::min(panel_scroll_, std::max(0, int(p.vault.logins().size()) - visible));
+        for (int i = start; i < std::min(int(p.vault.logins().size()), start + visible); ++i) {
+            if (i > start)
+                out += ",";
+            out += "[" + std::to_string(r.x + 28) + "," +
+                   std::to_string(r.y + 108 + (i - start) * 48) + "," +
+                   std::to_string(r.width - 56) + ",44]";
+        }
+    }
+    return out + "]}";
 }
 } // namespace aura

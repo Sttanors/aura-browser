@@ -28,6 +28,13 @@ std::string script(const std::filesystem::path &resources, const Profile &profil
 }
 } // namespace
 void BrowserController::configure_font_preferences(CefRefPtr<CefRequestContext> context) {
+    // Aura owns the vault; do not offer a second Chromium save/sign-in path.
+    for (const char *name : {"credentials_enable_service", "credentials_enable_autosignin"}) {
+        if (!context->HasPreference(name)) continue;
+        auto value = CefValue::Create(); value->SetBool(false); CefString error;
+        if (!context->SetPreference(name, value, error)) ++audit["password_preference_errors"];
+        else ++audit["password_preferences_disabled"];
+    }
     // Chrome uses profile preferences when recreating WebPreferences after DevTools attaches.
     // Keep them consistent with CefBrowserSettings, including across the bootstrap navigation.
     const std::pair<const char *, int> sizes[] = {
@@ -209,5 +216,125 @@ void BrowserController::extension_page(size_t index, bool options) {
     }
     ui->panel(BrowserUi::None);
     new_tab("chrome-extension://" + e.id + "/" + path);
+}
+} // namespace aura
+
+namespace aura {
+std::string password_origin(const std::string &url) {
+    CefURLParts p;
+    if (!CefParseURL(url, p) || CefString(&p.scheme) != "https" || CefString(&p.host).empty() ||
+        !CefString(&p.username).empty() || !CefString(&p.password).empty())
+        return {};
+    auto host = CefString(&p.host).ToString(), port = CefString(&p.port).ToString();
+    return "https://" + host + (port.empty() || port == "443" ? "" : ":" + port);
+}
+void BrowserController::page_login(bool fill, size_t index) {
+    auto t = current();
+    if (passwords.busy || !passwords.vault.unlocked()) {
+        ui->toast(tr("Unlock the password vault first."));
+        return;
+    }
+    if (!t || t->private_tab || !t->devtools || !t->browser || t->loading ||
+        password_origin(t->page.url).empty()) {
+        ui->toast(tr("Use a normal HTTPS tab with a loaded login page."));
+        return;
+    }
+    auto login = std::shared_ptr<Login>(new Login, [](Login *v) {
+        erase_secret(v->password);
+        delete v;
+    });
+    const auto url = t->page.url, origin = password_origin(url);
+    const int id = t->id;
+    const auto navigation = t->navigation_serial;
+    if (fill) {
+        if (index >= passwords.vault.logins().size())
+            return;
+        *login = passwords.vault.logins()[index];
+        if (login->origin != origin) {
+            ui->toast(tr("This login belongs to a different HTTPS site."));
+            return;
+        }
+    }
+    passwords.touch();
+    // Bind the request to the current document. It cannot survive navigation or locking.
+    auto valid = [this, id, url, navigation] {
+        auto tab = this->tab(id);
+        return tab && tab->browser && tab->devtools && !tab->closing && !tab->private_tab &&
+               !tab->loading && tab->navigation_serial == navigation && tab->page.url == url &&
+               !passwords.busy && passwords.vault.unlocked();
+    };
+    t->devtools->call(
+        "Page.getFrameTree", "{}",
+        [this, id, url, fill, login, valid](bool ok, const std::string &result) {
+            if (!ok || !valid())
+                return;
+            auto v = CefParseJSON(result, JSON_PARSER_RFC);
+            auto root = v && v->GetType() == VTYPE_DICTIONARY ? v->GetDictionary() : nullptr;
+            auto tree = root ? root->GetDictionary("frameTree") : nullptr;
+            auto frame = tree ? tree->GetDictionary("frame") : nullptr;
+            if (!frame || frame->GetString("url").ToString() != url)
+                return;
+            auto params = "{\"frameId\":" + json_quote(frame->GetString("id")) +
+                          ",\"worldName\":\"Aura Passwords\"}";
+            tab(id)->devtools->call(
+                "Page.createIsolatedWorld", params,
+                [this, id, url, fill, login, valid](bool ok, const std::string &result) {
+                    if (!ok || !valid())
+                        return;
+                    auto v = CefParseJSON(result, JSON_PARSER_RFC);
+                    auto root =
+                        v && v->GetType() == VTYPE_DICTIONARY ? v->GetDictionary() : nullptr;
+                    if (!root || root->GetType("executionContextId") != VTYPE_INT)
+                        return;
+                    std::string expression =
+                        read_resource(resources / "protection/password-form.js") + "(" +
+                        json_quote(fill ? "fill" : "read") + "," + json_quote(url) + ",";
+                    expression += fill ? "{origin:" + json_quote(login->origin) +
+                                             ",username:" + json_quote(login->username) +
+                                             ",password:" + json_quote(login->password) + "}"
+                                       : "null";
+                    expression += ")";
+                    std::string params =
+                        "{\"contextId\":" + std::to_string(root->GetInt("executionContextId")) +
+                        ",\"returnByValue\":true,\"expression\":" + json_quote(expression) + "}";
+                    tab(id)->devtools->call(
+                        "Runtime.evaluate", params,
+                        [this, fill, login, valid](bool ok, const std::string &result) {
+                            if (!ok || !valid())
+                                return;
+                            auto v = CefParseJSON(result, JSON_PARSER_RFC);
+                            auto root = v && v->GetType() == VTYPE_DICTIONARY ? v->GetDictionary()
+                                                                              : nullptr;
+                            auto r = root ? root->GetDictionary("result") : nullptr;
+                            auto value = r ? r->GetDictionary("value") : nullptr;
+                            if (!value) {
+                                ui->toast(tr("Could not access this login form."));
+                                return;
+                            }
+                            if (value->HasKey("error")) {
+                                ui->toast(tr(value->GetString("error").ToString()));
+                                return;
+                            }
+                            if (fill) {
+                                ui->toast(tr("Login filled. Review the page before signing in."));
+                                return;
+                            }
+                            login->origin = value->GetString("origin");
+                            login->username = value->GetString("username");
+                            login->password = value->GetString("password");
+                            if (login->origin.empty() || login->password.empty())
+                                return;
+                            confirm_action(tr("Save this login?"),
+                                           login->origin + "\n" + login->username, [this, login] {
+                                               passwords.run([this, login] {
+                                                   passwords.vault.save(*login);
+                                                   return "Login saved.";
+                                               });
+                                           });
+                        });
+                    erase_secret(expression);
+                    erase_secret(params);
+                });
+        });
 }
 } // namespace aura

@@ -120,7 +120,7 @@ class ToolsClient final : public CefClient, public CefLifeSpanHandler {
 } // namespace
 BrowserController::BrowserController(std::filesystem::path path, std::filesystem::path font,
                                      double factor, bool accelerated)
-    : profile(std::move(path)), scale(factor), extensions(profile.directory), updates(profile.directory) {
+    : profile(std::move(path)), scale(factor), extensions(profile.directory), updates(profile.directory), passwords(profile.directory / "passwords.aura") {
     resources = font.parent_path().parent_path();
     request_policy->protection = std::make_shared<Protection>(resources);
     ui = std::make_unique<BrowserUi>(*this, font);
@@ -266,6 +266,10 @@ void BrowserController::defer(std::function<void()> action) {
 void BrowserController::tick() {
     if (background_updates_ && profile.check_updates && updates.due())
         updates.check();
+    if (passwords.tick()) {
+        if (!passwords.vault.unlocked()) ui->passwords_locked();
+        changed();
+    }
     if (importer.tick())
         changed();
     const int rate = window->refresh_rate();
@@ -696,6 +700,7 @@ bool BrowserController::finished() {
 }
 void BrowserController::prepare_shutdown() {
     importer.shutdown();
+    passwords.shutdown();
     updates.shutdown();
     extensions.shutdown();
     closing_popups_.clear();
@@ -745,6 +750,7 @@ std::string BrowserController::report() const {
         << ",\"start_page\":" << ui->start_page_report()
         << ",\"settings_ui\":" << ui->settings_report()
         << ",\"updates_ui\":" << ui->updates_report()
+        << ",\"passwords_ui\":" << ui->passwords_report()
         << ",\"import_ui\":" << ui->import_report()
         << ",\"updates\":{\"busy\":" << (updates.busy() ? "true" : "false")
         << ",\"status\":" << json_quote(updates.status)

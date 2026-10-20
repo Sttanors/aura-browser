@@ -25,7 +25,7 @@ add_custom_command(
           "${AURA_GENERATED}/aura/design_tokens.hpp"
   DEPENDS design/tokens.json scripts/generate_tokens.py VERBATIM)
 add_custom_target(aura_design_tokens DEPENDS "${AURA_GENERATED}/aura/design_tokens.hpp")
-add_library(aura_common common/platform.cpp common/config.cpp common/paint_buffer.cpp common/pump_schedule.cpp core/browser/profile.cpp core/browser/i18n.cpp core/browser/preferences.cpp core/browser/update_policy.cpp)
+add_library(aura_common common/platform.cpp common/config.cpp common/paint_buffer.cpp common/pump_schedule.cpp core/browser/profile.cpp core/browser/i18n.cpp core/browser/preferences.cpp core/browser/update_policy.cpp core/browser/passwords.cpp)
 target_include_directories(aura_common PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}" "${AURA_GENERATED}")
 target_link_libraries(aura_common PUBLIC tomlplusplus::tomlplusplus spdlog::spdlog OpenSSL::Crypto)
 add_dependencies(aura_common aura_design_tokens)
@@ -37,7 +37,7 @@ else()
 endif()
 
 if(BUILD_TESTING)
-  add_executable(aura_tests tests/common_tests.cpp tests/update_tests.cpp)
+  add_executable(aura_tests tests/common_tests.cpp tests/update_tests.cpp tests/password_tests.cpp)
   target_link_libraries(aura_tests PRIVATE aura_common GTest::gtest_main)
   include(GoogleTest)
   gtest_discover_tests(aura_tests)
