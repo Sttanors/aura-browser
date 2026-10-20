@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+case ${XDG_DATA_HOME:-} in
+    /*) data_root=$XDG_DATA_HOME ;;
+    *) data_root=$HOME/.local/share ;;
+esac
+exec /opt/aura-browser/aura_browser "--data-dir=$data_root/aura-browser-profile" "$@"

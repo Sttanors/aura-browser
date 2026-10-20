@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Aura Browser
+Name[ru]=Браузер Aura
+Comment=Browse the web with Aura
+Comment[ru]=Просмотр веб-страниц в Aura
+Exec=aura-browser
+Icon=/opt/aura-browser/branding/aura.png
+StartupWMClass=Aura2
+Terminal=false
+Categories=Network;WebBrowser;

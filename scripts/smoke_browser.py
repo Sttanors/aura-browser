@@ -50,7 +50,7 @@ def main():
     server=ThreadingHTTPServer(('127.0.0.1',0),partial(Handler,directory=str(ROOT/'tests/fixtures')))
     worker=threading.Thread(target=server.serve_forever,daemon=True);worker.start()
     base=f'http://127.0.0.1:{server.server_port}/browser/'
-    binary=ROOT/'build/linux-x64-release/aura_browser'
+    binary=Path(os.environ.get('AURA_TEST_BINARY', str(ROOT/'build/linux-x64-release/aura_browser')))
     reports=[]
     try:
         for launch in range(2):

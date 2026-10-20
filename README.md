@@ -14,28 +14,46 @@ AI assistance does not imply that the software is error-free. Aura is currently 
 
 ## Download and install
 
-Get the files from [GitHub Releases](https://github.com/Sttanors/aura-browser/releases/tag/v0.2.0-preview.3).
-SHA-256 checksum files accompany each download. Installers contain the same browser as the portable archives
-and do not download browser components during installation.
+Get the files from [GitHub Releases](https://github.com/Sttanors/aura-browser/releases/tag/v0.2.0-preview.3.1).
+SHA-256 checksum files accompany each download. Installers contain the browser runtime. Native Linux package managers can download system-library dependencies.
 
 | Platform | Installer | How to install |
 |---|---|---|
 | Windows 10/11 x64 | `aura2-windows64-setup.exe` | Open the installer; choose English or Russian |
 | Linux x86_64 | `aura2-linux64.run` | Run `bash ~/Downloads/aura2-linux64.run` (adjust the path) |
 
+### Native Linux packages
+
+Native packages install system-wide into `/opt/aura-browser`, with `/usr/bin/aura-browser`
+and an applications-menu entry. They use the same per-user profile as the `.run` installer:
+`${XDG_DATA_HOME:-~/.local/share}/aura-browser-profile`. Package removal retains that profile.
+Close Aura before upgrading.
+
+| Distribution (x86_64) | Install downloaded package | Remove |
+|---|---|---|
+| Arch Linux / CachyOS (current rolling) | `sudo pacman -U ./aura-browser-0.2.0rc3-1-x86_64.pkg.tar.gz` | `sudo pacman -R aura-browser` |
+| Debian 13+ | `sudo apt install './aura-browser_0.2.0~preview.3-1_amd64.deb'` | `sudo apt remove aura-browser` |
+| Fedora 44 | `sudo dnf install './aura-browser-0.2.0~preview.3-1.x86_64.rpm'` | `sudo dnf remove aura-browser` |
+
+Native package managers install required system libraries. These packages are built against Debian 13's
+ABI, rather than the newer ABI of the original development machine; Debian 12 is not a supported target.
+If you previously installed with `.run`, first close Aura and run `~/.local/bin/aura-browser-uninstall`.
+It retains your profile and removes the old user-level launcher/menu entry that would shadow the system package.
+Then install your distribution's package. Choose one installation method per user.
+
 On Windows, Aura installs for the current user into `%LOCALAPPDATA%\Programs\Aura Browser`.
 Open **Aura Browser** from the Start menu; a desktop shortcut is optional.
 Remove it through Windows **Installed apps**. Shortcut launches use the profile at
 `%LOCALAPPDATA%\Aura Browser\profile`.
 
-On Linux, run the installer as your regular user, **without sudo**. It installs into
+For the Linux **`.run` installer**, run it as your regular user, **without sudo**. It installs into
 `${XDG_DATA_HOME:-~/.local/share}/aura-browser` and adds an applications-menu entry.
 The launcher is `~/.local/bin/aura-browser`; use the menu if that directory is not on your PATH.
 Remove the application with `~/.local/bin/aura-browser-uninstall`.
 The separate profile lives in `${XDG_DATA_HOME:-~/.local/share}/aura-browser-profile`.
 Installation requires Bash, tar, gzip and sha256sum. Your distribution must provide the CEF/X11 runtime libraries.
 
-Both installers preserve the profile on reinstall and uninstall. Close Aura before reinstalling.
+The per-user Windows and `.run` installers preserve the profile on reinstall and uninstall. Close Aura before reinstalling.
 Portable profiles are not migrated automatically. Installation does not change your default browser.
 This preview has **no binary signing or automatic updater**.
 
@@ -270,14 +288,14 @@ Reports/screenshots are written under `artifacts/`. Windows GUI checks run only 
 ## Packaging and source layout
 
 ```bash
-python3 scripts/package.py --source
 python3 scripts/package.py
 python3 scripts/build_linux_installer.py
 python3 -m unittest discover -s tests/python -p test_installers.py
 ```
 
 Runtime archives include CEF, the application, resources and third-party notices.
-Linux system libraries are not bundled. Source archives contain code, tests, packaging and bootstrap scripts.
+Linux system libraries are not bundled. Use GitHub’s built-in **Source code (zip)** / **Source code (tar.gz)** downloads for source snapshots.
+Release assets contain installable/portable binaries and their checksums; logo files stay in the application and repository.
 The Windows installer is built with [Inno Setup](https://jrsoftware.org/isinfo.php);
 Windows CI packages the freshly built browser and tests install/reinstall/uninstall, executable identity and native window icons.
 

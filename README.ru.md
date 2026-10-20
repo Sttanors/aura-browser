@@ -14,7 +14,7 @@ HTML используется только для посещаемых стра�
 
 Windows-порт использует то же приложение и интерфейс, что и Linux: **Win32 + Skia raster + CEF OSR**.
 Статус его сборки и проверок виден в [GitHub Actions](https://github.com/Sttanors/aura-browser/actions).
-Готовые portable-сборки Windows и Linux доступны в [GitHub Releases](https://github.com/Sttanors/aura-browser/releases/tag/v0.2.0-preview.3).
+Готовые portable-сборки Windows и Linux доступны в [GitHub Releases](https://github.com/Sttanors/aura-browser/releases/tag/v0.2.0-preview.3.1).
 Для Windows скачайте `aura2-windows64.zip`, для Linux — `aura2-linux64.zip`.
 Распакуйте архив целиком и запустите **Aura2/aura_browser.exe**. Windows 10/11 x64.
 Сборка пока не подписана; автоматического обновления нет.
@@ -26,26 +26,45 @@ Windows x64 проверена в CI: сборка, 38 тестов CTest (од�
 
 ## Установка в систему
 
-Все варианты доступны в [релизе](https://github.com/Sttanors/aura-browser/releases/tag/v0.2.0-preview.3).
-Установщики содержат тот же браузер, что и portable-архивы, и работают без скачивания его компонентов.
+Все варианты доступны в [релизе](https://github.com/Sttanors/aura-browser/releases/tag/v0.2.0-preview.3.1).
+Установщики содержат браузер. Пакетный менеджер Linux может скачать системные зависимости.
 
 | Платформа | Файл | Запуск |
 |---|---|---|
 | Windows 10/11 x64 | `aura2-windows64-setup.exe` | Откройте файл и следуйте мастеру на русском или английском |
 | Linux x86_64 | `aura2-linux64.run` | `bash ~/Загрузки/aura2-linux64.run` (укажите свой путь) |
 
+### Пакеты для дистрибутивов Linux
+
+Эти пакеты устанавливают Aura для всей системы в `/opt/aura-browser`, добавляют команду
+`/usr/bin/aura-browser` и ярлык в меню приложений. Профиль каждого пользователя остаётся
+в `${XDG_DATA_HOME:-~/.local/share}/aura-browser-profile`, как у `.run`-версии.
+Удаление пакета сохраняет профиль. Перед обновлением закройте браузер.
+
+| Дистрибутив (x86_64) | Установка скачанного пакета | Удаление |
+|---|---|---|
+| Arch Linux / CachyOS (актуальный rolling) | `sudo pacman -U ./aura-browser-0.2.0rc3-1-x86_64.pkg.tar.gz` | `sudo pacman -R aura-browser` |
+| Debian 13+ | `sudo apt install './aura-browser_0.2.0~preview.3-1_amd64.deb'` | `sudo apt remove aura-browser` |
+| Fedora 44 | `sudo dnf install './aura-browser-0.2.0~preview.3-1.x86_64.rpm'` | `sudo dnf remove aura-browser` |
+
+Пакетный менеджер установит необходимые системные библиотеки. Сборка использует ABI Debian 13,
+а не более новые библиотеки компьютера разработчика. Debian 12 не поддерживается.
+Если раньше ставили `.run`, сначала закройте Aura и выполните `~/.local/bin/aura-browser-uninstall`.
+Профиль сохранится, а прежний пользовательский ярлык не будет перекрывать системный пакет.
+Затем установите пакет своего дистрибутива. Выберите один способ установки для пользователя.
+
 Windows: Aura устанавливается в `%LOCALAPPDATA%\Programs\Aura Browser`, появляется в меню «Пуск».
 Мастер предлагает дополнительный ярлык на рабочем столе. Удаление — через «Установленные приложения».
 Профиль ярлыков хранится в `%LOCALAPPDATA%\Aura Browser\profile`.
 
-Linux: запускайте установщик от обычного пользователя **без sudo**. Приложение устанавливается в
+Linux **`.run`**: запускайте установщик от обычного пользователя **без sudo**. Приложение устанавливается в
 `${XDG_DATA_HOME:-~/.local/share}/aura-browser`, ярлык — в меню приложений, команда запуска —
 `~/.local/bin/aura-browser`. После установки достаточно найти **Aura Browser** в меню.
 Удаление: `~/.local/bin/aura-browser-uninstall`. Профиль хранится отдельно в
 `${XDG_DATA_HOME:-~/.local/share}/aura-browser-profile`. Для установки нужны Bash, tar, gzip и sha256sum;
 системные библиотеки CEF/X11 должны быть установлены в дистрибутиве.
 
-Оба установщика работают для текущего пользователя и сохраняют профиль при переустановке и удалении.
+Установщики Windows и `.run` работают для текущего пользователя и сохраняют профиль при переустановке и удалении.
 Данные portable-версии автоматически не переносятся. Перед установкой поверх прежней закройте Aura.
 Браузер по умолчанию не меняется. Подписи и автоматического обновления пока нет.
 
@@ -368,11 +387,11 @@ GUI-проверка M0 также защищена от запуска на р�
 ## Архивы
 
 ```bash
-python3 scripts/package.py --source
 python3 scripts/package.py
 ```
 
-Исходный архив включает код браузера, UI, тесты и bootstrap. Runtime-архив содержит CEF, executable,
+Исходники доступны через стандартные **Source code (zip)** / **Source code (tar.gz)** на GitHub.
+Отдельные архивы исходников и файлы логотипа в assets не публикуются. Runtime-архив содержит CEF, executable,
 ресурсы и лицензии; системные библиотеки Linux в него не входят.
 
 Изменения интерфейса и границы доступности описаны в [дизайн-заметках](docs/design/interface-refinement.md).

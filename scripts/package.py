@@ -1,4 +1,4 @@
-"""Create either a complete source archive or a portable browser runtime archive."""
+"""Create a portable browser runtime archive; GitHub supplies source snapshots."""
 from __future__ import annotations
 import argparse
 from pathlib import Path
@@ -6,19 +6,6 @@ import shutil
 import tempfile
 import zipfile
 from dependencies import ROOT, host
-
-
-def source_archive(output: Path):
-    directories = ("app", "common", "core", "render", "ui", "platform", "cmake", "design", "scripts", "tests", "docs", ".github", "packaging")
-    files = [ROOT / name for name in ("CMakeLists.txt", "CMakePresets.json", "README.md", "README.ru.md", ".gitignore", ".clang-format", "run.sh", "run.ps1", "vcpkg.json", ".gitattributes")]
-    for directory in directories:
-        files += [p for p in (ROOT / directory).rglob("*") if p.is_file() and "__pycache__" not in p.parts]
-    files += [ROOT / "resources/default.toml", ROOT / "third_party/dependencies.lock.json"]
-    files += list((ROOT / "third_party/patches").glob("*"))
-    files += [p for folder in ("vendor", "protection", "branding") for p in (ROOT/"resources"/folder).rglob("*") if p.is_file()]
-    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED, strict_timestamps=False) as archive:
-        for file in sorted(set(files)):
-            if file.is_file(): archive.write(file, Path("Aura2") / file.relative_to(ROOT))
 
 
 def runtime_archive(output: Path):
@@ -76,10 +63,9 @@ def runtime_archive(output: Path):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--source", action="store_true")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    output = args.output or ROOT / "artifacts" / ("aura2-browser-source.zip" if args.source else f"aura2-{host()}.zip")
+    output = args.output or ROOT / "artifacts" / f"aura2-{host()}.zip"
     output.parent.mkdir(parents=True, exist_ok=True)
-    (source_archive if args.source else runtime_archive)(output)
+    runtime_archive(output)
     print(output)
