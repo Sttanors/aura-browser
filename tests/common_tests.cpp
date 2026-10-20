@@ -429,3 +429,29 @@ TEST(Platform, ReplacesExistingUnicodeFileAndPreservesItOnFailure) {
     {std::ifstream stream(target);std::string value;stream>>value;EXPECT_EQ(value,"new");}
     std::filesystem::remove_all(root);
 }
+
+#ifdef _WIN32
+#include <windows.h>
+TEST(Platform, ReplacesFileAfterTemporaryWindowsReaderLock) {
+    const auto root = std::filesystem::temp_directory_path() /
+        ("aura-sharing-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(root);
+    const auto target = root / "target", pending = root / "pending";
+    { std::ofstream file(target); file << "before"; }
+    { std::ofstream file(pending); file << "after"; }
+    const auto reader = CreateFileW(target.c_str(), GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    ASSERT_NE(reader, INVALID_HANDLE_VALUE);
+    std::thread release([reader] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        CloseHandle(reader);
+    });
+    std::error_code error;
+    replace_file(pending, target, error);
+    release.join();
+    EXPECT_FALSE(error);
+    { std::ifstream file(target); std::string value; file >> value; EXPECT_EQ(value, "after"); }
+    EXPECT_FALSE(std::filesystem::exists(pending));
+    std::filesystem::remove_all(root);
+}
+#endif

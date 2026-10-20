@@ -28,11 +28,23 @@ std::tm local_time(std::time_t value) {
 void replace_file(const std::filesystem::path &source, const std::filesystem::path &target,
                   std::error_code &error) {
 #ifdef _WIN32
-    if (MoveFileExW(source.c_str(), target.c_str(),
-                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-        error.clear();
-    else
-        error = std::error_code(GetLastError(), std::system_category());
+    DWORD failure = ERROR_SUCCESS;
+    // Readers and scanners can briefly hold a file without FILE_SHARE_DELETE.
+    // Preserve the old file and retry bounded transient failures before reporting them.
+    for (unsigned attempt = 0; attempt < 12; ++attempt) {
+        if (MoveFileExW(source.c_str(), target.c_str(),
+                        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+            error.clear();
+            return;
+        }
+        failure = GetLastError();
+        if ((failure != ERROR_SHARING_VIOLATION && failure != ERROR_LOCK_VIOLATION &&
+             failure != ERROR_ACCESS_DENIED) ||
+            attempt == 11)
+            break;
+        Sleep(10);
+    }
+    error = std::error_code(failure, std::system_category());
 #else
     std::filesystem::rename(source, target, error);
 #endif
