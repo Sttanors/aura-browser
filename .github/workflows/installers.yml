@@ -1,0 +1,40 @@
+name: Preview installers
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'packaging/windows/**'
+      - 'scripts/windows_installer_ci.ps1'
+      - '.github/workflows/installers.yml'
+permissions:
+  contents: read
+jobs:
+  windows-installer:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build installer and test installation lifecycle
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/windows_installer_ci.ps1
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: aura-windows-installer
+          path: |
+            artifacts/aura2-windows64-setup.exe
+            artifacts/aura2-windows64-setup.exe.sha256
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-installer-diagnostics
+          path: |
+            artifacts/windows-installer-PASS.txt
+            artifacts/windows-smoke/

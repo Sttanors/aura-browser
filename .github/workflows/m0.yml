@@ -4,6 +4,14 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+    paths-ignore:
+      - '*.md'
+      - 'docs/**'
+      - 'packaging/**'
+      - 'scripts/build_linux_installer.py'
+      - 'scripts/windows_installer_ci.ps1'
+      - 'tests/python/test_installers.py'
+      - '.github/workflows/installers.yml'
   pull_request:
 permissions:
   contents: read

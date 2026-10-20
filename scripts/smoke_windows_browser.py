@@ -32,7 +32,7 @@ def main():
     server = ThreadingHTTPServer(('127.0.0.1', 0), partial(SimpleHTTPRequestHandler, directory=str(ROOT/'tests/fixtures')))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     url = f'http://127.0.0.1:{server.server_port}/browser/a.html'
-    binary = ROOT/'build/windows-x64-release/aura_browser.exe'
+    binary = Path(os.environ.get('AURA_TEST_BINARY', str(ROOT/'build/windows-x64-release/aura_browser.exe')))
     process = None
     try:
         for launch in range(2):
