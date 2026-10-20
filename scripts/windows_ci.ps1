@@ -18,7 +18,7 @@ switch ($Stage) {
         }
     }
     configure { $commands += 'cmake --preset windows-x64-release' }
-    build { $commands += 'cmake --build --preset windows-x64-release --parallel 4' }
+    build { $commands += 'cmake --build --preset windows-x64-release --parallel 4 -- -k 0' }
     test {
         $commands += 'ctest --preset windows-x64-release'
         $commands += 'python scripts/smoke_windows_browser.py'
