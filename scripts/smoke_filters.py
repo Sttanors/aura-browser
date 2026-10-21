@@ -64,7 +64,7 @@ def main():
                         return state()['settings_ui']['controls']
                     def manager():
                         row=next(c for c in seek('Filter lists and custom rules') if c['id']=='filters');r=row['bounds'];click([r[0],r[1]+66,min(300,r[2]),32]);wait_until(lambda:ui(),'No filter list panel')
-                    def done(revision):wait_until(lambda:not state()['filter_lists']['busy'] and state()['filter_lists']['revision']>=revision,'Rules did not apply: '+state()['filter_lists']['status'],timeout=35)
+                    def done(revision):wait_until(lambda:not state()['filter_lists']['busy'] and state()['filter_lists']['revision']>=revision and ui().get('list_revision')==state()['filter_lists']['revision'],'Rules did not apply: '+state()['filter_lists']['status'],timeout=35)
                     def rule(value):
                         revision=state()['filter_lists']['revision'];paste(value,ui()['input']);click(ui()['save']);done(revision+1)
                     def probe(predicate):wait_until(lambda:Handler.probes and predicate(Handler.probes[-1]),'Filter result was not observed',timeout=20)

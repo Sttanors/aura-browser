@@ -122,8 +122,7 @@ def main():
                 type_text('||ci-example.test^$script')
                 wait(lambda s: (s.get('filters_ui') or {}).get('input_length') == len('||ci-example.test^$script'), 'Native typing must reach the custom filter editor')
                 rect=read()['filters_ui']['save'];click(rect[0]+rect[2]//2,rect[1]+rect[3]//2)
-                wait(lambda s: s['filter_lists']['revision'] > 0 and not s['filter_lists']['busy'], 'Filter engine must compile and persist rules on Windows')
-                assert read()['filters_ui']['custom_count'] == 1
+                wait(lambda s: s['filter_lists']['revision'] > 0 and not s['filter_lists']['busy'] and (s.get('filters_ui') or {}).get('list_revision') == s['filter_lists']['revision'] and s['filters_ui']['custom_count'] == 1, 'Filter engine and painted rule list must finish applying on Windows')
                 # Exercise real additional Win32 windows with the same profile/process.
                 for _ in range(3):
                     user.SendMessageW(window, 0x100, 27, 1)

@@ -191,6 +191,45 @@ void image(SkCanvas &c, const PaintBuffer &buffer, Rect r) {
     if (im)
         c.drawImageRect(im, box(r), SkSamplingOptions(SkFilterMode::kLinear));
 }
+void page_image(SkCanvas &c, const PaintBuffer &buffer, Rect web, SkColor background) {
+    // Partition in device pixels so fractional UI scales never cut an
+    // antialiased pixel in half. Only the narrow perimeter needs curved clips.
+    const auto matrix = c.getTotalMatrix();
+    const auto pixels = matrix.mapRect(box(web));
+    const auto outer = pixels.roundOut();
+    const float left = std::ceil(pixels.left()) + 1, right = std::floor(pixels.right()) - 1;
+    const float top = std::ceil(pixels.top()) + 1, bottom = std::floor(pixels.bottom()) - 1;
+    const float rx = std::ceil(15 * matrix.getScaleX()) + 1;
+    const float ry = std::ceil(15 * matrix.getScaleY()) + 1;
+    const SkRect interiors[] = {
+        SkRect::MakeLTRB(left, top + ry, right, bottom - ry),
+        SkRect::MakeLTRB(left + rx, top, right - rx, top + ry),
+        SkRect::MakeLTRB(left + rx, bottom - ry, right - rx, bottom)};
+    const SkRect perimeter[] = {
+        SkRect::MakeLTRB(outer.left(), outer.top(), left + rx, top + ry),
+        SkRect::MakeLTRB(right - rx, outer.top(), outer.right(), top + ry),
+        SkRect::MakeLTRB(outer.left(), bottom - ry, left + rx, outer.bottom()),
+        SkRect::MakeLTRB(right - rx, bottom - ry, outer.right(), outer.bottom()),
+        SkRect::MakeLTRB(outer.left(), top + ry, left, bottom - ry),
+        SkRect::MakeLTRB(right, top + ry, outer.right(), bottom - ry),
+        SkRect::MakeLTRB(left + rx, outer.top(), right - rx, top),
+        SkRect::MakeLTRB(left + rx, bottom, right - rx, outer.bottom())};
+    const auto page_part = [&](const SkRect &rect, bool curved) {
+        c.save();
+        c.resetMatrix();
+        c.clipRect(rect);
+        c.setMatrix(matrix);
+        fill(c, web, curved ? 15 : 0, background);
+        if (curved)
+            c.clipRRect(SkRRect::MakeRectXY(box(web), 15, 15), true);
+        image(c, buffer, web);
+        c.restore();
+    };
+    for (const auto &rect : interiors)
+        page_part(rect, false);
+    for (const auto &rect : perimeter)
+        page_part(rect, true);
+}
 void brand_logo(SkCanvas &c, Rect r) {
     c.save();
     c.translate(r.x, r.y);
@@ -363,44 +402,8 @@ bool BrowserUi::draw_web_frame(SkCanvas &c) {
     c.resetMatrix();
     c.drawImage(web_backdrop_, backdrop_x_, backdrop_y_);
     c.restore();
-    // Partition in device pixels so fractional UI scales never cut an
-    // antialiased pixel in half. Only the narrow perimeter needs curved clips.
-    const auto matrix = c.getTotalMatrix();
-    const auto pixels = matrix.mapRect(box(web));
-    const auto outer = pixels.roundOut();
-    const float left = std::ceil(pixels.left()) + 1, right = std::floor(pixels.right()) - 1;
-    const float top = std::ceil(pixels.top()) + 1, bottom = std::floor(pixels.bottom()) - 1;
-    const float rx = std::ceil(15 * matrix.getScaleX()) + 1;
-    const float ry = std::ceil(15 * matrix.getScaleY()) + 1;
-    const SkRect interiors[] = {
-        SkRect::MakeLTRB(left, top + ry, right, bottom - ry),
-        SkRect::MakeLTRB(left + rx, top, right - rx, top + ry),
-        SkRect::MakeLTRB(left + rx, bottom - ry, right - rx, bottom)};
-    const SkRect perimeter[] = {
-        SkRect::MakeLTRB(outer.left(), outer.top(), left + rx, top + ry),
-        SkRect::MakeLTRB(right - rx, outer.top(), outer.right(), top + ry),
-        SkRect::MakeLTRB(outer.left(), bottom - ry, left + rx, outer.bottom()),
-        SkRect::MakeLTRB(right - rx, bottom - ry, outer.right(), outer.bottom()),
-        SkRect::MakeLTRB(outer.left(), top + ry, left, bottom - ry),
-        SkRect::MakeLTRB(right, top + ry, outer.right(), bottom - ry),
-        SkRect::MakeLTRB(left + rx, outer.top(), right - rx, top),
-        SkRect::MakeLTRB(left + rx, bottom, right - rx, outer.bottom())};
-    const auto background = app_.profile.theme % 2 ? 0xFFFFFFFF : 0xFF161B25;
-    const auto page_part = [&](const SkRect &rect, bool curved) {
-        c.save();
-        c.resetMatrix();
-        c.clipRect(rect);
-        c.setMatrix(matrix);
-        fill(c, web, curved ? 15 : 0, background);
-        if (curved)
-            c.clipRRect(SkRRect::MakeRectXY(box(web), 15, 15), true);
-        image(c, current->page.view, web);
-        c.restore();
-    };
-    for (const auto &rect : interiors)
-        page_part(rect, false);
-    for (const auto &rect : perimeter)
-        page_part(rect, true);
+    page_image(c, current->page.view, web,
+               app_.profile.theme % 2 ? 0xFFFFFFFF : 0xFF161B25);
     c.save();
     c.clipRRect(SkRRect::MakeRectXY(box(web), 15, 15), true);
     if (current->page.popup_visible) {
@@ -606,10 +609,9 @@ void BrowserUi::draw(SkCanvas &c) {
                 backdrop_y_ = pixels.top();
             }
         }
-        fill(c, web, 15, light ? 0xFFFFFFFF : 0xFF161B25);
+        page_image(c, current->page.view, web, light ? 0xFFFFFFFF : 0xFF161B25);
         c.save();
         c.clipRRect(SkRRect::MakeRectXY(box(web), 15, 15), true);
-        image(c, current->page.view, web);
         if (current->page.popup_visible) {
             auto p = current->page.popup_bounds;
             image(c, current->page.popup,
@@ -4311,6 +4313,7 @@ std::string BrowserUi::filters_report() const {
         ",\"picker_pid\":" + std::to_string(picker_pid_) +
         ",\"easylist_toggle\":" + rect({r.x + r.width - 132, r.y + 125, 104, 32}) +
         ",\"easyprivacy_toggle\":" + rect({r.x + r.width - 132, r.y + 173, 104, 32}) +
+        ",\"list_revision\":" + std::to_string(filter_seen_) +
         ",\"custom_count\":" + std::to_string(filter_lines_.size()) +
         ",\"input_length\":" + std::to_string(filter_input_.value.size()) + ",\"rows\":[";
     bool first = true;
