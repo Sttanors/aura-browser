@@ -45,6 +45,24 @@ def main():
                 def item_button(offset):
                     r=state()['extensions_ui']['bounds'];click_at(window,r[0]+offset,r[1]+287);time.sleep(.35)
                 def screenshot(name):time.sleep(.3);subprocess.run(['import','-window',window,str(out/name)],check=True,timeout=10)
+                def layouts(prefix):
+                    def language(value):
+                        key_at(window,'Escape');click_at(window,1307,55)
+                        wait_until(lambda:state().get('settings_ui'),'No language settings')
+                        key_at(window,'f',4);type_text(window,'language');key_at(window,'Return')
+                        wait_until(lambda:state()['settings_ui'].get('search')=='language','No language search')
+                        control=next(c for c in state()['settings_ui']['controls'] if c['id']=='language')
+                        click(next(o['bounds'] for o in control['options'] if o['value']==value))
+                        wait_until(lambda:state()['settings']['language']==value,'Language did not change')
+                        manager()
+                    for value in ('ru','en'):
+                        if state()['settings']['language']!=value:language(value)
+                        for w,h in ((1360,900),(900,620)):
+                            subprocess.run(['xdotool','windowsize','--sync',window,str(w),str(h)],check=True)
+                            time.sleep(.3);screenshot(prefix+'-'+value+'-'+str(w)+'.png')
+                        subprocess.run(['xdotool','windowsize','--sync',window,'1360','900'],check=True)
+                        time.sleep(.3)
+                    language('ru')
                 def restart(cancel=False):
                     nonlocal window
                     old=window;old_pid=state()['pid'];click(state()['extensions_ui']['restart']);wait_until(lambda:state()['dialog_count']==1,'No restart confirmation')
@@ -69,13 +87,13 @@ def main():
                 assert state()['extensions']['items'][0]['pinned']
                 manager();item_button(206);wait_until(lambda:state().get('extension_popup') and state()['extension_popup']['loaded'],'No extension popup')
                 wait_until(lambda:state()['extensions']['items'][0]['observed'],'Popup activity was not recorded');key_at(window,'Escape');time.sleep(.3)
-                manager();download('update.crx');preview('2.0');assert state()['extensions']['added_permissions']==['tabs'];screenshot('ru-update-permissions.png');install()
+                manager();download('update.crx');preview('2.0');assert state()['extensions']['added_permissions']==['tabs'];screenshot('ru-update-permissions.png');layouts('update-buttons');install()
                 assert state()['extensions']['items'][0]['version']=='2.0' and state()['extensions']['items'][0]['pending_update']
                 restart();probe(lambda p:p['extension'] and p['extension'].get('version')=='2.0')
                 assert Handler.probes[-1]['extension']['preserved']=='version-one','Extension local storage was lost during update'
                 manager();download('module.crx');preview('3.0');assert state()['extensions']['added_permissions']==[];install();restart();probe(lambda p:p['extension'] and p['extension'].get('version')=='3.0');assert Handler.probes[-1]['extension']['preserved']=='version-one'
                 manager();download('valid.crx');wait_until(lambda:state()['extensions']['status']=='An older extension version was rejected.','Downgrade was not rejected');assert not state()['extensions']['candidate'];assert state()['extensions']['items'][0]['version']=='3.0'
-                item_button(90);assert state()['extensions']['items'][0]['enabled'] is False;screenshot('ru-pending-disable.png');restart()
+                item_button(90);assert state()['extensions']['items'][0]['enabled'] is False;screenshot('ru-pending-disable.png');layouts('pending-buttons');restart()
                 probe(lambda p:not p['extension']);assert not state()['extensions']['items'][0]['loaded']
                 manager();item_button(90);restart();probe(lambda p:p['extension'] and p['extension'].get('version')=='3.0');assert Handler.probes[-1]['extension']['preserved']=='version-one'
                 manager();item_button(430);wait_until(lambda:state()['dialog_count']==1,'No remove confirmation');key_at(window,'Return');wait_until(lambda:not state()['extensions']['items'],'Extension was not removed');restart();probe(lambda p:not p['extension'])

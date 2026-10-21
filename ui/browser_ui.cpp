@@ -3393,7 +3393,7 @@ void BrowserUi::draw_extensions(SkCanvas &c, Rect r) {
             chip({r.x + 268, y + 60, 104, 34}, "Options", false,
                  e.load_requested && e.enabled && !e.options.empty());
             chip({r.x + 380, y + 60, 104, 34}, "Remove");
-            chip({r.x + 492, y + 60, 104, 34}, "Check update", false, !m.busy);
+            chip({r.x + 492, y + 60, 104, 34}, "Check", false, !m.busy);
         }
         c.restore();
         chip({r.x + 28, r.y + r.height - 88, 216, 36}, "Open Chrome Web Store",

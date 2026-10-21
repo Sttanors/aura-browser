@@ -25,7 +25,7 @@ constexpr Translation catalog[] = {
     {"Update after restart", "Обновится после перезапуска"},
     {"New permissions are highlighted", "Новые разрешения отмечены знаком +"},
     {"Update extension", "Обновить"},
-    {"Check update", "Обновить"},
+    {"Check", "Проверить"},
     {"Extension operation cancelled.", "Операция с расширением отменена."},
     {"Extension download timed out. Try again.",
      "Истекло время загрузки расширения. Попробуйте снова."},

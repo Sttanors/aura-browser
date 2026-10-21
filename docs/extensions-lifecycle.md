@@ -5,7 +5,7 @@ that release do not include them.
 
 Open the puzzle menu to install a signed Manifest V3 CRX, pin an extension,
 open its popup/options, disable it, remove it or check for an update.
-For a Chrome Web Store installation, **Check update** downloads the same ID.
+For a Chrome Web Store installation, **Check** downloads the same ID.
 For a local installation, select a newer signed CRX from its publisher.
 Checks are explicit, not periodic background updates.
 
