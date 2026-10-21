@@ -70,8 +70,7 @@ Scriptlets, CSP response changes, regex/XPath procedural rules and destructive
 DOM actions are unsupported. Remote unsupported rules are counted as skipped.
 This is a supported subset rather than full uBlock Origin compatibility.
 
-Latest published installers predate this feature. Build the current source to
-use it until a new release is published.
+Available in the 0.3.0-preview.1 installers.
 
 ## Verification
 

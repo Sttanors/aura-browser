@@ -1,7 +1,6 @@
 # Extension lifecycle
 
-These changes are in source builds after `v0.2.0-preview.3.1`; installers from
-that release do not include them.
+Available in the 0.3.0-preview.1 installers. The earlier preview.3.1 installers predate these changes.
 
 Open the puzzle menu to install a signed Manifest V3 CRX, pin an extension,
 open its popup/options, disable it, remove it or check for an update.

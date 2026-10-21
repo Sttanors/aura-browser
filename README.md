@@ -14,7 +14,7 @@ AI assistance does not imply that the software is error-free. Aura is currently 
 
 ## Download and install
 
-Get the files from [GitHub Releases](https://github.com/Sttanors/aura-browser/releases/tag/v0.2.0-preview.3.1).
+Get the files from [GitHub Releases](https://github.com/Sttanors/aura-browser/releases/tag/v0.3.0-preview.1).
 SHA-256 checksum files accompany each download. Installers contain the browser runtime. Native Linux package managers can download system-library dependencies.
 
 | Platform | Installer | How to install |
@@ -31,9 +31,9 @@ Close Aura before upgrading.
 
 | Distribution (x86_64) | Install downloaded package | Remove |
 |---|---|---|
-| Arch Linux / CachyOS (current rolling) | `sudo pacman -U ./aura-browser-0.2.0rc3-1-x86_64.pkg.tar.gz` | `sudo pacman -R aura-browser` |
-| Debian 13+ | `sudo apt install './aura-browser_0.2.0-preview.3-1_amd64.deb'` | `sudo apt remove aura-browser` |
-| Fedora 44 | `sudo dnf install './aura-browser-0.2.0-preview.3-1.x86_64.rpm'` | `sudo dnf remove aura-browser` |
+| Arch Linux / CachyOS (current rolling) | `sudo pacman -U ./aura-browser-0.3.0rc1-1-x86_64.pkg.tar.gz` | `sudo pacman -R aura-browser` |
+| Debian 13+ | `sudo apt install './aura-browser_0.3.0-preview.1-1_amd64.deb'` | `sudo apt remove aura-browser` |
+| Fedora 44 | `sudo dnf install './aura-browser-0.3.0-preview.1-1.x86_64.rpm'` | `sudo dnf remove aura-browser` |
 
 Native package managers install required system libraries. These packages are built against Debian 13's
 ABI, rather than the newer ABI of the original development machine; Debian 12 is not a supported target.
@@ -81,13 +81,16 @@ Keep all runtime files together. Direct launches create `profile/` beside the ex
 - Russian and English interface, including settings, menus and notifications.
 - Built-in ad/tracker blocking, Dark Reader and signed Manifest V3 extensions.
 
-The published `v0.2.0-preview.3.1` opens private tabs in the current window.
-Current source also supports separate normal/private windows, session recovery and a password vault
+Aura supports separate normal/private windows, session recovery and a password vault
 with encrypted manual transfer (see below). Private addresses are excluded from Aura history/session;
 downloaded files remain on disk. Session restoration keeps URLs, order, active and pinned tabs;
 back/forward stacks and form contents are not restored. Update installation requires an explicit
 action; native Linux packages use their package manager. Full CJK IME, DRM/codecs, printing and
 different window managers need further validation.
+
+If upgrading from preview.3.1, close Aura and install 0.3.0-preview.1 manually once;
+that older published build did not include the new updater. Profiles are retained.
+Future updates use signed metadata; native Linux packages continue through their package manager.
 
 ### Rendering and scrolling
 
@@ -97,13 +100,18 @@ falling back to an offscreen-pixmap copy. Windows uses Skia raster and a persist
 CEF frame rate follows the monitor, including 120/144/165 Hz; actual smoothness depends on page,
 window size and CPU performance. Linux reads refresh rate through Wayland output information or RandR.
 
-Current source reduces antialiased raster clipping to the page perimeter, uses the same painter for
+Version 0.3.0-preview.1 reduces antialiased raster clipping to the page perimeter, uses the same painter for
 full/page-only redraws, and discovers Wayland refresh without blocking startup. Measurements,
 75–200%/fractional-DPI pixel checks and limits are in [Linux performance](docs/linux-performance.md).
-These source changes are not yet in the published installers.
+Available in the 0.3.0-preview.1 installers.
 
 The experimental Linux EGL/GLES path remains in the source. It is not considered stable on the original
 test machine after a complete system freeze. Native Wayland and Vulkan are not implemented.
+
+See the [compatibility matrix](docs/compatibility.md) for tested APIs/sites and codec limits.
+The supplied runtime does not provide H.264, HEVC or Widevine. WebM VP9+Opus playback is verified.
+Linux WebGL is unavailable in the default software test; Windows context creation succeeds,
+with full WebGL rendering unverified.
 
 ## Settings and customization
 
@@ -161,13 +169,13 @@ The **shield** shows blocked requests and per-site controls. Blocking is enabled
 **Brave adblock-rust 0.13.3 + EasyList/EasyPrivacy**. Matching requests are canceled before loading;
 cosmetic filters also hide dynamically inserted elements. Filter exceptions are respected.
 Bundled list sources/checksums are in `resources/protection/dependencies.json`.
-**Current source builds** add **Filter lists** in the shield/settings menu: manual and optional daily
+**Filter lists** are available in the shield/settings menu: manual and optional daily
 EasyList/EasyPrivacy updates, separate list switches, custom rule editing/import and bundled recovery.
 Failed or canceled updates keep the working rules. Private-only launches do not start background checks.
 Supported advanced rules include literal procedural matching, CSS styling, tracking-parameter removal
 on subresources and local noop JS/CSS/transparent-image replacements. Scriptlets, CSP response
 modification, regex/XPath procedural rules and destructive DOM actions remain unsupported.
-See [filter list management](docs/filter-lists.md). These changes are not in the older published installers.
+See [filter list management](docs/filter-lists.md).
 Blocking every ad, including embedded video ads, is not guaranteed.
 
 Built-in **Dark Reader 4.9.133** offers Off, Always on and Follow Aura theme, plus brightness,
@@ -181,7 +189,7 @@ Installing, updating, disabling or removing extensions takes effect after restar
 Use **Check** for a Web Store installation, or select a newer signed CRX for a local one.
 Added permissions are highlighted. **Restart Aura** applies changes and restores normal tabs; private tabs close.
 The manager distinguishes a requested load from observed activity. See [extension lifecycle](docs/extensions-lifecycle.md)
-for limits and verification. These changes are in source builds after `v0.2.0-preview.3.1`.
+for limits and verification.
 
 Extension popups appear as overlays below the toolbar. Escape, clicking outside, close or clicking the
 icon again dismisses them. Options pages open in tabs. Use **Pin** or the popup pin icon for quick toolbar
@@ -197,7 +205,7 @@ Extensions are available only to the regular profile.
 Normal windows share a profile; private windows share temporary storage until the last private tab/window closes.
 The Aura logo menu includes window commands and restoration of the previous normal session. After an interrupted
 exit, Aura offers recovery. Sessions preserve window/tab order, selection and pinning, and exclude private URLs.
-See [windows and sessions](docs/windows-and-sessions.md). These changes require a source build after `v0.2.0-preview.3.1`.
+See [windows and sessions](docs/windows-and-sessions.md).
 
 ## Keyboard shortcuts
 
@@ -297,10 +305,10 @@ The optional legacy GPU harness requires bootstrap `--diagnostic-angle` and CMak
 
 ## Validation
 
-[Windows browser CI](https://github.com/Sttanors/aura-browser/actions/runs/39594176336)
+[Windows browser CI](https://github.com/Sttanors/aura-browser/actions/runs/39602429743)
 passed compilation, unit tests, native browser integration (Unicode input, settings,
 filter editing, multiple normal/private windows and relaunch), portable packaging and installer checks.
-Linux currently passes 86 CTest cases and 18 Python tests. Feature-specific GUI results
+Linux currently passes 86 CTest cases and 23 Python tests. Feature-specific GUI results
 and remaining limits are recorded in [the progress journal](docs/browser-roadmap-progress.md).
 All Linux GUI checks use an isolated software display; physical GPU/monitor behavior is a separate check.
 
@@ -349,7 +357,7 @@ See [interface design notes](docs/design/interface-refinement.md) for implementa
 
 ### Passwords and encrypted transfer
 
-Source builds provide a master-password vault, explicit HTTPS login filling and
+Aura provides a master-password vault, explicit HTTPS login filling and
 manual transfer through an encrypted file. Open **Settings → Data → Passwords**
 or press **Ctrl+Shift+Y**. [Usage, backup and limitations](docs/password-vault.md).
-This is not included in the older preview.3.1 installers.
+Available since 0.3.0-preview.1; earlier preview.3.1 installations require one manual upgrade.

@@ -9,6 +9,10 @@ import subprocess
 import time
 import tomllib
 import zipfile
+import threading
+from functools import partial
+from http.server import ThreadingHTTPServer
+from smoke import QuietHandler
 from dependencies import ROOT
 from smoke_browser import wait_until, type_text
 from smoke_window import click_at, key_at
@@ -26,8 +30,10 @@ def main():
     task_data = task_home/'data'
     app = task_data/'aura-browser'
     app.mkdir(parents=True)
-    archive = ROOT/'artifacts/aura2-linux64.zip'
-    manifest = tomllib.loads((ROOT/'artifacts/channel-current/aura-update.toml').read_text())
+    target_root = Path(os.environ.get('AURA_UPDATE_TARGET_ROOT', str(ROOT/'artifacts')))
+    archive = target_root/'aura2-linux64.zip'
+    manifest_path = target_root/'aura-update.toml' if 'AURA_UPDATE_TARGET_ROOT' in os.environ else ROOT/'artifacts/channel-current/aura-update.toml'
+    manifest = tomllib.loads(manifest_path.read_text())
     expected_zip = next(a['sha256'] for a in manifest['artifacts'] if a['filename'] == archive.name)
     with archive.open('rb') as stream:
         assert hashlib.file_digest(stream, 'sha256').hexdigest() == expected_zip
@@ -53,8 +59,10 @@ def main():
     report.unlink(missing_ok=True)
     env = {**os.environ, 'HOME': str(task_home), 'XDG_DATA_HOME': str(task_data),
            'XMODIFIERS': '@im=none', 'AURA_BACKGROUND_TEST': '1'}
+    server = ThreadingHTTPServer(('127.0.0.1', 0), partial(QuietHandler, directory=str(ROOT/'tests/fixtures/browser')))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
     with (out/'install-process.log').open('w') as log:
-        proc = subprocess.Popen([str(app/'aura_browser'), f'--data-dir={profile}', f'--report={report}'],
+        proc = subprocess.Popen([str(app/'aura_browser'), f'--data-dir={profile}', f'--report={report}', f'--url=http://127.0.0.1:{server.server_port}/a.html'],
                                 cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
         try:
             def state():
@@ -62,6 +70,7 @@ def main():
                 try: return json.loads(report.read_text())
                 except (FileNotFoundError, json.JSONDecodeError): return {}
             wait_until(lambda: state().get('presentation_frames', 0) > 0, 'No previous-version window')
+            wait_until(lambda: state().get('cef_created',0)>0, 'Previous build must have a real CEF browser before updating')
             window = str(state()['window'])
             def click(r):
                 x, y, w, h = r
@@ -105,12 +114,14 @@ def main():
             result = subprocess.run([str(task_home/'.local/bin/aura-browser'), '--help'], env=env,
                                     text=True, capture_output=True, timeout=20)
             assert result.returncode == 0 and 'Aura browser' in result.stdout
+            final=json.loads(report.read_text());assert final['cef_created']==final['cef_closed'] and final['cef_created']>0
             (out/'install-PASS.txt').write_text('PASS: synthetic previous-sequence installation -> real GitHub signature -> actual .run download/hash -> user confirmation -> CEF shutdown -> installer -> exact published binary, launcher/menu and preserved profile.\n')
             print('PASS: signed installed-browser upgrade and profile retention')
         finally:
             if proc.poll() is None:
                 os.killpg(proc.pid, signal.SIGTERM)
                 proc.wait(timeout=5)
+            server.shutdown();server.server_close()
 
 
 if __name__ == '__main__':

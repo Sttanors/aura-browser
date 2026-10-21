@@ -47,7 +47,7 @@ def main():
         for launch in range(3):
             report=out/f'report-{launch}.json';report.unlink(missing_ok=True);before=len(Handler.reports)
             with (out/f'process-{launch}.log').open('w') as log:
-                process=subprocess.Popen([str(ROOT/'build/linux-x64-release/aura_browser'),f'--data-dir={profile}',f'--report={report}',f'--url={url}']+(['--private'] if launch==2 else []),stdout=log,stderr=log,start_new_session=True,env={**os.environ,'AURA_BACKGROUND_TEST':'1','XMODIFIERS':'@im=none'})
+                process=subprocess.Popen([os.environ.get('AURA_TEST_BINARY',str(ROOT/'build/linux-x64-release/aura_browser')),f'--data-dir={profile}',f'--report={report}',f'--url={url}']+(['--private'] if launch==2 else []),stdout=log,stderr=log,start_new_session=True,env={**os.environ,'AURA_BACKGROUND_TEST':'1','XMODIFIERS':'@im=none'})
                 try:
                     def state():
                         if process.poll() is not None:raise RuntimeError('Compatibility browser exited')

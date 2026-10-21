@@ -13,19 +13,19 @@ Public pages are loaded read-only, without an authenticated profile.
 
 | Capability | Linux software CEF | Windows |
 |---|---|---|
-| Unicode File API, Canvas 2D, WebCrypto AES-GCM, Worker | Passed | CI pending |
-| IndexedDB persistence after restart | Passed | CI pending |
+| Unicode File API, Canvas 2D, WebCrypto AES-GCM, Worker | Passed | Passed in portable/installed CI |
+| IndexedDB persistence after restart | Passed | Passed in portable/installed CI |
 | IndexedDB isolation in private context | Passed | Native private windows covered; API journey Linux only |
-| Cache API and Service Worker response without origin fetch | Passed | CI pending |
-| CSP inline-script denial with allowed external script | Passed | CI pending |
-| CORS allowed fetch / denied foreign fetch | Passed | CI pending |
-| Foreign iframe DOM access denied | Passed | CI pending |
+| Cache API and Service Worker response without origin fetch | Passed | Passed in portable/installed CI |
+| CSP inline-script denial with allowed external script | Passed | Passed in portable/installed CI |
+| CORS allowed fetch / denied foreign fetch | Passed | Passed in portable/installed CI |
+| Foreign iframe DOM access denied | Passed | Passed in portable/installed CI |
 | Untrusted TLS certificate blocked | Passed | Full certificate fixture not repeated |
-| Actual VP9+Opus WebM playback | Passed | CI pending |
-| Popup block policy | Passed | CI pending |
-| H.264 / HEVC media capability probe | Not available | Probe pending |
-| Widevine EME capability probe | Not available | Probe pending |
-| WebGL in default software mode | Not available | Probe pending |
+| Actual VP9+Opus WebM playback | Passed | Passed in portable/installed CI |
+| Popup block policy | Passed | Passed in portable/installed CI |
+| H.264 / HEVC media capability probe | Not available | Not available in CI |
+| Widevine EME capability probe | Not available | Not available in CI |
+| WebGL context probe in default settings | Not available | Context creation succeeded; full rendering unverified |
 
 The 11 KiB WebM is an original synthetic fixture generated with FFmpeg's testsrc2
 and sine sources, libvpx-vp9 and libopus (160×90, 10 fps, one second). It contains
@@ -63,6 +63,17 @@ then reinstall/remove and verify the profile survives. The Debian 13 build is th
 ABI baseline; repackaging the newer development-host binary is not sufficient.
 Container install checks do not imply physical desktop/GPU validation on each distro.
 
-Installer/package results and final release verification are recorded in
-`browser-roadmap-progress.md` when available. No new release is declared verified
-by this document until those checks finish.
+Distribution checks passed in disposable Debian 13, Arch and Fedora 44 containers:
+actual runtime/package versions, dependencies, launcher/icons, reinstall/removal and profile retention.
+The actual Debian runtime also passed the API/security/media/private/restart/public-page journey
+and all 11 pixel comparisons. [Windows CI 39602429743](https://github.com/Sttanors/aura-browser/actions/runs/39602429743)
+passed its portable and installed API journeys, exact PE/DisplayVersion checks and installer lifecycle.
+
+A real, signature/hash-verified `0.2.0-preview.3.1` Linux `.run` upgraded to
+`0.3.0-preview.1` in an isolated home containing spaces, Cyrillic and shell-special
+characters. The actual launcher/GUI retained bookmarks/history/settings/cookies/
+localStorage; uninstall preserved the profile. The installed executable matched
+the new runtime archive exactly. This is a manual installation upgrade, since
+the previous published release did not contain the new updater.
+
+Final publication/signature verification is tracked in `browser-roadmap-progress.md`.

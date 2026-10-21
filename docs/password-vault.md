@@ -1,7 +1,7 @@
 # Saved logins and encrypted transfer
 
-Open **Settings → Data → Passwords**, or press **Ctrl+Shift+Y**. This feature is
-currently in source builds; the old preview.3.1 installers do not contain it.
+Open **Settings → Data → Passwords**, or press **Ctrl+Shift+Y**. Available since
+0.3.0-preview.1; the old preview.3.1 installers do not contain it.
 
 Create a master password with at least 12 characters. Aura does not store that
 password or use the release-signing key. After restarting, unlock the vault again.

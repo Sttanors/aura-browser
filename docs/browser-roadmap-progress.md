@@ -713,3 +713,36 @@ private API и untrusted TLS сценарий пока проверены Linux.
 product version разделены согласно официальным директивам; installed registry
 DisplayVersion и PE сравниваются с общей identity. Новые дистрибутивные сборки
 ещё не созданы/проверены; публикация не выполнялась.
+
+Нативная сборка Debian 13 завершилась: 86 CTest cases, один optional downloaded
+Web Store fixture skipped, остальные и Python bootstrap прошли. DEB/Arch/RPM
+собраны с новой identity; Debian install/reinstall/remove/version checks — PASS,
+Arch/Fedora пока выполняются. GUI compatibility/rendering harness дополнен
+AURA_TEST_BINARY для проверки именно Debian-baseline runtime, а не host build.
+Windows новой версии: **39602429743**, выполняется.
+
+Native Debian/Arch/Fedora — **PASS** всех install/version/reinstall/remove/profile
+checks (`compatibility-native-packages.log`). Debian runtime --version равен
+0.3.0-preview.1. GUI именно этой сборки: compatibility (42 API checks, strict TLS,
+3 public sites, normal/restart/private) и rendering (11 pixel configurations) — PASS.
+Windows **39602429743 — success**, включая API/WebM/IDB restart на portable и
+installed browser, PE numeric/product version, Inno DisplayVersion и uninstall.
+Windows probes: H.264/HEVC пусты, Widevine=false; WebGL context=true, в отличие
+от Linux. Полный WebGL rendering/аппаратная производительность не проверялись.
+
+`compatibility-manual-upgrade.log` — **PASS**: настоящий опубликованный старый
+0.2.0-preview.3.1 `.run` (подпись и точный hash проверены до запуска) установлен
+в изолированный HOME, запущен настоящий GUI/launcher; затем установлен новый
+0.3.0-preview.1 `.run`. Сохранены bookmarks/history/settings, persistent cookie
+и localStorage; новый executable совпал с archive hash, --version правильный.
+Uninstall новой версии сохранил профиль. Реальный профиль пользователя не использован.
+Финальная проверка прокрутки именно Debian deliverable и публикация ещё впереди.
+
+Debian deliverable 165 Гц — **PASS** (`compatibility-debian-scroll-165.log`),
+large stream p95 **17.203 ms**, 61 native frames, 720 ms main CPU. Это измерение
+именно опубликованного кандидата, не только host build. Все 7 подготовленных
+артефактов/пакетов совпадают со своими SHA256; метаданные sequence=5 подписаны
+локальным ключом, подпись проверена открытым ключом. Закрытый ключ не передавался.
+README EN/RU и заметки 0.3.0-preview.1 подготовлены к публикации; исходники
+исполняемых файлов одинаковы с проверенным 78828f8, дальнейшие правки — docs/QA.
+Публикация, remote hashes и GUI-проверка нового живого канала ещё не выполнены.

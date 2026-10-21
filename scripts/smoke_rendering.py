@@ -22,7 +22,7 @@ def main():
             (profile/'profile.toml').write_text(f'ui_zoom={zoom}\ntheme={theme}\nfilter_updates=false\ncheck_updates=false\nrestore=false\n')
             report=out/f'report-{case}.json';report.unlink(missing_ok=True)
             with (out/f'process-{case}.log').open('w') as log:
-                process=subprocess.Popen([str(ROOT/'build/linux-x64-release/aura_browser'),f'--data-dir={profile}',f'--report={report}',f'--scale={base}',f'--url=http://127.0.0.1:{server.server_port}/render-edges.html'],stdout=log,stderr=log,start_new_session=True,env={**os.environ,'AURA_BACKGROUND_TEST':'1','XMODIFIERS':'@im=none'})
+                process=subprocess.Popen([os.environ.get('AURA_TEST_BINARY',str(ROOT/'build/linux-x64-release/aura_browser')),f'--data-dir={profile}',f'--report={report}',f'--scale={base}',f'--url=http://127.0.0.1:{server.server_port}/render-edges.html'],stdout=log,stderr=log,start_new_session=True,env={**os.environ,'AURA_BACKGROUND_TEST':'1','XMODIFIERS':'@im=none'})
                 try:
                     def state():
                         if process.poll() is not None:raise RuntimeError('Rendering browser exited')
