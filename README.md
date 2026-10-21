@@ -97,6 +97,11 @@ falling back to an offscreen-pixmap copy. Windows uses Skia raster and a persist
 CEF frame rate follows the monitor, including 120/144/165 Hz; actual smoothness depends on page,
 window size and CPU performance. Linux reads refresh rate through Wayland output information or RandR.
 
+Current source reduces antialiased raster clipping to the page perimeter, uses the same painter for
+full/page-only redraws, and discovers Wayland refresh without blocking startup. Measurements,
+75–200%/fractional-DPI pixel checks and limits are in [Linux performance](docs/linux-performance.md).
+These source changes are not yet in the published installers.
+
 The experimental Linux EGL/GLES path remains in the source. It is not considered stable on the original
 test machine after a complete system freeze. Native Wayland and Vulkan are not implemented.
 
@@ -295,7 +300,7 @@ The optional legacy GPU harness requires bootstrap `--diagnostic-angle` and CMak
 [Windows browser CI](https://github.com/Sttanors/aura-browser/actions/runs/39594176336)
 passed compilation, unit tests, native browser integration (Unicode input, settings,
 filter editing, multiple normal/private windows and relaunch), portable packaging and installer checks.
-Linux currently passes 85 CTest cases and 18 Python tests. Feature-specific GUI results
+Linux currently passes 86 CTest cases and 18 Python tests. Feature-specific GUI results
 and remaining limits are recorded in [the progress journal](docs/browser-roadmap-progress.md).
 All Linux GUI checks use an isolated software display; physical GPU/monitor behavior is a separate check.
 

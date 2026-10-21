@@ -14,7 +14,7 @@
 | 4 | Совместимость и жизненный цикл расширений | Реализован, проверен; оговорки ниже |
 | 5 | Окна, приватные окна, восстановление сессий | Реализован, проверен; оговорки ниже |
 | 6 | Обновление и возможности блокировщика рекламы | Реализован, проверен; оговорки ниже |
-| 7 | Производительность Linux и Wayland | В работе |
+| 7 | Производительность Linux и Wayland | Реализован, проверен; оговорки ниже |
 | 8 | Проверка совместимости сайтов и окружений | Ожидает |
 
 ## 1. Обновления и подлинность
@@ -643,3 +643,36 @@ paint p95 **15.143 ms** / draw **12.046 ms** / upload **3.550 ms**.
 GPU canvas оставлен на прежнем single-image пути, чтобы partition не делал
 многократных копий deferred image buffers. Runtime GPU не запускался.
 Добавлена docs/linux-performance.md с методикой, результатами и границами.
+
+120 Гц: `performance-regression-scrolling-120.log` — **PASS**, large-stream
+p95 **15.965 ms**, 62 native frames, 680 ms main CPU. Raw measurement/report
+сохранены в performance-final-{measurements,report}-120.json.
+Windows окончательной версии 2b4fa68: **39598888297**. Промежуточные CI
+39598003348 / 39598640288 отменяются как заменённые этим прогоном; отмена не
+считается успешной проверкой.
+
+Повторные регрессии после окончательного painter/startup: filters (включая
+first-request cache и четыре запуска), browser, updates, import, passwords,
+extension lifecycle, windows/session и settings — PASS
+(`performance-regression-*.log`). В settings подтверждено 87 preferences,
+permissions/content/download/data actions, persistence и small-window layout.
+Features/interface и финальный Windows ещё выполняются; checkpoint 7 не закрыт.
+
+Все 11 финальных локальных прогонов — **PASS**: scrolling-120, filters, browser,
+updates, import, passwords, extensions, windows, settings, features, interface.
+Последние два включают настоящий Chrome Web Store downloader, MV3 popup/storage/
+messages/DNR/private isolation, RU/EN, 75–200%, device scale 1.25, small/large,
+инпут и независимость zoom сайта/оболочки. Rendering suite отдельно прошёл все
+11 pixel-equality конфигураций; scroll-165 PASS зафиксирован выше.
+Пока ожидается финальный Windows CI; аппаратный GPU и native Wayland surfaces
+не считаются проверенными/реализованными в этом checkpoint.
+
+Windows **39598888297 — success** для финального 2b4fa68: compilation/unit tests,
+native browser, фильтр с ожиданием painted list_revision, окна/перезапуск,
+portable packaging и установленный branded browser. Сбой старого assertion
+39596181696 устранён проверяемым ожиданием реальной ревизии списка.
+
+2026-10-21: пункт 7 завершён в описанном объёме программного X11/Xwayland пути.
+Native Wayland surfaces и аппаратный GPU остаются отдельными нереализованными/
+непроверенными возможностями, прежний физический freeze не объявляется исправленным.
+Переход к пункту 8. Просмотрен итоговый page-125-1.25.png, видимых швов/ореолов нет.
