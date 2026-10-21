@@ -634,3 +634,12 @@ Windows CI 5101330: **39598003348**. Дополнительный CI checkpoint-
 списком. Добавлен диагностический list_revision, тест ждёт применения обеих
 ревизий и одной строки. Это ожидание реального UI состояния, а не увеличение
 sleep. Новый Windows CI ещё должен подтвердить результат.
+
+`performance-final-165.log` — **PASS** окончательного CPU painter:
+large-stream p95 **19.154 ms**, **61** native frames, **720 ms** main CPU,
+paint p95 **15.143 ms** / draw **12.046 ms** / upload **3.550 ms**.
+Сравнение с preserved checkpoint 6: 43.156 ms / 38 frames / 830 ms.
+Тест 165 Гц остаётся программным, а не подтверждением 165 fps на физическом экране.
+GPU canvas оставлен на прежнем single-image пути, чтобы partition не делал
+многократных копий deferred image buffers. Runtime GPU не запускался.
+Добавлена docs/linux-performance.md с методикой, результатами и границами.

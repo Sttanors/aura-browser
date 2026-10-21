@@ -192,6 +192,16 @@ void image(SkCanvas &c, const PaintBuffer &buffer, Rect r) {
         c.drawImageRect(im, box(r), SkSamplingOptions(SkFilterMode::kLinear));
 }
 void page_image(SkCanvas &c, const PaintBuffer &buffer, Rect web, SkColor background) {
+    // GPU canvases retain image data until submission. Preserve their original
+    // single-image path instead of making a full buffer copy for every part.
+    if (c.recordingContext()) {
+        fill(c, web, 15, background);
+        c.save();
+        c.clipRRect(SkRRect::MakeRectXY(box(web), 15, 15), true);
+        image(c, buffer, web);
+        c.restore();
+        return;
+    }
     // Partition in device pixels so fractional UI scales never cut an
     // antialiased pixel in half. Only the narrow perimeter needs curved clips.
     const auto matrix = c.getTotalMatrix();
