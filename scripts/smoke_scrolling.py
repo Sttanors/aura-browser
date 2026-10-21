@@ -82,6 +82,8 @@ def main():
                     gaps=[(b[1]-a[1])/1000 for a,b in zip(frames,frames[1:]) if 0<b[1]-a[1]<100000]
                     result['display_frames']=frames
                     result['display_intervals_ms']=gaps
+                    result['baseline_mode']=os.environ.get('AURA_SCROLL_BASELINE')=='1'
+                    measured.append(result) # Preserve failed scenarios for diagnosis too.
                     if os.environ.get('AURA_X11_PRESENT')!='0' and os.environ.get('AURA_SCROLL_BASELINE')!='1':
                         assert display.get('synchronized'), 'XPresent path not exercised'
                         assert display['maximum_pending']<=2, 'Unbounded presentation queue'
@@ -91,7 +93,6 @@ def main():
                             assert gaps and sorted(gaps)[int((len(gaps)-1)*.95)]<25,(name,'Uneven actual presentations',gaps)
                     if os.environ.get('AURA_X11_SHM')!='0' and os.environ.get('AURA_SCROLL_BASELINE')!='1':
                         assert display.get('shared_memory') and display.get('shm_frames',0)>0, 'MIT-SHM path not exercised'
-                    measured.append(result)
                     print(name,len(positions),'positions; distance',distance,'native frames',result['native_frames'],'CPU ms',result['main_cpu_ms'],flush=True)
                     if os.environ.get('AURA_SCROLL_BASELINE')!='1':
                         assert len(positions)>=5,(name,'No smooth animation',positions)
@@ -126,6 +127,6 @@ def main():
                 (out/'measurements.json').write_text(json.dumps(measured,indent=2))
                 if proc.poll() is None:os.killpg(proc.pid,signal.SIGTERM);proc.wait(timeout=10)
         server.shutdown()
-    print('Scrolling PASS: native page/nested/horizontal wheel, direction, burst, chrome zoom, balanced CEF lifetime')
+    print('Baseline measurement complete: scrolling assertions disabled' if os.environ.get('AURA_SCROLL_BASELINE')=='1' else 'Scrolling PASS: native page/nested/horizontal wheel, direction, burst, chrome zoom, balanced CEF lifetime')
 
 if __name__=='__main__':main()

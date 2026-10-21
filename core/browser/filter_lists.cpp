@@ -212,6 +212,11 @@ FilterLists::FilterLists(std::filesystem::path profile, std::filesystem::path re
         } catch (const std::exception &) {
             status = "Saved filter cache is damaged. Bundled lists are active.";
         }
+    // Select the startup source before compiling. A cached profile must not
+    // build the entire bundled engine only to discard it for the saved engine.
+    if (!protection_->ready())
+        protection_->install(Protection::prepare(compose(settings_, bundled_)));
+    stats = protection_->rule_stats();
 }
 FilterLists::~FilterLists() {
     shutdown();

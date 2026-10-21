@@ -138,7 +138,7 @@ BrowserController::BrowserController(std::filesystem::path path, std::filesystem
       private_context_(state_->private_context) {
     resources = font.parent_path().parent_path();
     if (!request_policy->protection)
-        request_policy->protection = std::make_shared<Protection>(resources);
+        request_policy->protection = std::make_shared<Protection>();
     if (!state_->filters)
         state_->filters =
             std::make_unique<FilterLists>(profile.directory, resources, request_policy->protection);

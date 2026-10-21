@@ -363,10 +363,46 @@ bool BrowserUi::draw_web_frame(SkCanvas &c) {
     c.resetMatrix();
     c.drawImage(web_backdrop_, backdrop_x_, backdrop_y_);
     c.restore();
+    // Partition in device pixels so fractional UI scales never cut an
+    // antialiased pixel in half. Only the narrow perimeter needs curved clips.
+    const auto matrix = c.getTotalMatrix();
+    const auto pixels = matrix.mapRect(box(web));
+    const auto outer = pixels.roundOut();
+    const float left = std::ceil(pixels.left()) + 1, right = std::floor(pixels.right()) - 1;
+    const float top = std::ceil(pixels.top()) + 1, bottom = std::floor(pixels.bottom()) - 1;
+    const float rx = std::ceil(15 * matrix.getScaleX()) + 1;
+    const float ry = std::ceil(15 * matrix.getScaleY()) + 1;
+    const SkRect interiors[] = {
+        SkRect::MakeLTRB(left, top + ry, right, bottom - ry),
+        SkRect::MakeLTRB(left + rx, top, right - rx, top + ry),
+        SkRect::MakeLTRB(left + rx, bottom - ry, right - rx, bottom)};
+    const SkRect perimeter[] = {
+        SkRect::MakeLTRB(outer.left(), outer.top(), left + rx, top + ry),
+        SkRect::MakeLTRB(right - rx, outer.top(), outer.right(), top + ry),
+        SkRect::MakeLTRB(outer.left(), bottom - ry, left + rx, outer.bottom()),
+        SkRect::MakeLTRB(right - rx, bottom - ry, outer.right(), outer.bottom()),
+        SkRect::MakeLTRB(outer.left(), top + ry, left, bottom - ry),
+        SkRect::MakeLTRB(right, top + ry, outer.right(), bottom - ry),
+        SkRect::MakeLTRB(left + rx, outer.top(), right - rx, top),
+        SkRect::MakeLTRB(left + rx, bottom, right - rx, outer.bottom())};
+    const auto background = app_.profile.theme % 2 ? 0xFFFFFFFF : 0xFF161B25;
+    const auto page_part = [&](const SkRect &rect, bool curved) {
+        c.save();
+        c.resetMatrix();
+        c.clipRect(rect);
+        c.setMatrix(matrix);
+        fill(c, web, curved ? 15 : 0, background);
+        if (curved)
+            c.clipRRect(SkRRect::MakeRectXY(box(web), 15, 15), true);
+        image(c, current->page.view, web);
+        c.restore();
+    };
+    for (const auto &rect : interiors)
+        page_part(rect, false);
+    for (const auto &rect : perimeter)
+        page_part(rect, true);
     c.save();
     c.clipRRect(SkRRect::MakeRectXY(box(web), 15, 15), true);
-    fill(c, web, 0, app_.profile.theme % 2 ? 0xFFFFFFFF : 0xFF161B25);
-    image(c, current->page.view, web);
     if (current->page.popup_visible) {
         const auto &p = current->page.popup_bounds;
         image(c, current->page.popup,

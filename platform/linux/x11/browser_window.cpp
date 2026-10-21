@@ -163,7 +163,7 @@ struct BrowserWindow::Impl {
     int wake_fd = -1;
     sk_sp<SkSurface> raster;
     std::unique_ptr<SoftwarePresenter> software;
-    std::array<double, 240> paint_costs{};
+    std::array<double, 240> paint_costs{}, draw_costs{}, upload_costs{};
     std::size_t paint_cost_count = 0, paint_cost_index = 0;
     std::uint64_t raster_allocations = 0, presented_pixels = 0, content_frames = 0;
     void presented(std::chrono::steady_clock::time_point start, std::uint64_t pixels) {
@@ -377,7 +377,12 @@ struct BrowserWindow::Impl {
         canvas.clipRect(SkRect::MakeXYWH(area.x, area.y, area.width, area.height));
         draw(canvas, !full_damage);
         canvas.restore();
+        const auto drawn = std::chrono::steady_clock::now();
+        draw_costs[paint_cost_index] =
+            std::chrono::duration<double, std::milli>(drawn - paint_start).count();
         software->submit(area);
+        upload_costs[paint_cost_index] =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - drawn).count();
         presented(paint_start, std::uint64_t(area.width) * area.height);
     }
     CefMouseEvent mouse(int x, int y, unsigned mask) const {
@@ -783,11 +788,16 @@ void BrowserWindow::wake() {
 }
 std::string BrowserWindow::presentation_stats() const {
     const auto &p = *impl_;
-    auto costs = p.paint_costs;
-    std::sort(costs.begin(), costs.begin() + p.paint_cost_count);
-    const auto p95 = p.paint_cost_count ? costs[(p.paint_cost_count - 1) * 95 / 100] : 0;
+    const auto percentile = [&](std::array<double, 240> costs) {
+        std::sort(costs.begin(), costs.begin() + p.paint_cost_count);
+        return p.paint_cost_count ? costs[(p.paint_cost_count - 1) * 95 / 100] : 0;
+    };
+    const auto p95 = percentile(p.paint_costs);
     std::ostringstream out;
-    out << "{\"paint_ms_p95\":" << p95 << ",\"raster_allocations\":" << p.raster_allocations
+    out << "{\"paint_ms_p95\":" << p95
+        << ",\"draw_ms_p95\":" << percentile(p.draw_costs)
+        << ",\"upload_ms_p95\":" << percentile(p.upload_costs)
+        << ",\"raster_allocations\":" << p.raster_allocations
         << ",\"content_frames\":" << p.content_frames
         << ",\"presented_pixels\":" << p.presented_pixels << ",\"display\":" << p.software->report()
         << "}";

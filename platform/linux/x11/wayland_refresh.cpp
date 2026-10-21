@@ -68,9 +68,9 @@ struct WaylandRefresh::Impl {
         registry = wl_display_get_registry(display);
         static const wl_registry_listener listener = {global, remove};
         wl_registry_add_listener(registry, &listener, this);
-        // Initial discovery only. During rendering, polling below never waits.
-        if (wl_display_roundtrip(display) < 0 || wl_display_roundtrip(display) < 0)
-            outputs.clear();
+        // Discovery proceeds through rate() without waiting for compositor
+        // replies. A stalled Wayland socket must not freeze browser startup.
+        wl_display_flush(display);
     }
     ~Impl() {
         outputs.clear();
@@ -80,8 +80,10 @@ struct WaylandRefresh::Impl {
             wl_display_disconnect(display);
     }
     void update() {
-        if (!display || wl_display_get_error(display))
+        if (!display || wl_display_get_error(display)) {
+            outputs.clear();
             return;
+        }
         while (wl_display_prepare_read(display) != 0)
             if (wl_display_dispatch_pending(display) < 0)
                 return;

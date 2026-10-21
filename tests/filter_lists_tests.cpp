@@ -43,7 +43,7 @@ struct Fixture {
         std::filesystem::create_directories(resources / "protection");
         write(resources / "protection/easylist.txt", list("bundled"));
         write(resources / "protection/easyprivacy.txt", list("privacy"));
-        engine = std::make_shared<Protection>(resources);
+        engine = std::make_shared<Protection>();
     }
     ~Fixture() {
         std::filesystem::remove_all(root);
@@ -90,7 +90,7 @@ TEST(FilterLists, UpdatesBothListsKeepsCustomRulesAndReloadsVerifiedCache) {
         EXPECT_GT(m.settings().updated[0], 0);
         EXPECT_GT(m.settings().updated[1], 0);
     }
-    auto engine = std::make_shared<Protection>(f.resources);
+    auto engine = std::make_shared<Protection>();
     FilterLists restored(f.profile, f.resources, engine);
     EXPECT_TRUE(blocks(engine, "fresh0"));
     EXPECT_TRUE(blocks(engine, "custom"));
@@ -243,7 +243,7 @@ TEST(FilterLists, CorruptCacheFallsBackWithoutDeletingSavedPackages) {
         generation = f.profile / "filter-lists" / active["generation"].value_or(std::string{});
     }
     write(generation / "0.txt", list("tampered"));
-    auto engine = std::make_shared<Protection>(f.resources);
+    auto engine = std::make_shared<Protection>();
     FilterLists restored(f.profile, f.resources, engine);
     EXPECT_EQ(restored.status, "Saved filter cache is damaged. Bundled lists are active.");
     EXPECT_TRUE(blocks(engine, "bundled0"));

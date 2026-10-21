@@ -23,6 +23,7 @@ class Protection {
     static std::shared_ptr<Prepared> prepare(const std::string &rules);
     static RuleStats inspect(const std::string &rules);
     void install(std::shared_ptr<Prepared> rules);
+    Protection() = default;
     explicit Protection(const std::filesystem::path &resources);
     ~Protection();
     void configure(bool enabled, bool cosmetics, std::string exceptions);
