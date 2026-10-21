@@ -153,6 +153,7 @@ def main():
                             x,y,w,h=r;click_at(window,round((x+w/2)*1.25),round((y+h/2)*1.25))
                         scaled_click(state()['extension_toolbar'][0]['bounds'])
                         wait_until(lambda:state().get('extension_popup') and state()['extension_popup']['loaded'] and state()['extension_popup']['frames']>0,'Scaled popup did not paint')
+                        wait_until(lambda:(state().get('extension_popup') or {}).get('title')=='Popup restored: aurapopup','Scaled fixture storage did not restore before input')
                         content=state()['extension_popup']['content']
                         scaled_click([content[0]+16,content[1]+48,100,32]);key_at(window,'a',4);type_text(window,'scaled')
                         scaled_click([content[0]+16,content[1]+96,86,30])
@@ -187,6 +188,9 @@ def main():
                     final=json.loads(report.read_text());assert final['cef_created']==final['cef_closed'] and not final.get('audit',{}).get('renderer_crashes')
                     results.append(final)
                 except Exception:
+                    if process.poll() is None:
+                        try:screenshot(f'failure-{launch}.png')
+                        except (OSError,subprocess.SubprocessError):pass
                     print("LAST PROBE",Handler.probes[-1] if Handler.probes else None,flush=True);raise
                 finally:
                     if process.poll() is None:os.killpg(process.pid,signal.SIGTERM);process.wait(timeout=5)

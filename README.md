@@ -81,11 +81,13 @@ Keep all runtime files together. Direct launches create `profile/` beside the ex
 - Russian and English interface, including settings, menus and notifications.
 - Built-in ad/tracker blocking, Dark Reader and signed Manifest V3 extensions.
 
-Private browsing currently opens a **tab in the current window**. Private tabs are excluded from Aura's
-history and saved session, but downloaded files remain on disk. Restoring a session restores tab URLs
-and order, not their back/forward stacks. Password management and synchronization
-are not implemented. Update installation requires an explicit action; native Linux
-packages use their package manager. Full CJK IME, DRM/codecs, printing and different window managers need further validation.
+The published `v0.2.0-preview.3.1` opens private tabs in the current window.
+Current source also supports separate normal/private windows, session recovery and a password vault
+with encrypted manual transfer (see below). Private addresses are excluded from Aura history/session;
+downloaded files remain on disk. Session restoration keeps URLs, order, active and pinned tabs;
+back/forward stacks and form contents are not restored. Update installation requires an explicit
+action; native Linux packages use their package manager. Full CJK IME, DRM/codecs, printing and
+different window managers need further validation.
 
 ### Rendering and scrolling
 
@@ -100,7 +102,7 @@ test machine after a complete system freeze. Native Wayland and Vulkan are not i
 
 ## Settings and customization
 
-Open **Settings** from the sidebar or the toolbar gear. There are **86 settings in ten categories**,
+Open **Settings** from the sidebar or the toolbar gear. There are **87 settings in ten categories**,
 searchable by English or Russian names/descriptions. **Ctrl F** focuses settings search.
 **General → Interface language** switches between English and Russian immediately; website text is unaffected.
 
@@ -290,11 +292,12 @@ The optional legacy GPU harness requires bootstrap `--diagnostic-angle` and CMak
 
 ## Validation
 
-[Windows browser CI](https://github.com/Sttanors/aura-browser/actions/runs/39395547988)
-passed compilation and 38 CTest cases (one optional external CRX fixture skipped), plus real native
-browser integration: page rendering, `Windows Привет` Unicode input, navigation, JavaScript dialog,
-English selection and interface scale 125% retained after restarting.
-Linux passed 37 CTest cases and isolated browser/interface integration at scales 75–200%.
+[Windows browser CI](https://github.com/Sttanors/aura-browser/actions/runs/39594176336)
+passed compilation, unit tests, native browser integration (Unicode input, settings,
+filter editing, multiple normal/private windows and relaunch), portable packaging and installer checks.
+Linux currently passes 85 CTest cases and 18 Python tests. Feature-specific GUI results
+and remaining limits are recorded in [the progress journal](docs/browser-roadmap-progress.md).
+All Linux GUI checks use an isolated software display; physical GPU/monitor behavior is a separate check.
 
 ```bash
 python3 scripts/verify_browser.py --suite=all

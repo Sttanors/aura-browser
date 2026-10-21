@@ -72,3 +72,16 @@ This is a supported subset rather than full uBlock Origin compatibility.
 
 Latest published installers predate this feature. Build the current source to
 use it until a new release is published.
+
+## Verification
+
+Linux: 85 CTest cases and 18 Python tests pass. The isolated native filter suite
+runs four browser launches and tests actual official downloads, cancellation,
+custom edits/import/cache/recovery, dynamic text, attribute-only and SPA-path-only
+changes, replacements without original requests, parameter removal, pause/resume,
+RU/EN at 900×620, normal automatic checks and private-only exclusion. Prior browser,
+update, import, password, extension lifecycle, window/session, settings and general
+feature suites pass as regressions. Logs are listed in the progress journal.
+Windows CI 39594176336 passes compilation, unit tests, native filter editing and
+window checks, packaging and installer verification. The complete advanced page
+journey was exercised on Linux; Windows does not yet repeat all of it.
