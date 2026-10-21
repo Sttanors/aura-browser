@@ -52,6 +52,15 @@ def main():
                         wait_until(lambda:document(normal).get('storage')=='normal','Normal windows did not share storage')
                         assert 'aura_window=normal' in document(normal)['cookie']
                         key_at(normal,'d',4);wait_until(lambda:current(root)['bookmark_count']==1,'Bookmarks were not shared')
+                        old={w['window'] for w in windows()}
+                        with (out/'relaunch.log').open('w') as relaunch_log:
+                            forwarded=subprocess.run([str(ROOT/'build/linux-x64-release/aura_browser'),f'--data-dir={profile}',f'--url={base}?name=relaunch'],stdout=relaunch_log,stderr=subprocess.STDOUT,timeout=30)
+                        assert forwarded.returncode==0,'A second launch did not exit cleanly'
+                        wait_until(lambda:any(w['window'] not in old for w in windows()),'Second process launch was not forwarded to Aura')
+                        forwarded_window=next(w['window'] for w in windows() if w['window'] not in old)
+                        wait_until(lambda:document(forwarded_window).get('name')=='relaunch','Forwarded URL did not load')
+                        assert current(forwarded_window)['pid']==current(root)['pid']
+                        close(forwarded_window)
                         click_at(normal,352,208);wait_until(lambda:document(normal).get('protected'),'Protect-page click did not reach the page');key_at(normal,'w',5)
                         wait_until(lambda:current(normal).get('dialog_count')==1,'Beforeunload confirmation was not visible')
                         shot(normal,'close-beforeunload.png');key_at(normal,'Escape')

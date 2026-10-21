@@ -50,3 +50,8 @@ and pinned tab persistence; crash followed by UI recovery; no private URLs in
 profile data; and balanced Chromium callbacks. Windows CI additionally exercises
 normal/private native windows, shared language/scale and closing the root while
 a child remains. Full storage/recovery scenarios run on Linux.
+
+Launching Aura again with the same profile uses CEF's process singleton relay.
+The running Aura process opens its own window for the requested URL/private mode;
+the forwarding process exits normally. Extra theme, debugging and rendering
+switches are not applied to the existing process through this relay.

@@ -381,3 +381,21 @@ RU/EN/small проверки и Windows CI; checkpoint пункта 5 ещё н�
 обработаны первым dispatch, сохранённое исключение проверяется и при пустой очереди.
 Пояснение beforeunload теперь локализовано независимо от системного языка CEF.
 `windows-final-tests.log`: 72/72 PASS. Окончательные GUI/Windows ещё проверяются.
+
+Повтор на стабильном executable: `windows-stable-passwords.log` и
+`windows-stable-gui.log` — PASS. RU/EN small menu, перенос восстановления и
+beforeunload визуально просмотрены, текст помещается.
+
+Повторный запуск приложения с тем же профилем теперь обрабатывается штатным
+CEF OnAlreadyRunningAppRelaunch: существующий процесс получает только URL/private
+и открывает собственное окно Aura. Второй процесс корректно выходит при
+NORMAL_EXIT_PROCESS_NOTIFIED; стандартное Chrome-окно не создаётся.
+`windows-relaunch-tests.log`: 72/72 PASS; `windows-relaunch-gui.log`: полный GUI
+окон и настоящий второй процесс с forwarded URL — PASS. Этот случай добавлен
+и в Win32 integration.
+
+Первая Windows-проверка `39554893425` остановилась на исходном Alpha input focus,
+до шагов новых окон. Получена диагностика, проверка старта теперь требует loaded
+страницы, добавлены счётчики native/web pointer down. Причина первого фокуса пока
+не объявляется доказанной. Следующая `39555554093` уже прошла compile/unit/GUI и
+дошла до упаковки. Окончательный relaunch commit ещё требует Windows CI.

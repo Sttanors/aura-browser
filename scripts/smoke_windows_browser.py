@@ -51,7 +51,7 @@ def main():
                 raise RuntimeError(message)
             with (output/f'process-{launch}.log').open('w') as log:
                 process = subprocess.Popen([str(binary), f'--data-dir={profile}', f'--report={report_path}', '--software-rendering', f'--url={url}'], stdout=log, stderr=subprocess.STDOUT)
-                state = wait(lambda s: any(t.get('title') == 'Alpha' and t.get('frames', 0) > 0 for t in s.get('tabs', [])), 'Alpha must load and paint')
+                state = wait(lambda s: any(t.get('title') == 'Alpha' and t.get('loaded') and t.get('frames', 0) > 0 for t in s.get('tabs', [])), 'Alpha must load and paint')
                 window = state['window']
                 assert user.IsWindow(window), 'Report must identify the real native browser window'
                 user.GetClassLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
@@ -124,6 +124,13 @@ def main():
                 assert child['settings']['ui_zoom'] == 125
                 user.SendMessageW(child['window'], 0x10, 0, 0)
                 wait(lambda s: len(s.get('windows', [])) == 1, 'Closing a child must keep the root open')
+                forwarded = subprocess.run([str(binary), f'--data-dir={profile}', f'--url={url}', '--software-rendering'], capture_output=True, timeout=45)
+                assert forwarded.returncode == 0, forwarded.stderr.decode(errors='replace')
+                group = wait(lambda s: len(s.get('windows', [])) == 2 and any(w['window'] != window and any(t['url'] == url and t['loaded'] for t in w['tabs']) for w in s['windows']), 'A second process must forward its URL to Aura')
+                child = next(w for w in group['windows'] if w['window'] != window)
+                assert child['pid'] == group['pid']
+                user.SendMessageW(child['window'], 0x10, 0, 0)
+                wait(lambda s: len(s.get('windows', [])) == 1, 'Forwarded window must close independently')
                 click(80, 35); click(100, 129)
                 group = wait(lambda s: len(s.get('windows', [])) == 2, 'Private native window must open')
                 private = next(w for w in group['windows'] if w['window'] != window)

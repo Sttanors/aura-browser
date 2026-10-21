@@ -3312,6 +3312,7 @@ void BrowserUi::pointer(const PointerInput &input) {
         } else if ((down && in) ||
                    (input.kind == PointerInput::Up && (in || (web_buttons_ & bit)))) {
             if (down) {
+                ++app_.audit["web_pointer_down"];
                 web_buttons_ |= bit;
                 t->browser->GetHost()->SetFocus(true);
                 find_open = false;

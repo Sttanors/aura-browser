@@ -45,6 +45,13 @@ public:
     void OnScheduleMessagePumpWork(int64_t delay_ms) override { schedule_.schedule(delay_ms); }
     void OnContextInitialized() override { context_ready_ = true; }
     bool context_ready() const { return context_ready_; }
+    std::function<void(CefRefPtr<CefCommandLine>)> relaunch;
+    bool OnAlreadyRunningAppRelaunch(CefRefPtr<CefCommandLine> command,
+                                     const CefString&) override {
+        if (!relaunch) return false;
+        relaunch(command);
+        return true;
+    }
     void OnBeforeCommandLineProcessing(const CefString& process_type, CefRefPtr<CefCommandLine> command) override;
 private:
     PumpSchedule& schedule_;

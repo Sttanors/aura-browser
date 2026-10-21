@@ -67,6 +67,10 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
         extension_paths = command->GetSwitchValue("load-extension").ToString();
     CefRefPtr<aura::DiagnosticApp> app = new aura::DiagnosticApp(
         schedule, false, !accelerated, extension_paths.empty() ? "-" : extension_paths);
+    app->relaunch = [&browser](CefRefPtr<CefCommandLine> incoming) {
+        browser.new_window(incoming->HasSwitch("private"),
+                           incoming->GetSwitchValue("url").ToString());
+    };
     CefSettings settings;
     settings.windowless_rendering_enabled = true;
     settings.external_message_pump = true;
@@ -75,9 +79,16 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
     settings.persist_session_cookies = true;
     CefString(&settings.accept_language_list) = browser.profile.site_language;
     CefString(&settings.log_file) = aura::utf8_path(path / "cef.log");
-    if (!CefInitialize(args, settings, app, sandbox_info))
-        throw std::runtime_error(
-            "Chromium could not initialize. Check whether this profile is already open.");
+    if (!CefInitialize(args, settings, app, sandbox_info)) {
+        const auto code = CefGetExitCode();
+        if (code == CEF_RESULT_CODE_NORMAL_EXIT_PROCESS_NOTIFIED) {
+            spdlog::info("Launch request forwarded to the running Aura process");
+            spdlog::shutdown();
+            return 0;
+        }
+        throw std::runtime_error("Chromium could not initialize (exit code " +
+                                 std::to_string(code) + ").");
+    }
     std::vector<std::unique_ptr<aura::BrowserController>> additional_windows;
     std::vector<aura::BrowserController *> hidden_windows;
     int retired_created = 0, retired_closed = 0;

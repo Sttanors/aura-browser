@@ -159,7 +159,11 @@ BrowserController::BrowserController(std::filesystem::path path, std::filesystem
             }
         }
     };
-    hooks.pointer = [this](const PointerInput &p) { ui->pointer(p); };
+    hooks.pointer = [this](const PointerInput &p) {
+        if (p.kind == PointerInput::Down)
+            ++audit["native_pointer_down"];
+        ui->pointer(p);
+    };
     hooks.key = [this](const CefKeyEvent &key) { return ui->key(key); };
     hooks.text = [this](const std::string &text) { ui->text(text); };
     hooks.focus = [this](bool focus) {
