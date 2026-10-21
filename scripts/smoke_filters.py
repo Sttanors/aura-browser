@@ -103,12 +103,16 @@ def main():
                             '127.0.0.1##.aura-procedural-card:has-text(Sponsored)',
                             '127.0.0.1##.aura-style-target:style(color: rgb(12, 34, 56) !important)',
                             '127.0.0.1##.aura-sponsored-label:has-text(Sponsored):upward(1)',
+                            '127.0.0.1##.aura-attr-target:matches-attr(data-ad=yes)',
+                            '127.0.0.1##.aura-path-target:matches-path(editorial=1)',
                         ):rule(advanced_rule)
                         Handler.requests.clear();key_at(window,'r',4)
                         probe(lambda p:p['noopLoaded'] and not p['noopOriginal'] and p['noopCssLoaded'] and p.get('pixelAlpha')==0 and p.get('echoQuery')=='keep=1' and p['procHidden'] and p['parentHidden'] and p['styleColor']=='rgb(12, 34, 56)' and p['redirectColor']=='rgb(0, 0, 0)')
                         assert not any(urlparse(path).path in ('/advanced-noop.js','/advanced-noop.css','/advanced-pixel.gif') for path in Handler.requests),'Replacement contacted the original server'
                         assert state()['rewritten_requests']>0;shot('ru-advanced.png')
-                        key_at(window,'Escape');key_at(window,'Escape');click_at(window,392,508);probe(lambda p:not p['procHidden']);click_at(window,392,508);probe(lambda p:p['procHidden'])
+                        key_at(window,'Escape');key_at(window,'Escape');click_at(window,392,508);probe(lambda p:not p['procHidden']);click_at(window,392,508);probe(lambda p:p['procHidden'] and p['attrHidden'] and not p['pathHidden'])
+                        click_at(window,392,558);probe(lambda p:not p['attrHidden'] and p['procHidden']);click_at(window,392,558);probe(lambda p:p['attrHidden'])
+                        click_at(window,392,608);probe(lambda p:p['pathHidden']);click_at(window,392,608);probe(lambda p:not p['pathHidden'])
                         def protection_toggle():
                             key_at(window,'Escape');key_at(window,'Escape');click_at(window,state()['interface']['width']-213,55);time.sleep(.15);click_at(window,state()['interface']['width']-190,135)
                         protection_toggle();probe(lambda p:not p['procHidden'] and not p['parentHidden'] and p['styleColor']=='rgb(0, 0, 0)')
@@ -118,8 +122,8 @@ def main():
                         rows=seek('language');control=next(c for c in rows if c['id']=='language');click(next(o['bounds'] for o in control['options'] if o['value']=='en'));wait_until(lambda:state()['settings']['language']=='en','No English');manager();shot('en-lists.png')
                         subprocess.run(['xdotool','windowsize','--sync',window,'900','620'],check=True);time.sleep(.4);shot('en-small.png');subprocess.run(['xdotool','windowsize','--sync',window,'1360','900'],check=True);time.sleep(.3)
                     elif launch==1:
-                        probe(lambda p:not p['network'] and p['hidden']);manager();assert ui()['custom_count']==10 and not state()['filter_lists']['easyprivacy'];assert state()['filter_lists']['updated_easylist']>0
-                        revision=state()['filter_lists']['revision'];click(ui()['bundled']);done(revision+1);assert state()['filter_lists']['updated_easylist']==0;assert ui()['custom_count']==10
+                        probe(lambda p:not p['network'] and p['hidden']);manager();assert ui()['custom_count']==12 and not state()['filter_lists']['easyprivacy'];assert state()['filter_lists']['updated_easylist']>0
+                        revision=state()['filter_lists']['revision'];click(ui()['bundled']);done(revision+1);assert state()['filter_lists']['updated_easylist']==0;assert ui()['custom_count']==12
                     elif launch==2:
                         # A stale, enabled cache would trigger the automatic path in normal mode.
                         wait_until(lambda:state()['tabs'][0]['private'] and Handler.probes,'No private fixture')
@@ -139,6 +143,6 @@ def main():
                     except ProcessLookupError:pass
                     try:proc.wait(timeout=4)
                     except subprocess.TimeoutExpired:os.killpg(proc.pid,signal.SIGKILL);proc.wait()
-    (out/'PASS.txt').write_text('PASS: custom rules, real network/cosmetics, cache, official list update/cancel, native file import, RU/EN/small, private auto-check exclusion\n')
+    (out/'PASS.txt').write_text('PASS: custom rules, real network/cosmetics, local JS/CSS/GIF replacements, removeparam, procedural DOM changes, pause/resume, cache, official manual+automatic updates/cancel, native file import, RU/EN/small, private auto-check exclusion\n')
     print('PASS: native filter lists and custom rules')
 if __name__=='__main__':main()

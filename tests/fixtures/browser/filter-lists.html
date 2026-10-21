@@ -1,17 +1,20 @@
 <!doctype html><meta charset="utf-8"><title>Filter lists fixture</title>
 <style>body{color:black;font:18px sans-serif;margin:32px}.aura-custom-ad,.other-ad{padding:20px;background:#ffe0e0;margin:12px}</style>
 <h1>Filter list fixture</h1><div class="aura-custom-ad">First fictional advert</div><div class="other-ad">Second fictional advert</div>
+<div class="aura-attr-target" data-ad="yes">Attribute target</div><div class="aura-path-target">Path target</div>
 <div id="aura-redirect-target">Replacement stylesheet target</div>
 <div class="aura-procedural-card">Sponsored placement</div>
 <div class="aura-style-target">Style target</div>
 <div class="aura-proc-parent"><span class="aura-sponsored-label">Sponsored label</span></div>
 <button style="position:fixed;left:32px;top:400px;width:220px;height:40px" onclick="window.procAlt=!window.procAlt;document.querySelector('.aura-procedural-card').textContent=window.procAlt?'Editorial':'Sponsored placement'">Change procedural text</button>
+<button style="position:fixed;left:32px;top:450px;width:220px;height:40px" onclick="window.attrAlt=!window.attrAlt;document.querySelector('.aura-attr-target').setAttribute('data-ad',window.attrAlt?'no':'yes')">Change attribute only</button>
+<button style="position:fixed;left:32px;top:500px;width:220px;height:40px" onclick="window.pathAlt=!window.pathAlt;history.replaceState(null,'',window.pathAlt?'?editorial=1':location.pathname)">Change path only</button>
 <link rel="stylesheet" href="/advanced-noop.css" onload="window.noopCssLoaded=true">
 <script src="/advanced-noop.js" onload="window.noopLoaded=true"></script>
 <img src="/advanced-pixel.gif" onload="window.pixelLoaded=true;try{const c=document.createElement('canvas');c.width=c.height=1;c.getContext('2d').drawImage(this,0,0);window.pixelAlpha=c.getContext('2d').getImageData(0,0,1,1).data[3]}catch(e){window.pixelAlpha=-1}">
 <script src="/custom-block.js"></script>
 <script>
 fetch('/advanced-echo?utm_source=advert&keep=1').then(r=>r.json()).then(data=>window.echoQuery=data.query).catch(()=>{});
-function report(){fetch('/filter-probe?data='+encodeURIComponent(JSON.stringify({network:!!window.customRan,noopLoaded:!!window.noopLoaded,noopOriginal:!!window.noopOriginal,noopCssLoaded:!!window.noopCssLoaded,pixelLoaded:!!window.pixelLoaded,pixelAlpha:window.pixelAlpha,echoQuery:window.echoQuery,redirectColor:getComputedStyle(document.querySelector('#aura-redirect-target')).color,procHidden:getComputedStyle(document.querySelector('.aura-procedural-card')).display==='none',parentHidden:getComputedStyle(document.querySelector('.aura-proc-parent')).display==='none',styleColor:getComputedStyle(document.querySelector('.aura-style-target')).color,hidden:getComputedStyle(document.querySelector('.aura-custom-ad')).display==='none',otherHidden:getComputedStyle(document.querySelector('.other-ad')).display==='none'})),{cache:'no-store'}).catch(()=>{});}
+function report(){fetch('/filter-probe?data='+encodeURIComponent(JSON.stringify({attrHidden:getComputedStyle(document.querySelector('.aura-attr-target')).display==='none',pathHidden:getComputedStyle(document.querySelector('.aura-path-target')).display==='none',network:!!window.customRan,noopLoaded:!!window.noopLoaded,noopOriginal:!!window.noopOriginal,noopCssLoaded:!!window.noopCssLoaded,pixelLoaded:!!window.pixelLoaded,pixelAlpha:window.pixelAlpha,echoQuery:window.echoQuery,redirectColor:getComputedStyle(document.querySelector('#aura-redirect-target')).color,procHidden:getComputedStyle(document.querySelector('.aura-procedural-card')).display==='none',parentHidden:getComputedStyle(document.querySelector('.aura-proc-parent')).display==='none',styleColor:getComputedStyle(document.querySelector('.aura-style-target')).color,hidden:getComputedStyle(document.querySelector('.aura-custom-ad')).display==='none',otherHidden:getComputedStyle(document.querySelector('.other-ad')).display==='none'})),{cache:'no-store'}).catch(()=>{});}
 report();setInterval(report,500);
 </script>

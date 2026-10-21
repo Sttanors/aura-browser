@@ -55,6 +55,7 @@ if(document.documentElement)auraStart();else document.addEventListener('DOMConte
 const auraProcAttr = 'data-aura-proc-' + Math.random().toString(36).slice(2);
 let auraProcRules = [], auraProcResults = [], auraProcSeen = [], auraProcCursor = 0;
 let auraProcEpoch = 1, auraProcKey = '', auraProcStyle = null;
+let auraProcPath = location.pathname + location.search;
 const auraProcMarks = new Map();
 const auraProcClear = () => {
     for (const node of auraProcMarks.keys()) node.removeAttribute(auraProcAttr);
@@ -120,6 +121,8 @@ const auraProcSelect = (rule, deadline) => {
     return new Set(nodes.filter(node=>node instanceof Element&&node!==document.documentElement&&node!==document.body));
 };
 const auraProcRun = () => {
+    const path=location.pathname+location.search;
+    if(path!==auraProcPath){auraProcPath=path;auraProcEpoch++;}
     if(!auraConfig.ads||!auraConfig.cosmetics||!auraProcRules.length)return;
     const deadline=performance.now()+8,epoch=auraProcEpoch;
     let visited=0;
@@ -162,7 +165,7 @@ globalThis.__auraSelectors = (payload,reset=false) => {
 const auraOriginalApply=globalThis.__auraApply;
 globalThis.__auraApply=config=>{auraProcClear();auraOriginalApply(config);};
 const auraProcWatch = () => new MutationObserver(records=>{
-    if(records.some(r=>!(r.target instanceof Element)||!r.target.closest('.darkreader,.aura-cosmetic-filters')))auraProcEpoch++;
-}).observe(document.documentElement,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['class','id']});
+    if(records.some(r=>r.attributeName!==auraProcAttr&&(!(r.target instanceof Element)||!r.target.closest('.darkreader,.aura-cosmetic-filters'))))auraProcEpoch++;
+}).observe(document.documentElement,{subtree:true,childList:true,characterData:true,attributes:true});
 if(document.documentElement)auraProcWatch();else document.addEventListener('DOMContentLoaded',auraProcWatch,{once:true});
 setInterval(auraProcRun,200);
