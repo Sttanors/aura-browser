@@ -7,12 +7,23 @@ from smoke import QuietHandler
 from smoke_browser import wait_until,type_text
 from smoke_window import key_at,click_at
 
+class Handler(QuietHandler):
+    pending_icon=threading.Event()
+    def do_GET(self):
+        if self.path.startswith('/slow-icon.svg'):
+            self.pending_icon.set();time.sleep(1.2)
+            data=b'<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="purple"/></svg>'
+            try:
+                self.send_response(200);self.send_header('Content-Type','image/svg+xml');self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
+            except ConnectionError:pass
+        else:super().do_GET()
+
 def main():
     if os.environ.get('AURA_TEST_ISOLATED_DISPLAY')!='1':raise RuntimeError('Use verify_browser.py --suite=windows')
     out=ROOT/'artifacts/windows-session-smoke';out.mkdir(parents=True,exist_ok=True)
     profile=out/'profile with spaces';shutil.rmtree(profile,ignore_errors=True);profile.mkdir()
     (profile/'profile.toml').write_text('language="ru"\nrestore=false\ncheck_updates=false\nconfirm_quit=false\n')
-    with ThreadingHTTPServer(('127.0.0.1',0),partial(QuietHandler,directory=str(ROOT/'tests/fixtures/browser'))) as server:
+    with ThreadingHTTPServer(('127.0.0.1',0),partial(Handler,directory=str(ROOT/'tests/fixtures/browser'))) as server:
         threading.Thread(target=server.serve_forever,daemon=True).start()
         base=f'http://127.0.0.1:{server.server_port}/window-state.html'
         for launch in range(3):
@@ -54,13 +65,14 @@ def main():
                         key_at(normal,'d',4);wait_until(lambda:current(root)['bookmark_count']==1,'Bookmarks were not shared')
                         old={w['window'] for w in windows()}
                         with (out/'relaunch.log').open('w') as relaunch_log:
-                            forwarded=subprocess.run([str(ROOT/'build/linux-x64-release/aura_browser'),f'--data-dir={profile}',f'--url={base}?name=relaunch'],stdout=relaunch_log,stderr=subprocess.STDOUT,timeout=30)
+                            forwarded=subprocess.run([str(ROOT/'build/linux-x64-release/aura_browser'),f'--data-dir={profile}',f'--url={base}?name=relaunch&slow=1'],stdout=relaunch_log,stderr=subprocess.STDOUT,timeout=30)
                         assert forwarded.returncode==0,'A second launch did not exit cleanly'
                         wait_until(lambda:any(w['window'] not in old for w in windows()),'Second process launch was not forwarded to Aura')
                         forwarded_window=next(w['window'] for w in windows() if w['window'] not in old)
                         wait_until(lambda:document(forwarded_window).get('name')=='relaunch','Forwarded URL did not load')
                         assert current(forwarded_window)['pid']==current(root)['pid']
-                        close(forwarded_window)
+                        wait_until(lambda:Handler.pending_icon.is_set(),'Delayed icon request did not begin');close(forwarded_window);time.sleep(1.4)
+                        assert proc.poll() is None and current(root),'Closing a loading window broke the surviving window'
                         click_at(normal,352,208);wait_until(lambda:document(normal).get('protected'),'Protect-page click did not reach the page');key_at(normal,'w',5)
                         wait_until(lambda:current(normal).get('dialog_count')==1,'Beforeunload confirmation was not visible')
                         shot(normal,'close-beforeunload.png');key_at(normal,'Escape')

@@ -101,6 +101,7 @@ class BrowserController {
                       bool accelerated = false, std::shared_ptr<BrowserState> shared = {},
                       bool private_window = false);
     ~BrowserController();
+    std::shared_ptr<void> callback_lifetime = std::make_shared<int>(0);
     Profile &profile;
     bool private_window = false;
     std::shared_ptr<BrowserState> state() const {

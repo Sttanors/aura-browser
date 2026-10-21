@@ -74,9 +74,10 @@ class CookiesDeleted final : public CefDeleteCookiesCallback {
 };
 class ImageCallback final : public CefDownloadImageCallback {
   public:
-    ImageCallback(BrowserController &owner, int id) : owner_(owner), id_(id) {}
+    ImageCallback(BrowserController &owner, int id)
+        : owner_(owner), id_(id), lifetime_(owner.callback_lifetime) {}
     void OnDownloadImageFinished(const CefString &, int, CefRefPtr<CefImage> image) override {
-        if (!image)
+        if (!image || lifetime_.expired())
             return;
         auto t = owner_.tab(id_);
         if (!t || t->closing)
@@ -98,6 +99,7 @@ class ImageCallback final : public CefDownloadImageCallback {
   private:
     BrowserController &owner_;
     int id_;
+    std::weak_ptr<void> lifetime_;
     IMPLEMENT_REFCOUNTING(ImageCallback);
 };
 class ToolsClient final : public CefClient, public CefLifeSpanHandler {
@@ -180,6 +182,7 @@ BrowserController::BrowserController(std::filesystem::path path, std::filesystem
     state_->windows.push_back(this);
 }
 BrowserController::~BrowserController() {
+    callback_lifetime.reset();
     std::erase(state_->windows, this);
 }
 std::string BrowserController::tr(std::string_view english) const {

@@ -16,6 +16,7 @@ Aura logo / menu
   New window                 Ctrl N
   New private window   Ctrl Shift N
   Close window         Ctrl Shift W
+  Restore previous session
   Exit Aura                  Ctrl Q
 ```
 

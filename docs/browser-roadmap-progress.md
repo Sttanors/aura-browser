@@ -399,3 +399,17 @@ NORMAL_EXIT_PROCESS_NOTIFIED; стандартное Chrome-окно не соз
 страницы, добавлены счётчики native/web pointer down. Причина первого фокуса пока
 не объявляется доказанной. Следующая `39555554093` уже прошла compile/unit/GUI и
 дошла до упаковки. Окончательный relaunch commit ещё требует Windows CI.
+
+Итоговые регрессии после relay: extensions, passwords, import, updates, settings
+— **PASS**, логи `artifacts/build/windows-final-*.log`. `windows-relaunch-browser.log`
+— PASS. Windows `39556277743` прошёл compile/unit/GUI с настоящим вторым процессом
+и forwarded URL, сейчас упаковывается.
+
+Ревью lifetime при уничтожении дополнительных окон: GetResourceRequestHandler на
+IO thread теперь берёт policy из собственного shared_ptr клиента, а не из owner.
+DownloadImage callback на UI thread проверяет weak lifetime владельца. Поздняя
+загрузка не обращается к уже уничтоженному controller. `windows-lifetime-tests.log`
+— **72/72 PASS**; `windows-lifetime-gui.log` — полный multiwindow/relaunch/private/
+recovery GUI **PASS**, включая закрытие forwarded окна во время задержанной
+загрузки иконки. Browser regression и Windows окончательного lifetime commit
+ещё проверяются. Пункт 5 остаётся в работе до этого checkpoint.

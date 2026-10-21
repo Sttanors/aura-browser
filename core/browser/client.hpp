@@ -11,7 +11,7 @@ class BrowserClient final : public DiagnosticClient,
                             public CefPermissionHandler {
   public:
     BrowserClient(BrowserController &owner, Tab &tab)
-        : DiagnosticClient(tab.page), owner_(owner), id_(tab.id) {}
+        : DiagnosticClient(tab.page), owner_(owner), id_(tab.id), policy_(owner.request_policy) {}
     CefRefPtr<CefDownloadHandler> GetDownloadHandler() override {
         return this;
     }
@@ -82,6 +82,7 @@ class BrowserClient final : public DiagnosticClient,
   private:
     BrowserController &owner_;
     int id_;
+    std::shared_ptr<RequestPolicy> policy_;
     IMPLEMENT_REFCOUNTING(BrowserClient);
 };
 } // namespace aura

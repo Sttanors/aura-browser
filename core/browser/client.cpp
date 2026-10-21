@@ -35,7 +35,7 @@ CefRefPtr<CefResourceRequestHandler>
 BrowserClient::GetResourceRequestHandler(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
                                          CefRefPtr<CefRequest>, bool, bool, const CefString &,
                                          bool &) {
-    return new NetworkPolicy(owner_.request_policy);
+    return new NetworkPolicy(policy_);
 }
 bool BrowserClient::OnBeforeBrowse(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
                                    CefRefPtr<CefRequest> request, bool, bool) {
@@ -45,7 +45,8 @@ bool BrowserClient::OnBeforeBrowse(CefRefPtr<CefBrowser> browser, CefRefPtr<CefF
             browser->GetHost()->GetRequestContext(), url,
             frame->IsMain() ? url : browser->GetMainFrame()->GetURL().ToString());
     if (frame->IsMain()) {
-        if (auto t = owner_.tab(id_)) ++t->navigation_serial;
+        if (auto t = owner_.tab(id_))
+            ++t->navigation_serial;
         if (owner_.current() && owner_.current()->id == id_)
             owner_.close_extension_popup();
         owner_.cancel_permissions(id_);

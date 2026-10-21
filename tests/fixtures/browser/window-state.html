@@ -3,6 +3,7 @@
 <button style="position:absolute;left:20px;top:100px;width:160px;height:40px" onclick="window.onbeforeunload=window.onbeforeunload?null:()=>true;this.textContent=window.onbeforeunload?'Protected':'Protect page'">Protect page</button>
 <script>
 const args=new URLSearchParams(location.search);
+if(args.has('slow')){const icon=document.createElement('link');icon.rel='icon';icon.href='/slow-icon.svg';document.head.append(icon);}
 if(args.has('set')) {document.cookie='aura_window='+args.get('set')+'; path=/; SameSite=Lax';localStorage.setItem('aura_window',args.get('set'));}
 function report(){document.title=JSON.stringify({cookie:document.cookie,storage:localStorage.getItem('aura_window'),name:args.get('name'),protected:Boolean(window.onbeforeunload)});}
 report();setInterval(report,200);
