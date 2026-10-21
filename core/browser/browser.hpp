@@ -54,7 +54,7 @@ struct Download {
 };
 struct BrowserDialog {
     int tab = 0;
-    std::string origin, message;
+    std::string origin, message, accept_label;
     bool prompt = false, before_unload = false;
     TextEditor input;
     CefRefPtr<CefJSDialogCallback> callback;

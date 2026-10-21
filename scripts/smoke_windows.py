@@ -52,6 +52,11 @@ def main():
                         wait_until(lambda:document(normal).get('storage')=='normal','Normal windows did not share storage')
                         assert 'aura_window=normal' in document(normal)['cookie']
                         key_at(normal,'d',4);wait_until(lambda:current(root)['bookmark_count']==1,'Bookmarks were not shared')
+                        click_at(normal,352,208);wait_until(lambda:document(normal).get('protected'),'Protect-page click did not reach the page');key_at(normal,'w',5)
+                        wait_until(lambda:current(normal).get('dialog_count')==1,'Beforeunload confirmation was not visible')
+                        shot(normal,'close-beforeunload.png');key_at(normal,'Escape')
+                        wait_until(lambda:current(normal) and current(normal)['dialog_count']==0,'Close cancellation lost the window')
+                        click_at(normal,352,208);wait_until(lambda:document(normal).get('protected') is False,'Page protection did not turn off')
                         private1=new(root,True);navigate(private1,base+'?name=PRIVATE_SENTINEL&set=private')
                         wait_until(lambda:document(private1).get('storage')=='private','No private storage')
                         private2=new(root,True);navigate(private2,base+'?name=PRIVATE_SENTINEL_2')
@@ -71,6 +76,18 @@ def main():
                         wait_until(lambda:len(current(root)['tabs'])==2,'Root tabs changed unexpectedly')
                         click_at(root,90,252);time.sleep(.4)
                         click_at(root,80,35);shot(root,'window-menu-ru.png');key_at(root,'Escape')
+                        for value in ('en','ru'):
+                            click_at(root,1307,55);wait_until(lambda:current(root).get('settings_ui'),'No language settings')
+                            key_at(root,'f',4);type_text(root,'language');key_at(root,'Return')
+                            wait_until(lambda:current(root)['settings_ui'].get('search')=='language','No language search')
+                            control=next(c for c in current(root)['settings_ui']['controls'] if c['id']=='language')
+                            rect=next(o['bounds'] for o in control['options'] if o['value']==value)
+                            click_at(root,rect[0]+rect[2]//2,rect[1]+rect[3]//2)
+                            wait_until(lambda:current(normal)['settings']['language']==value,'Appearance settings did not propagate to another window')
+                            key_at(root,'Escape');key_at(root,'Escape')
+                            subprocess.run(['xdotool','windowsize','--sync',str(root),'900','620'],check=True);time.sleep(.3)
+                            click_at(root,80,35);shot(root,'window-menu-'+value+'-small.png');key_at(root,'Escape')
+                            subprocess.run(['xdotool','windowsize','--sync',str(root),'1360','900'],check=True);time.sleep(.3)
                         key_at(root,'q',4);proc.wait(timeout=30)
                     else:
                         if launch==2:

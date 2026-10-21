@@ -285,6 +285,7 @@ void BrowserController::start(const std::string &initial, bool private_mode, boo
         BrowserDialog dialog;
         dialog.owned = true;
         dialog.origin = tr("Restore interrupted session?");
+        dialog.accept_label = "Reopen";
         dialog.message = tr("Reopen your previous normal windows? Private tabs are excluded.");
         dialog.action = [this](bool accept, const std::string &) {
             state_->recovery_pending = false;
@@ -698,6 +699,8 @@ void BrowserController::answer_dialog(bool accept) {
     dialogs.pop_front();
     if (!accept && dialog.before_unload) {
         quitting = false;
+        quit_snapshot_.clear();
+        changed(true);
         for (auto &t : tabs)
             if (!t->page.closed)
                 t->closing = false;

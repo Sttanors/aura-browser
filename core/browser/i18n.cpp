@@ -337,6 +337,7 @@ constexpr Translation catalog[] = {
     {"YOUR SPACE, OPEN.", "ПРОСТРАНСТВО ДЛЯ ВАС."},
     {"New tab", "Новая вкладка"},
     {"New window", "Новое окно"},
+    {"Reopen", "Открыть"},
     {"Restore previous session", "Восстановить сессию"},
     {"Restore interrupted session?", "Восстановить прерванную сессию?"},
     {"Reopen your previous normal windows? Private tabs are excluded.",

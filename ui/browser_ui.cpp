@@ -843,8 +843,11 @@ void BrowserUi::draw(SkCanvas &c) {
               : dialog.owned       ? app_.tr(dialog.origin)
                                    : dialog.origin,
               r.x + 25, r.y + 38, 16, ink, r.width - 50);
-        label(c, regular_, dialog.owned ? app_.tr(dialog.message) : dialog.message, r.x + 25,
-              r.y + 78, 13, muted, r.width - 50);
+        const auto lines =
+            wrap_text(font(regular_, 13), dialog.owned ? app_.tr(dialog.message) : dialog.message,
+                      r.width - 50, dialog.prompt ? 2 : 4);
+        for (size_t i = 0; i < lines.size(); ++i)
+            label(c, regular_, lines[i], r.x + 25, r.y + 78 + int(i) * 18, 13, muted, r.width - 50);
         if (dialog.prompt) {
             fill(c, {r.x + 25, r.y + 101, r.width - 50, 37}, 8, t.background);
             draw_editor(c, dialog.input, {r.x + 37, r.y + 104, r.width - 74, 31}, 13, true);
@@ -854,9 +857,10 @@ void BrowserUi::draw(SkCanvas &c) {
         centered_label(c, medium_, cancel, {r.x + r.width - 217, r.y + r.height - 60, 90, 35}, 12,
                        ink);
         fill(c, {r.x + r.width - 114, r.y + r.height - 60, 90, 35}, 9, t.accent);
-        const auto accept = app_.tr(dialog.permission      ? "Allow"
-                                    : dialog.before_unload ? "Leave"
-                                                           : "OK");
+        const auto accept = app_.tr(!dialog.accept_label.empty() ? dialog.accept_label.c_str()
+                                    : dialog.permission          ? "Allow"
+                                    : dialog.before_unload       ? "Leave"
+                                                                 : "OK");
         centered_label(c, medium_, accept, {r.x + r.width - 114, r.y + r.height - 60, 90, 35}, 12,
                        t.background);
     }
