@@ -8,7 +8,19 @@
 namespace aura {
 class BrowserUi {
   public:
-    enum Panel { None, Bookmarks, History, Downloads, Settings, Extensions, Shortcuts, Updates, Import, Passwords };
+    enum Panel {
+        None,
+        Bookmarks,
+        History,
+        Downloads,
+        Settings,
+        Extensions,
+        Shortcuts,
+        Updates,
+        Import,
+        Passwords,
+        Filters
+    };
     BrowserUi(BrowserController &owner, const std::filesystem::path &font);
     ~BrowserUi();
     void draw(SkCanvas &canvas);
@@ -31,7 +43,12 @@ class BrowserUi {
     std::string updates_report() const;
     std::string import_report() const;
     std::string passwords_report() const;
-    void passwords_locked() { clear_password_fields(); password_mode_ = 0; password_selected_ = -1; }
+    std::string filters_report() const;
+    void passwords_locked() {
+        clear_password_fields();
+        password_mode_ = 0;
+        password_selected_ = -1;
+    }
     std::string extensions_report() const;
     std::string extension_popup_report() const;
     std::string extension_toolbar_report() const;
@@ -61,6 +78,16 @@ class BrowserUi {
     void clear_password_fields();
     void draw_passwords(SkCanvas &, Rect);
     void passwords_pointer(Rect, int, int);
+    TextEditor filter_input_;
+    bool filter_input_focus_ = false, filter_pending_ = false;
+    int filter_edit_ = -1;
+    uint64_t filter_seen_ = ~uint64_t{0}, filter_edit_revision_ = 0, filter_submit_revision_ = 0;
+    std::string filter_submitted_;
+    std::vector<std::string> filter_lines_;
+    void sync_filter_lines();
+    void save_filter_rule();
+    void draw_filters(SkCanvas &, Rect);
+    void filters_pointer(Rect, int, int);
     TextEditor import_input_;
     bool import_input_focus_ = false, import_bookmarks_ = true, import_history_ = true;
     bool settings_search_focus_ = false;
@@ -113,8 +140,8 @@ class BrowserUi {
     void ensure_wallpaper();
     bool import_wallpaper(const std::string &path);
     void choose_wallpaper();
-    void choose_file(bool for_import);
-    bool picker_import_ = false;
+    void choose_file(bool for_import, bool for_filters = false);
+    bool picker_import_ = false, picker_filters_ = false;
     void poll_wallpaper_picker();
     int start_scroll_ = 0, start_tab_ = -1, start_zoom_ = 100;
     StartPageLayout start_page_layout() const;

@@ -182,6 +182,7 @@ void BrowserController::protection_menu() {
          web && profile.darkreader_mode != "off"},
         {3, tr(profile.darkreader_mode == "off" ? "Turn on Dark Reader" : "Turn off Dark Reader")},
         {4, tr("Protection settings")},
+        {6, tr("Filter lists")},
         {5, tr("Extensions")}};
     menu_x = width - 310;
     menu_y = 82;
@@ -201,6 +202,8 @@ void BrowserController::protection_menu() {
             ui->show_protection_settings();
         else if (id == 5)
             ui->panel(BrowserUi::Extensions);
+        else if (id == 6)
+            ui->panel(BrowserUi::Filters);
     };
     changed();
 }

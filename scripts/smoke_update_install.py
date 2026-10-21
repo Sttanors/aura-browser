@@ -47,7 +47,7 @@ def main():
     (app/'.aura-installed').touch()
     profile = task_data/'aura-browser-profile'
     profile.mkdir()
-    (profile/'profile.toml').write_text('language="en"\nrestore=false\ncheck_updates=false\n'
+    (profile/'profile.toml').write_text('language="en"\nfilter_updates=false\nrestore=false\ncheck_updates=false\n'
         '[[bookmarks]]\nurl="https://example.com/keep-me"\ntitle="Keep this bookmark"\ntime=1\n')
     report = out/'install-report.json'
     report.unlink(missing_ok=True)

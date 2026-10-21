@@ -47,6 +47,7 @@ def main():
     output.mkdir(parents=True,exist_ok=True)
     profile=output/'profile'
     if profile.exists(): shutil.rmtree(profile)
+    profile.mkdir();(profile/'profile.toml').write_text('filter_updates=false\n')
     server=ThreadingHTTPServer(('127.0.0.1',0),partial(Handler,directory=str(ROOT/'tests/fixtures')))
     worker=threading.Thread(target=server.serve_forever,daemon=True);worker.start()
     base=f'http://127.0.0.1:{server.server_port}/browser/'

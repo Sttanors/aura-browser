@@ -18,7 +18,7 @@ def main():
     out=ROOT/'artifacts/extension-lifecycle-smoke';out.mkdir(parents=True,exist_ok=True)
     profile=out/'profile with spaces'
     if profile.exists():shutil.rmtree(profile)
-    profile.mkdir();(profile/'profile.toml').write_text('language="ru"\nrestore=false\ncheck_updates=false\n[[bookmarks]]\nurl="https://kept.test/"\ntitle="Keep this"\ntime=1\n')
+    profile.mkdir();(profile/'profile.toml').write_text('language="ru"\nfilter_updates=false\nrestore=false\ncheck_updates=false\n[[bookmarks]]\nurl="https://kept.test/"\ntitle="Keep this"\ntime=1\n')
     report=out/'report.json';report.unlink(missing_ok=True)
     with Server(('127.0.0.2',0),partial(Handler,directory=str(ROOT/'tests/fixtures'))) as server:
         threading.Thread(target=server.serve_forever,daemon=True).start()

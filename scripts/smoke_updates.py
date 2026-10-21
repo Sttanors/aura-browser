@@ -19,7 +19,7 @@ def main():
     profile = out/'profile'
     if profile.exists(): shutil.rmtree(profile)
     profile.mkdir()
-    (profile/'profile.toml').write_text('language="ru"\nrestore=false\ncheck_updates=false\n')
+    (profile/'profile.toml').write_text('language="ru"\nfilter_updates=false\nrestore=false\ncheck_updates=false\n')
     report = out/'report.json'
     report.unlink(missing_ok=True)
     binary = Path(os.environ.get('AURA_TEST_BINARY', str(ROOT/'build/linux-x64-release/aura_browser')))
@@ -88,7 +88,7 @@ def main():
             private_profile = out/'private-profile'
             if private_profile.exists(): shutil.rmtree(private_profile)
             private_profile.mkdir()
-            (private_profile/'profile.toml').write_text('check_updates=true\nrestore=false\n')
+            (private_profile/'profile.toml').write_text('check_updates=true\nfilter_updates=false\nrestore=false\n')
             report.unlink(missing_ok=True)
             proc = subprocess.Popen([str(binary), '--private', f'--data-dir={private_profile}', f'--report={report}'],
                                     cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, start_new_session=True,

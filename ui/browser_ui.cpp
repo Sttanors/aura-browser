@@ -29,6 +29,7 @@
 #include <ctime>
 #include <fstream>
 #include <map>
+#include <sstream>
 #ifndef _WIN32
 #include <fcntl.h>
 #include <signal.h>
@@ -296,6 +297,7 @@ Rect BrowserUi::panel_bounds() const {
                            : panel_ == Shortcuts  ? 900
                            : panel_ == Passwords  ? 900
                            : panel_ == Import     ? 900
+                           : panel_ == Filters    ? 900
                                                   : 660,
                            r.width - 24);
     const int h = std::min(panel_ == Settings     ? 760
@@ -303,6 +305,7 @@ Rect BrowserUi::panel_bounds() const {
                            : panel_ == Shortcuts  ? 700
                            : panel_ == Passwords  ? 700
                            : panel_ == Import     ? 700
+                           : panel_ == Filters    ? 700
                                                   : 580,
                            height_ - 124);
     return {r.x + (r.width - w) / 2, std::max(100, (height_ - h) / 2), w, h};
@@ -648,7 +651,8 @@ void BrowserUi::draw(SkCanvas &c) {
                                       app_.tr("Quick links"),
                                       app_.tr("About Aura and updates"),
                                       app_.tr("Import browser data"),
-                                      app_.tr("Passwords")};
+                                      app_.tr("Passwords"),
+                                      app_.tr("Filter lists")};
         label(c, medium_, titles[panel_], r.x + 28, r.y + 47, 23, ink);
         icon(c, "close", r.x + r.width - 43, r.y + 26, 19, muted);
         if (panel_ == History || panel_ == Bookmarks) {
@@ -742,6 +746,8 @@ void BrowserUi::draw(SkCanvas &c) {
             draw_import(c, r);
         if (panel_ == Passwords)
             draw_passwords(c, r);
+        if (panel_ == Filters)
+            draw_filters(c, r);
     }
 
     if (editing) {
@@ -1239,28 +1245,34 @@ bool BrowserUi::import_wallpaper(const std::string &value) {
 void BrowserUi::choose_wallpaper() {
     choose_file(false);
 }
-void BrowserUi::choose_file(bool for_import) {
+void BrowserUi::choose_file(bool for_import, bool for_filters) {
+    if (for_filters && app_.filter_lists().busy())
+        return;
     if (for_import && app_.importer.busy)
         return;
-    const auto error_text = for_import
+    const auto error_text = for_filters ? "Could not open the file chooser. Add rules manually."
+                            : for_import
                                 ? "Could not open the file chooser. Paste a file path instead."
                                 : "Could not open the image chooser. Paste a file path instead.";
 #ifdef _WIN32
     std::wstring file(32768, L'\0');
-    const auto title =
-        CefString(app_.tr(for_import ? "Choose browser data" : "Choose background image"))
-            .ToWString();
+    const auto title = CefString(app_.tr(for_filters  ? "Import custom filter rules"
+                                         : for_import ? "Choose browser data"
+                                                      : "Choose background image"))
+                           .ToWString();
     const auto initial = app_.profile.directory.wstring();
     OPENFILENAMEW dialog{};
     dialog.lStructSize = sizeof(dialog);
     dialog.hwndOwner = app_.window->handle();
     dialog.lpstrFilter =
-        for_import ? (app_.profile.language == "ru"
-                          ? L"Данные браузера\0*.html;*.htm;*.json;*.sqlite;History;Bookmarks\0Все "
-                            L"файлы\0*.*\0\0"
-                          : L"Browser data\0*.html;*.htm;*.json;*.sqlite;History;Bookmarks\0All "
-                            L"files\0*.*\0\0")
-                   : L"PNG / JPEG\0*.png;*.jpg;*.jpeg\0\0";
+        for_filters ? L"Filter rules\0*.txt;*.list\0All files\0*.*\0\0"
+        : for_import
+            ? (app_.profile.language == "ru"
+                   ? L"Данные браузера\0*.html;*.htm;*.json;*.sqlite;History;Bookmarks\0Все "
+                     L"файлы\0*.*\0\0"
+                   : L"Browser data\0*.html;*.htm;*.json;*.sqlite;History;Bookmarks\0All "
+                     L"files\0*.*\0\0")
+            : L"PNG / JPEG\0*.png;*.jpg;*.jpeg\0\0";
     dialog.lpstrFile = file.data();
     dialog.nMaxFile = static_cast<DWORD>(file.size());
     dialog.lpstrTitle = title.c_str();
@@ -1268,7 +1280,9 @@ void BrowserUi::choose_file(bool for_import) {
     dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_EXPLORER;
     if (GetOpenFileNameW(&dialog)) {
         file.resize(wcslen(file.c_str()));
-        if (for_import) {
+        if (for_filters)
+            app_.filter_lists().import_custom(std::filesystem::path(file));
+        else if (for_import) {
             import_input_.set(utf8_path(std::filesystem::path(file)));
             import_input_focus_ = false;
             app_.importer.preview(import_input_.value);
@@ -1294,10 +1308,13 @@ void BrowserUi::choose_file(bool for_import) {
         "zenity",
         "--file-selection",
         "--modal",
-        "--title=" + app_.tr(for_import ? "Choose browser data" : "Choose background image"),
-        for_import ? "--file-filter=" + app_.tr("Browser data") +
-                         " | *.html *.htm *.json *.sqlite History Bookmarks"
-                   : "--file-filter=PNG / JPEG | *.png *.PNG *.jpg *.JPG *.jpeg *.JPEG",
+        "--title=" + app_.tr(for_filters  ? "Import custom filter rules"
+                             : for_import ? "Choose browser data"
+                                          : "Choose background image"),
+        for_filters  ? "--file-filter=Filter rules | *.txt *.list"
+        : for_import ? "--file-filter=" + app_.tr("Browser data") +
+                           " | *.html *.htm *.json *.sqlite History Bookmarks"
+                     : "--file-filter=PNG / JPEG | *.png *.PNG *.jpg *.JPG *.jpeg *.JPEG",
         "--file-filter=" + app_.tr("All files") + " | *",
         "--filename=" + utf8_path(app_.profile.directory) + "/"};
     std::vector<char *> argv;
@@ -1320,6 +1337,7 @@ void BrowserUi::choose_file(bool for_import) {
     }
     picker_pid_ = child;
     picker_import_ = for_import;
+    picker_filters_ = for_filters;
     picker_fd_ = pipes[0];
     picker_output_.clear();
     settings_edit_.clear();
@@ -1350,7 +1368,9 @@ void BrowserUi::poll_wallpaper_picker() {
                (picker_output_.back() == '\n' || picker_output_.back() == '\r'))
             picker_output_.pop_back();
         if (!picker_output_.empty()) {
-            if (picker_import_) {
+            if (picker_filters_)
+                app_.filter_lists().import_custom(path_from_utf8(picker_output_));
+            else if (picker_import_) {
                 import_input_.set(picker_output_);
                 import_input_focus_ = false;
                 app_.importer.preview(picker_output_);
@@ -1359,7 +1379,8 @@ void BrowserUi::poll_wallpaper_picker() {
         }
         settings_error_.clear();
     } else if (!WIFEXITED(status) || WEXITSTATUS(status) != 1)
-        toast(app_.tr(picker_import_
+        toast(app_.tr(picker_filters_ ? "Could not open the file chooser. Add rules manually."
+                      : picker_import_
                           ? "Could not open the file chooser. Paste a file path instead."
                           : "Could not open the image chooser. Paste a file path instead."));
     picker_output_.clear();
@@ -1815,6 +1836,8 @@ std::vector<BrowserUi::SettingsRow> BrowserUi::settings_rows(Rect panel) const {
          "Add, edit, remove and reorder your shortcuts."},
         {"wallpaper_clear", "Start page", "Remove background image",
          "Return to the Aura background. Your original image is kept."},
+        {"filters", "Protection", "Filter lists and custom rules",
+         "Update EasyList and EasyPrivacy, choose lists and edit your own rules."},
         {"extensions", "Protection", "Manage extensions",
          "Install extensions from Chrome Web Store or a signed CRX3 file."},
         {"history", "Data", "Clear Aura history",
@@ -2114,6 +2137,8 @@ void BrowserUi::settings_pointer(Rect r, int x, int y) {
                     import_wallpaper("");
                 else if (row.action == "extensions")
                     panel(Extensions);
+                else if (row.action == "filters")
+                    panel(Filters);
                 else if (row.action == "folder")
                     app_.open_folder();
                 else if (row.action == "downloads")
@@ -2258,6 +2283,9 @@ void BrowserUi::panel(Panel value) {
     settings_search_focus_ = false;
     settings_edit_.clear();
     import_input_focus_ = false;
+    filter_input_focus_ = false;
+    if (value == Filters)
+        sync_filter_lines();
     app_.changed();
 }
 void BrowserUi::commit_address() {
@@ -2310,6 +2338,9 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
                 live = target;
             else if (panel_ == Shortcuts && target == &shortcut_url_ && shortcut_focus_ == 1)
                 live = target;
+            else if (panel_ == Filters && target == &filter_input_ && filter_input_focus_ &&
+                     !app_.filter_lists().busy())
+                live = &filter_input_;
             else if (panel_ == Extensions && target == &extension_input_ && extension_input_focus_)
                 live = &extension_input_;
             else if (panel_ == Import && target == &import_input_ && import_input_focus_ &&
@@ -2321,7 +2352,8 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
             else if (!app_.dialogs.empty() && target == &app_.dialogs.front().input)
                 live = target;
             if (live && !text.empty() &&
-                (panel_ != Passwords || live->value.size() + text.size() <= 8192))
+                (panel_ != Passwords || live->value.size() + text.size() <= 8192) &&
+                (live != &filter_input_ || live->value.size() + text.size() <= 4096))
                 live->insert(text);
             if (live == &find)
                 app_.find_text(find.value);
@@ -2380,6 +2412,7 @@ bool BrowserUi::key(const CefKeyEvent &key) {
         import_input_focus_ = false;
         shortcut_focus_ = -1;
         password_focus_ = -1;
+        filter_input_focus_ = false;
         if (auto tab = app_.current(); tab && tab->browser)
             tab->browser->GetHost()->SetFocus(false);
         if (!focus_targets_.empty()) {
@@ -2395,7 +2428,8 @@ bool BrowserUi::key(const CefKeyEvent &key) {
     if (!app_.extension_popup && down && keyboard_focus_ >= 0 &&
         keyboard_focus_ < int(focus_targets_.size()) && (code == 0x0D || code == 0x20) &&
         !settings_search_focus_ && settings_edit_.empty() && !extension_input_focus_ &&
-        !import_input_focus_ && shortcut_focus_ < 0 && password_focus_ < 0 && !editing) {
+        !import_input_focus_ && !filter_input_focus_ && shortcut_focus_ < 0 &&
+        password_focus_ < 0 && !editing) {
         const auto r = focus_targets_[keyboard_focus_];
         const int previous = keyboard_focus_;
         const auto previous_panel = panel_;
@@ -2491,6 +2525,25 @@ bool BrowserUi::key(const CefKeyEvent &key) {
                     app_.importer.candidate.reset();
                     app_.importer.result.reset();
                 }
+                app_.changed();
+                return code < 0x20 || ctrl || (code >= 0x21 && code <= 0x2E);
+            }
+        }
+        if (panel_ == Filters && filter_input_focus_) {
+            if (code == 0x1B) {
+                filter_input_focus_ = false;
+                app_.changed();
+                return true;
+            }
+            if (code == 0x0D) {
+                save_filter_rule();
+                app_.changed();
+                return true;
+            }
+            if (!ctrl ||
+                (code != 'L' && code != 'T' && code != 'W' && code != 'Q' && code != 'N')) {
+                if (!app_.filter_lists().busy())
+                    editor_key(filter_input_, key);
                 app_.changed();
                 return code < 0x20 || ctrl || (code >= 0x21 && code <= 0x2E);
             }
@@ -2709,12 +2762,13 @@ bool BrowserUi::key(const CefKeyEvent &key) {
             return true;
         }
         if ((panel_ == History || panel_ == Bookmarks || panel_ == Downloads ||
-             panel_ == Extensions || panel_ == Shortcuts) &&
+             panel_ == Extensions || panel_ == Shortcuts || panel_ == Filters) &&
             (code == 0x21 || code == 0x22 || code == 0x24 || code == 0x23)) {
             const int count = panel_ == History     ? int(app_.profile.history.size())
                               : panel_ == Bookmarks ? int(app_.profile.bookmarks.size())
                               : panel_ == Downloads ? int(app_.downloads.size())
                               : panel_ == Shortcuts ? int(app_.profile.shortcuts.size())
+                              : panel_ == Filters   ? int(filter_lines_.size())
                               : app_.extensions.candidate
                                   ? int(app_.extensions.candidate->extension.permissions.size())
                                   : int(app_.extensions.items.size());
@@ -2810,6 +2864,10 @@ void BrowserUi::text(const std::string &value) {
             app_.passwords.touch();
         }
         erase_secret(clean);
+    } else if (panel_ == Filters) {
+        if (filter_input_focus_ && !app_.filter_lists().busy() &&
+            filter_input_.value.size() + clean.size() <= 4096)
+            filter_input_.insert(clean);
     } else if (panel_ == Import) {
         if (import_input_focus_ && !app_.importer.busy) {
             import_input_.insert(clean);
@@ -2843,6 +2901,15 @@ bool BrowserUi::tick() {
     float target = editing ? 1 : 0;
     if (app_.profile.reduce_motion)
         focus_animation_ = target;
+    if (filter_pending_ && !app_.filter_lists().busy()) {
+        if (app_.filter_lists().revision > filter_submit_revision_ &&
+            filter_input_.value == filter_submitted_) {
+            filter_input_.set("");
+            filter_edit_ = -1;
+        }
+        filter_pending_ = false;
+        animate = true;
+    }
     if (std::abs(focus_animation_ - target) > .005f) {
         focus_animation_ += (target - focus_animation_) * std::min(1.f, dt * 18);
         animate = true;
@@ -2907,6 +2974,11 @@ void BrowserUi::pointer(const PointerInput &input) {
         else
             start_scroll_ = std::clamp(start_scroll_ + (input.dy < 0 ? 64 : -64), 0,
                                        start_page_layout().maximum);
+        return;
+    }
+    if (input.kind == PointerInput::Wheel && panel_ == Filters) {
+        panel_scroll_ = std::clamp(panel_scroll_ + (input.dy < 0 ? 1 : -1), 0,
+                                   std::max(0, int(filter_lines_.size()) - 1));
         return;
     }
     if (input.kind == PointerInput::Wheel && panel_ == Shortcuts) {
@@ -3089,6 +3161,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                 import_pointer(r, x, y);
             else if (panel_ == Passwords)
                 passwords_pointer(r, x, y);
+            else if (panel_ == Filters)
+                filters_pointer(r, x, y);
         }
         return;
     }
@@ -3993,6 +4067,227 @@ std::string BrowserUi::passwords_report() const {
                    std::to_string(r.y + 108 + (i - start) * 48) + "," +
                    std::to_string(r.width - 56) + ",44]";
         }
+    }
+    return out + "]}";
+}
+} // namespace aura
+
+namespace aura {
+void BrowserUi::sync_filter_lines() {
+    const auto &manager = app_.filter_lists();
+    if (filter_seen_ == manager.revision)
+        return;
+    filter_seen_ = manager.revision;
+    filter_lines_.clear();
+    std::istringstream text(manager.settings().custom);
+    std::string line;
+    while (std::getline(text, line))
+        if (!line.empty())
+            filter_lines_.push_back(std::move(line));
+    panel_scroll_ = std::clamp(panel_scroll_, 0, std::max(0, int(filter_lines_.size()) - 1));
+}
+void BrowserUi::save_filter_rule() {
+    auto &manager = app_.filter_lists();
+    if (manager.busy() || filter_input_.value.empty())
+        return;
+    if (filter_edit_ >= 0 && filter_edit_revision_ != manager.revision) {
+        toast(app_.tr("Rules changed in another window. Select the rule again."));
+        return;
+    }
+    sync_filter_lines();
+    auto lines = filter_lines_;
+    if (filter_edit_ >= 0 && size_t(filter_edit_) < lines.size())
+        lines[filter_edit_] = filter_input_.value;
+    else
+        lines.push_back(filter_input_.value);
+    std::string rules;
+    for (const auto &line : lines)
+        rules += line + '\n';
+    filter_submit_revision_ = manager.revision;
+    filter_submitted_ = filter_input_.value;
+    filter_pending_ = true;
+    manager.set_custom(std::move(rules));
+    filter_input_focus_ = false;
+}
+void BrowserUi::draw_filters(SkCanvas &c, Rect r) {
+    sync_filter_lines();
+    auto &manager = app_.filter_lists();
+    const auto &theme = interface_theme(app_.profile);
+    auto button = [&](Rect b, const std::string &text, bool primary = false, bool enabled = true) {
+        if (enabled)
+            focus_target(b);
+        fill(c, b, 8,
+             enabled && primary ? theme.accent : SkColorSetA(theme.text, enabled ? 12 : 6));
+        if (inside(b, hover_x_, hover_y_) && enabled)
+            border(c, b, 8, theme.accent);
+        centered_label(c, medium_, app_.tr(text), b, 12,
+                       enabled ? (primary ? theme.background : theme.text) : theme.muted);
+    };
+    button({r.x + r.width - 178, r.y + 72, 150, 34}, manager.busy() ? "Cancel" : "Check lists",
+           true);
+    auto message = app_.tr(manager.status);
+    const auto lines = wrap_text(font(regular_, 12), message, r.width - 236, 2);
+    for (size_t i = 0; i < lines.size(); ++i)
+        label(c, regular_, lines[i], r.x + 28, r.y + 84 + int(i) * 17, 12, theme.muted,
+              r.width - 236);
+    for (size_t i = 0; i < 2; ++i) {
+        const int y = r.y + 124 + int(i) * 48;
+        label(c, medium_, i == 0 ? "EasyList" : "EasyPrivacy", r.x + 28, y + 20, 14, theme.text,
+              148);
+        std::string date = app_.tr("Bundled snapshot");
+        if (manager.settings().updated[i] > 0) {
+            const auto local = local_time(std::time_t(manager.settings().updated[i]));
+            char text[32];
+            std::strftime(text, sizeof text, "%Y-%m-%d %H:%M", &local);
+            date = text;
+        }
+        label(c, regular_, date, r.x + 202, y + 20, 12, theme.muted, r.width - 354);
+        button({r.x + r.width - 132, y + 1, 104, 32}, manager.settings().enabled[i] ? "On" : "Off",
+               false, !manager.busy());
+    }
+    label(c, regular_,
+          app_.tr("Parsed rules: ") + std::to_string(manager.stats.network) + " / " +
+              std::to_string(manager.stats.cosmetic) + " / " +
+              std::to_string(manager.stats.skipped),
+          r.x + 28, r.y + 236, 12, theme.muted, r.width - 56);
+    label(c, medium_, app_.tr("Custom rule"), r.x + 28, r.y + 270, 13, theme.text, r.width - 220);
+    button({r.x + r.width - 140, r.y + 249, 112, 26},
+           filter_edit_ >= 0 ? "Cancel edit" : "Clear rules", false,
+           !manager.busy() && (filter_edit_ >= 0 || !filter_lines_.empty()));
+    Rect input{r.x + 28, r.y + 282, r.width - 180, 36};
+    if (!manager.busy())
+        focus_target(input);
+    fill(c, input, 8, theme.background);
+    border(c, input, 8, filter_input_focus_ ? theme.accent : theme.muted);
+    draw_editor(c, filter_input_, {input.x + 10, input.y + 2, input.width - 20, input.height - 4},
+                12, filter_input_focus_);
+    button({r.x + r.width - 140, r.y + 282, 112, 36}, filter_edit_ >= 0 ? "Save rule" : "Add rule",
+           false, !manager.busy() && !filter_input_.value.empty());
+    c.save();
+    c.clipRect(SkRect::MakeXYWH(r.x + 24, r.y + 328, r.width - 48, std::max(0, r.height - 454)));
+    if (filter_lines_.empty())
+        label(c, regular_, app_.tr("Add a rule or import a UTF-8 text file."), r.x + 28, r.y + 352,
+              12, theme.muted, r.width - 56);
+    for (size_t i = panel_scroll_;
+         i < filter_lines_.size() &&
+         r.y + 328 + int(i - panel_scroll_) * 38 + 32 <= r.y + r.height - 126;
+         ++i) {
+        const int y = r.y + 328 + int(i - panel_scroll_) * 38;
+        Rect row{r.x + 28, y, r.width - 150, 32};
+        if (!manager.busy())
+            focus_target(row);
+        if (int(i) == filter_edit_)
+            fill(c, row, 6, SkColorSetA(theme.accent, 20));
+        label(c, regular_, filter_lines_[i], row.x + 6, row.y + 21, 12, theme.text, row.width - 12);
+        button({r.x + r.width - 110, y, 82, 32}, "Remove", false, !manager.busy());
+    }
+    c.restore();
+    label(c, regular_, app_.tr("Network / cosmetic / skipped; scroll to review custom rules."),
+          r.x + 28, r.y + r.height - 106, 10, theme.muted, r.width - 56);
+    button({r.x + 28, r.y + r.height - 88, 160, 34}, "Import rules", false, !manager.busy());
+    button({r.x + r.width - 248, r.y + r.height - 88, 220, 34}, "Restore bundled lists", false,
+           !manager.busy());
+    label(c, regular_, app_.tr("Network changes require a page reload."), r.x + 28,
+          r.y + r.height - 35, 10, theme.muted, r.width - 56);
+    label(c, regular_, app_.tr("Scriptlets, CSP and unsupported procedural rules are not applied."),
+          r.x + 28, r.y + r.height - 19, 10, theme.muted, r.width - 56);
+}
+void BrowserUi::filters_pointer(Rect r, int x, int y) {
+    auto &manager = app_.filter_lists();
+    if (inside({r.x + r.width - 178, r.y + 72, 150, 34}, x, y)) {
+        if (manager.busy())
+            manager.cancel();
+        else
+            manager.check();
+        return;
+    }
+    if (manager.busy())
+        return;
+    if (filter_seen_ != manager.revision) {
+        sync_filter_lines();
+        app_.changed();
+        return;
+    }
+    filter_input_focus_ = inside({r.x + 28, r.y + 282, r.width - 180, 36}, x, y);
+    if (filter_input_focus_) {
+        app_.window->caret(r.x + 38, r.y + 314);
+        return;
+    }
+    for (size_t i = 0; i < 2; ++i)
+        if (inside({r.x + r.width - 132, r.y + 125 + int(i) * 48, 104, 32}, x, y)) {
+            manager.set_list(i, !manager.settings().enabled[i]);
+            return;
+        }
+    if (inside({r.x + r.width - 140, r.y + 282, 112, 36}, x, y)) {
+        save_filter_rule();
+        return;
+    }
+    if (inside({r.x + r.width - 140, r.y + 249, 112, 26}, x, y) && filter_edit_ >= 0) {
+        filter_edit_ = -1;
+        filter_input_.set("");
+        return;
+    }
+    if (inside({r.x + r.width - 140, r.y + 249, 112, 26}, x, y) && !filter_lines_.empty()) {
+        app_.confirm_action("Remove all custom rules?",
+                            "Bundled lists and site exceptions are kept.",
+                            [this] { app_.filter_lists().set_custom(""); });
+        return;
+    }
+    if (y >= r.y + 328 && y < r.y + r.height - 126) {
+        const size_t index = panel_scroll_ + (y - r.y - 328) / 38;
+        if (index >= filter_lines_.size())
+            return;
+        if (x >= r.x + r.width - 110) {
+            auto lines = filter_lines_;
+            lines.erase(lines.begin() + index);
+            std::string rules;
+            for (const auto &line : lines)
+                rules += line + '\n';
+            manager.set_custom(std::move(rules));
+        } else {
+            filter_edit_ = int(index);
+            filter_edit_revision_ = manager.revision;
+            filter_input_.set(filter_lines_[index]);
+            filter_input_focus_ = true;
+        }
+        return;
+    }
+    if (inside({r.x + 28, r.y + r.height - 88, 160, 34}, x, y))
+        choose_file(false, true);
+    if (inside({r.x + r.width - 248, r.y + r.height - 88, 220, 34}, x, y))
+        manager.restore_bundled();
+}
+std::string BrowserUi::filters_report() const {
+    if (panel_ != Filters)
+        return "null";
+    const auto r = panel_bounds();
+    auto rect = [](Rect b) {
+        return "[" + std::to_string(b.x) + "," + std::to_string(b.y) + "," +
+               std::to_string(b.width) + "," + std::to_string(b.height) + "]";
+    };
+    std::string out =
+        "{\"bounds\":" + rect(r) + ",\"check\":" + rect({r.x + r.width - 178, r.y + 72, 150, 34}) +
+        ",\"input\":" + rect({r.x + 28, r.y + 282, r.width - 180, 36}) +
+        ",\"save\":" + rect({r.x + r.width - 140, r.y + 282, 112, 36}) +
+        ",\"clear\":" + rect({r.x + r.width - 140, r.y + 249, 112, 26}) +
+        ",\"import\":" + rect({r.x + 28, r.y + r.height - 88, 160, 34}) +
+        ",\"bundled\":" + rect({r.x + r.width - 248, r.y + r.height - 88, 220, 34}) +
+        ",\"picker_pid\":" + std::to_string(picker_pid_) +
+        ",\"easylist_toggle\":" + rect({r.x + r.width - 132, r.y + 125, 104, 32}) +
+        ",\"easyprivacy_toggle\":" + rect({r.x + r.width - 132, r.y + 173, 104, 32}) +
+        ",\"custom_count\":" + std::to_string(filter_lines_.size()) +
+        ",\"input_length\":" + std::to_string(filter_input_.value.size()) + ",\"rows\":[";
+    bool first = true;
+    for (size_t i = panel_scroll_;
+         i < filter_lines_.size() && 328 + int(i - panel_scroll_) * 38 + 32 <= r.height - 126;
+         ++i) {
+        if (!first)
+            out += ',';
+        first = false;
+        const int y = r.y + 328 + int(i - panel_scroll_) * 38;
+        out += "{\"index\":" + std::to_string(i) +
+               ",\"edit\":" + rect({r.x + 28, y, r.width - 150, 32}) +
+               ",\"remove\":" + rect({r.x + r.width - 110, y, 82, 32}) + "}";
     }
     return out + "]}";
 }

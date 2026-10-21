@@ -14,7 +14,7 @@ def main():
     out=ROOT/'artifacts/startpage-smoke';out.mkdir(parents=True,exist_ok=True)
     profile=out/'profile'
     if profile.exists():shutil.rmtree(profile)
-    profile.mkdir();(profile/'profile.toml').write_text('language="ru"\nrestore=false\n')
+    profile.mkdir();(profile/'profile.toml').write_text('language="ru"\nfilter_updates=false\nrestore=false\n')
     reports=[];saved=None
     with ThreadingHTTPServer(('127.0.0.1',0),partial(QuietHandler,directory=str(ROOT/'tests/fixtures'))) as server:
         worker=threading.Thread(target=server.serve_forever,daemon=True);worker.start()

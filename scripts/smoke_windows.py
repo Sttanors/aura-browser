@@ -22,7 +22,7 @@ def main():
     if os.environ.get('AURA_TEST_ISOLATED_DISPLAY')!='1':raise RuntimeError('Use verify_browser.py --suite=windows')
     out=ROOT/'artifacts/windows-session-smoke';out.mkdir(parents=True,exist_ok=True)
     profile=out/'profile with spaces';shutil.rmtree(profile,ignore_errors=True);profile.mkdir()
-    (profile/'profile.toml').write_text('language="ru"\nrestore=false\ncheck_updates=false\nconfirm_quit=false\n')
+    (profile/'profile.toml').write_text('language="ru"\nfilter_updates=false\nrestore=false\ncheck_updates=false\nconfirm_quit=false\n')
     with ThreadingHTTPServer(('127.0.0.1',0),partial(Handler,directory=str(ROOT/'tests/fixtures/browser'))) as server:
         threading.Thread(target=server.serve_forever,daemon=True).start()
         base=f'http://127.0.0.1:{server.server_port}/window-state.html'

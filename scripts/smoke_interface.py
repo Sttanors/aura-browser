@@ -16,7 +16,7 @@ def main():
     profile = out / 'profile'
     if profile.exists(): shutil.rmtree(profile)
     profile.mkdir()
-    (profile / 'profile.toml').write_text('language="ru"\nrestore=false\n')
+    (profile / 'profile.toml').write_text('language="ru"\nfilter_updates=false\nrestore=false\n')
     with ThreadingHTTPServer(('127.0.0.1', 0), partial(QuietHandler, directory=str(ROOT/'tests/fixtures'))) as server:
         threading.Thread(target=server.serve_forever, daemon=True).start()
         target = f'http://127.0.0.1:{server.server_port}/browser/a.html'

@@ -1,24 +1,81 @@
 #include "core/browser/client.hpp"
 #include "include/cef_frame.h"
 #include "include/cef_menu_model.h"
+#include "include/cef_resource_handler.h"
 #include "include/cef_resource_request_handler.h"
 #include "ui/browser_ui.hpp"
+#include <cstring>
 #include <spdlog/spdlog.h>
 namespace aura {
 namespace {
+class EmptyResource final : public CefResourceHandler {
+  public:
+    explicit EmptyResource(Protection::Action action) {
+        if (action == Protection::Action::NoopScript) {
+            mime_ = "application/javascript";
+            bytes_ = ";";
+        } else if (action == Protection::Action::NoopStyle) {
+            mime_ = "text/css";
+        } else {
+            mime_ = "image/gif";
+            const unsigned char data[] = {71, 73, 70,  56,  57,  97, 1,   0, 1, 0, 128, 0,  0, 0,
+                                          0,  0,  255, 255, 255, 33, 249, 4, 1, 0, 0,   0,  0, 44,
+                                          0,  0,  0,   0,   1,   0,  1,   0, 0, 2, 1,   68, 0, 59};
+            bytes_.assign(reinterpret_cast<const char *>(data), sizeof data);
+        }
+    }
+    bool Open(CefRefPtr<CefRequest>, bool &handle, CefRefPtr<CefCallback>) override {
+        handle = true;
+        return true;
+    }
+    void GetResponseHeaders(CefRefPtr<CefResponse> response, int64_t &length,
+                            CefString &) override {
+        response->SetStatus(200);
+        response->SetMimeType(mime_);
+        response->SetHeaderByName("Cache-Control", "no-store", true);
+        length = bytes_.size();
+    }
+    bool Read(void *data, int count, int &read, CefRefPtr<CefResourceReadCallback>) override {
+        read = std::min(std::max(0, count), int(bytes_.size() - offset_));
+        if (!read)
+            return false;
+        std::memcpy(data, bytes_.data() + offset_, read);
+        offset_ += read;
+        return true;
+    }
+    void Cancel() override {
+        offset_ = bytes_.size();
+    }
+
+  private:
+    std::string mime_, bytes_;
+    size_t offset_ = 0;
+    IMPLEMENT_REFCOUNTING(EmptyResource);
+};
 class NetworkPolicy final : public CefResourceRequestHandler {
   public:
     explicit NetworkPolicy(std::shared_ptr<RequestPolicy> policy) : policy_(std::move(policy)) {}
     ReturnValue OnBeforeResourceLoad(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
                                      CefRefPtr<CefRequest> request,
                                      CefRefPtr<CefCallback>) override {
-        const auto source = browser && browser->GetMainFrame()
-                                ? browser->GetMainFrame()->GetURL().ToString()
-                            : frame ? frame->GetURL().ToString()
-                                    : request->GetReferrerURL().ToString();
-        if (policy_->protection && policy_->protection->block(request->GetURL().ToString(), source,
-                                                              request->GetResourceType()))
-            return RV_CANCEL;
+        std::string source = request->GetReferrerURL().ToString();
+        if (browser && browser->IsValid()) {
+            auto top = browser->GetMainFrame();
+            if (top && top->IsValid())
+                source = top->GetURL();
+        } else if (frame && frame->IsValid())
+            source = frame->GetURL();
+        replacement_ = Protection::Action::Allow;
+        if (policy_->protection) {
+            auto decision = policy_->protection->decide(request->GetURL().ToString(), source,
+                                                        request->GetResourceType(),
+                                                        request->GetMethod().ToString());
+            if (decision.action == Protection::Action::Block)
+                return RV_CANCEL;
+            replacement_ = decision.action;
+            if (!decision.rewritten.empty())
+                request->SetURL(decision.rewritten);
+        }
         if (policy_->do_not_track.load())
             request->SetHeaderByName("DNT", "1", true);
         if (!policy_->send_referrer.load())
@@ -26,7 +83,15 @@ class NetworkPolicy final : public CefResourceRequestHandler {
         return RV_CONTINUE;
     }
 
+    CefRefPtr<CefResourceHandler> GetResourceHandler(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
+                                                     CefRefPtr<CefRequest>) override {
+        return replacement_ == Protection::Action::Allow
+                   ? nullptr
+                   : CefRefPtr<CefResourceHandler>(new EmptyResource(replacement_));
+    }
+
   private:
+    Protection::Action replacement_ = Protection::Action::Allow;
     std::shared_ptr<RequestPolicy> policy_;
     IMPLEMENT_REFCOUNTING(NetworkPolicy);
 };

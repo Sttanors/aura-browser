@@ -5,10 +5,13 @@
 #include <cctype>
 #include <fstream>
 #include <sstream>
+#include <stdexcept>
 extern "C" {
 void *aura_adblock_new(const char *);
 void aura_adblock_free(void *);
+bool aura_adblock_stats(const char *, uint64_t *, uint64_t *, uint64_t *);
 bool aura_adblock_check(void *, const char *, const char *, const char *);
+int aura_adblock_decision(void *, const char *, const char *, const char *, const char *, char **);
 char *aura_adblock_cosmetics(void *, const char *, const char *, const char *);
 void aura_adblock_string_free(char *);
 }
@@ -80,12 +83,39 @@ Protection::Protection(const std::filesystem::path &root) {
         return;
     rules += '\n';
     rules += read_resource(root / "protection/easyprivacy.txt");
-    engine_ = aura_adblock_new(rules.c_str());
+    install(prepare(rules));
 }
-Protection::~Protection() {
-    if (engine_)
-        aura_adblock_free(engine_);
+Protection::Prepared::~Prepared() {
+    if (handle)
+        aura_adblock_free(handle);
 }
+Protection::RuleStats Protection::inspect(const std::string &rules) {
+    RuleStats stats;
+    if (rules.find('\0') != std::string::npos ||
+        !aura_adblock_stats(rules.c_str(), &stats.network, &stats.cosmetic, &stats.skipped))
+        throw std::runtime_error("Filter rules must be valid UTF-8 text.");
+    return stats;
+}
+std::shared_ptr<Protection::Prepared> Protection::prepare(const std::string &rules) {
+    auto result = std::make_shared<Prepared>();
+    result->stats = inspect(rules);
+    result->handle = aura_adblock_new(rules.c_str());
+    if (!result->handle)
+        throw std::runtime_error("Cannot compile the filter rules.");
+    return result;
+}
+void Protection::install(std::shared_ptr<Prepared> rules) {
+    if (!rules || !rules->handle)
+        throw std::runtime_error("Invalid filter engine.");
+    std::shared_ptr<Prepared> previous;
+    {
+        std::lock_guard lock(mutex_);
+        previous = std::move(compiled_);
+        compiled_ = std::move(rules);
+        engine_ = compiled_->handle;
+    }
+}
+Protection::~Protection() = default;
 void Protection::configure(bool enabled, bool cosmetics, std::string exceptions) {
     std::lock_guard lock(mutex_);
     enabled_ = enabled;
@@ -96,23 +126,42 @@ bool Protection::active(const std::string &url) const {
     std::lock_guard lock(mutex_);
     return engine_ && enabled_ && !site_exception(url, exceptions_);
 }
-bool Protection::block(const std::string &url, const std::string &source, int type) {
+Protection::Decision Protection::decide(const std::string &url, const std::string &source, int type,
+                                        const std::string &method) {
     // Never block top-level navigation, browser/extension pages or local files.
     if (type == 0 || !(url.starts_with("http://") || url.starts_with("https://")) ||
         !(source.starts_with("http://") || source.starts_with("https://")))
-        return false;
+        return {};
     static const char *types[] = {"document", "subdocument", "stylesheet", "script", "image",
                                   "font",     "other",       "object",     "media",  "other",
                                   "other",    "other",       "image",      "xhr",    "ping",
                                   "other",    "other",       "other",      "other",  "other"};
     std::lock_guard lock(mutex_);
     if (!engine_ || !enabled_ || site_exception(source, exceptions_))
-        return false;
-    const bool result = aura_adblock_check(engine_, url.c_str(), source.c_str(),
-                                           type >= 0 && type < 20 ? types[type] : "other");
-    if (result)
+        return {};
+    char *rewritten = nullptr;
+    const int result = aura_adblock_decision(engine_, url.c_str(), source.c_str(),
+                                             type >= 0 && type < 20 ? types[type] : "other",
+                                             method.c_str(), &rewritten);
+    Decision decision;
+    if (result >= 1 && result <= 4) {
+        decision.action = static_cast<Action>(result);
         ++blocked;
-    return result;
+    }
+    if (rewritten) {
+        std::string changed(rewritten);
+        aura_adblock_string_free(rewritten);
+        const auto base = url.substr(0, url.find_first_of("?#"));
+        if (decision.action == Action::Allow && changed != url && changed.size() <= 32768 &&
+            changed.substr(0, changed.find_first_of("?#")) == base) {
+            decision.rewritten = std::move(changed);
+            ++rewritten_requests;
+        }
+    }
+    return decision;
+}
+bool Protection::block(const std::string &url, const std::string &source, int type) {
+    return decide(url, source, type).action != Action::Allow;
 }
 std::string Protection::selectors(const std::string &url, const std::string &classes,
                                   const std::string &ids) {

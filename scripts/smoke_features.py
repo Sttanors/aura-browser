@@ -23,7 +23,7 @@ def main():
     out=ROOT/'artifacts/features-smoke';out.mkdir(parents=True,exist_ok=True)
     profile=out/'profile'
     if profile.exists():shutil.rmtree(profile)
-    profile.mkdir();(profile/'profile.toml').write_text('language="ru"\ndarkreader_mode="on"\nrestore=false\ndefault_font_size=20\nminimum_font_size=8\nfont_family="mono"\n',encoding='utf-8')
+    profile.mkdir();(profile/'profile.toml').write_text('language="ru"\nfilter_updates=false\ndarkreader_mode="on"\nrestore=false\ndefault_font_size=20\nminimum_font_size=8\nfont_family="mono"\n',encoding='utf-8')
     results=[]
     with ThreadingHTTPServer(('127.0.0.2',0),partial(Handler,directory=str(ROOT/'tests/fixtures'))) as server:
         worker=threading.Thread(target=server.serve_forever,daemon=True);worker.start()

@@ -2,6 +2,7 @@
 #include "common/text_editor.hpp"
 #include "core/browser/devtools.hpp"
 #include "core/browser/extensions.hpp"
+#include "core/browser/filter_lists.hpp"
 #include "core/browser/i18n.hpp"
 #include "core/browser/imports.hpp"
 #include "core/browser/passwords.hpp"
@@ -85,6 +86,9 @@ struct BrowserState {
     UpdateManager updates;
     BrowserImporter importer;
     PasswordManager passwords;
+    std::unique_ptr<FilterLists> filters;
+    std::chrono::steady_clock::time_point filters_after =
+        std::chrono::steady_clock::now() + std::chrono::seconds(30);
     std::shared_ptr<RequestPolicy> policy = std::make_shared<RequestPolicy>();
     CefRefPtr<CefRequestContext> private_context;
     std::vector<BrowserController *> windows;
@@ -129,6 +133,9 @@ class BrowserController {
     UpdateManager &updates;
     BrowserImporter &importer;
     PasswordManager &passwords;
+    FilterLists &filter_lists() {
+        return *state_->filters;
+    }
     void page_login(bool fill, size_t index = 0);
     bool install_update_on_exit = false, restart_on_exit = false;
     void restart();

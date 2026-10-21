@@ -28,7 +28,7 @@ def main():
     profile = output/'profile-кириллица'
     shutil.rmtree(profile, ignore_errors=True)
     profile.mkdir()
-    (profile/'profile.toml').write_text('language="ru"\nrestore=false\n', encoding='utf-8')
+    (profile/'profile.toml').write_text('language="ru"\nfilter_updates=false\nrestore=false\n', encoding='utf-8')
     server = ThreadingHTTPServer(('127.0.0.1', 0), partial(SimpleHTTPRequestHandler, directory=str(ROOT/'tests/fixtures')))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     url = f'http://127.0.0.1:{server.server_port}/browser/a.html'
@@ -111,6 +111,19 @@ def main():
                 else:
                     assert state['settings']['language'] == 'en', 'Language must survive restart'
                     assert state['settings']['ui_zoom'] == 125, 'Interface scale must survive restart'
+                # The filter manager uses the same native input and Unicode profile path.
+                for _ in range(3):
+                    user.SendMessageW(window, 0x100, 27, 1)
+                    user.SendMessageW(window, 0x101, 27, 1)
+                click(read()['interface']['width']-213, 55)
+                click(read()['interface']['width']-190, 263)
+                wait(lambda s: bool(s.get('filters_ui')), 'Native filter list panel must open')
+                rect=read()['filters_ui']['input'];click(rect[0]+20,rect[1]+18)
+                type_text('||ci-example.test^$script')
+                wait(lambda s: (s.get('filters_ui') or {}).get('input_length') == len('||ci-example.test^$script'), 'Native typing must reach the custom filter editor')
+                rect=read()['filters_ui']['save'];click(rect[0]+rect[2]//2,rect[1]+rect[3]//2)
+                wait(lambda s: s['filter_lists']['revision'] > 0 and not s['filter_lists']['busy'], 'Filter engine must compile and persist rules on Windows')
+                assert read()['filters_ui']['custom_count'] == 1
                 # Exercise real additional Win32 windows with the same profile/process.
                 for _ in range(3):
                     user.SendMessageW(window, 0x100, 27, 1)

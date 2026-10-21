@@ -153,9 +153,15 @@ Windows uses its native file dialog; Linux uses `zenity` when installed, with ma
 The **shield** shows blocked requests and per-site controls. Blocking is enabled by default using
 **Brave adblock-rust 0.13.3 + EasyList/EasyPrivacy**. Matching requests are canceled before loading;
 cosmetic filters also hide dynamically inserted elements. Filter exceptions are respected.
-Lists are bundled snapshots, with sources/checksums in `resources/protection/dependencies.json`.
-Automatic list updates, advanced scriptlets, procedural filters and redirect-resource substitution
-are not implemented. Blocking every ad, including embedded video ads, is not guaranteed.
+Bundled list sources/checksums are in `resources/protection/dependencies.json`.
+**Current source builds** add **Filter lists** in the shield/settings menu: manual and optional daily
+EasyList/EasyPrivacy updates, separate list switches, custom rule editing/import and bundled recovery.
+Failed or canceled updates keep the working rules. Private-only launches do not start background checks.
+Supported advanced rules include literal procedural matching, CSS styling, tracking-parameter removal
+on subresources and local noop JS/CSS/transparent-image replacements. Scriptlets, CSP response
+modification, regex/XPath procedural rules and destructive DOM actions remain unsupported.
+See [filter list management](docs/filter-lists.md). These changes are not in the older published installers.
+Blocking every ad, including embedded video ads, is not guaranteed.
 
 Built-in **Dark Reader 4.9.133** offers Off, Always on and Follow Aura theme, plus brightness,
 contrast, sepia and domain exceptions. Changes apply to open pages. Protection scripts run in a separate

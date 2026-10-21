@@ -45,7 +45,7 @@ def main():
     profiles=[out/'profile',out/'target']
     for profile in profiles:
         if profile.exists():shutil.rmtree(profile)
-        profile.mkdir();(profile/'profile.toml').write_text('language="ru"\nrestore=false\ncheck_updates=false\n')
+        profile.mkdir();(profile/'profile.toml').write_text('language="ru"\nfilter_updates=false\nrestore=false\ncheck_updates=false\n')
     master='fictional master phrase'
     transfer='fictional transfer phrase'
     exported=out/'transfer.aura';exported.unlink(missing_ok=True)

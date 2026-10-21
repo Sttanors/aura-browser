@@ -7,7 +7,7 @@ license = "MPL-2.0"
 [lib]
 crate-type = ["staticlib"]
 [dependencies]
-adblock = { version = "=0.13.3", default-features = false, features = ["embedded-domain-resolver", "full-regex-handling"] }
+adblock = { version = "=0.13.3", default-features = false, features = ["embedded-domain-resolver", "full-regex-handling", "css-validation"] }
 serde_json = "=1.0.149"
 [profile.release]
 opt-level = 3

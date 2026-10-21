@@ -12,7 +12,7 @@ def main():
     out=ROOT/'artifacts/wallpaper-smoke';out.mkdir(parents=True,exist_ok=True)
     profile=out/'profile'
     if profile.exists():shutil.rmtree(profile)
-    profile.mkdir();(profile/'profile.toml').write_text('language="ru"\nrestore=false\nntp_link_1="https://legacy.test/"\nntp_link_2="https://second.test/"\nntp_link_3=""\n')
+    profile.mkdir();(profile/'profile.toml').write_text('language="ru"\nfilter_updates=false\nrestore=false\nntp_link_1="https://legacy.test/"\nntp_link_2="https://second.test/"\nntp_link_3=""\n')
     warm=out/'Тёплый фон.png';cool=out/'Cool background.jpg';bad=out/'oversized.png'
     image=Image.new('RGB',(640,360));image.putdata([(min(245,110+x//5),35+y//5,35+(x+y)//20) for y in range(360) for x in range(640)]);image.resize((6000,4000)).save(warm)
     image=Image.new('RGB',(640,360));image.putdata([(20+x//12,50+y//4,min(250,130+x//6)) for y in range(360) for x in range(640)]);image.resize((7680,4320)).save(cool)

@@ -47,7 +47,7 @@ def main():
     profile = out/'profile'
     if profile.exists(): shutil.rmtree(profile)
     profile.mkdir()
-    (profile/'profile.toml').write_text('language="ru"\nrestore=false\ncheck_updates=false\n'
+    (profile/'profile.toml').write_text('language="ru"\nfilter_updates=false\nrestore=false\ncheck_updates=false\n'
         '[[bookmarks]]\nurl="https://kept.test/"\ntitle="My original title"\ntime=1\n')
     env = {**os.environ, 'HOME': str(home), 'XDG_CONFIG_HOME': str(home/'config'),
            'XDG_DATA_HOME': str(home/'data'), 'XMODIFIERS': '@im=none', 'AURA_BACKGROUND_TEST': '1'}

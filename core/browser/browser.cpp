@@ -139,6 +139,9 @@ BrowserController::BrowserController(std::filesystem::path path, std::filesystem
     resources = font.parent_path().parent_path();
     if (!request_policy->protection)
         request_policy->protection = std::make_shared<Protection>(resources);
+    if (!state_->filters)
+        state_->filters =
+            std::make_unique<FilterLists>(profile.directory, resources, request_policy->protection);
     ui = std::make_unique<BrowserUi>(*this, font);
     WindowCallbacks hooks;
     hooks.draw = [this](SkCanvas &canvas) { ui->draw(canvas); };
@@ -320,6 +323,18 @@ void BrowserController::defer(std::function<void()> action) {
 void BrowserController::tick() {
     if (background_updates_ && profile.check_updates && updates.due())
         updates.check();
+    auto &filters = filter_lists();
+    if (background_updates_ && profile.adblock && profile.filter_updates &&
+        std::chrono::steady_clock::now() >= state_->filters_after && filters.due())
+        filters.check();
+    const auto filter_revision = filters.revision;
+    if (filters.tick()) {
+        if (filters.revision != filter_revision)
+            for (auto *other : state_->windows)
+                for (auto &t : other->tabs)
+                    other->update_site_tools(*t);
+        changed();
+    }
     const bool password_changed = passwords.tick();
     if (password_changed || password_generation_seen_ != passwords.generation) {
         password_generation_seen_ = passwords.generation;
@@ -721,7 +736,8 @@ void BrowserController::answer_dialog(bool accept) {
     changed();
 }
 void BrowserController::restart() {
-    if (quitting || extensions.busy || passwords.busy || importer.busy || updates.busy()) {
+    if (quitting || extensions.busy || passwords.busy || importer.busy || updates.busy() ||
+        filter_lists().busy()) {
         ui->toast(tr("Finish the current operation before restarting."));
         return;
     }
@@ -817,6 +833,7 @@ void BrowserController::prepare_shutdown() {
     passwords.shutdown();
     updates.shutdown();
     extensions.shutdown();
+    filter_lists().shutdown();
     detach_window();
     private_context_ = nullptr;
 }
@@ -839,6 +856,7 @@ void BrowserController::new_window(bool private_mode, std::string url) {
         state_->pending_windows.push_back({private_mode, {}, std::move(url)});
 }
 void BrowserController::restore_window(const SavedWindow &saved) {
+    background_updates_ = !private_window;
     restoring_ = true;
     for (const auto &t : saved.tabs)
         new_tab(t.url, false, false, t.pinned);
@@ -925,8 +943,10 @@ std::string BrowserController::report() const {
         << ",\"private_window\":" << (private_window ? "true" : "false")
         << ",\"panel\":" << static_cast<int>(ui->visible_panel())
         << ",\"blocked_requests\":" << request_policy->protection->blocked.load()
+        << ",\"rewritten_requests\":" << request_policy->protection->rewritten_requests.load()
         << ",\"adblock_ready\":" << (request_policy->protection->ready() ? "true" : "false")
-        << ",\"extensions\":" << extensions.report()
+        << ",\"extensions\":" << extensions.report() << ",\"filters_ui\":" << ui->filters_report()
+        << ",\"filter_lists\":" << state_->filters->report()
         << ",\"extensions_ui\":" << ui->extensions_report()
         << ",\"extension_popup\":" << ui->extension_popup_report()
         << ",\"extension_toolbar\":" << ui->extension_toolbar_report()
