@@ -266,6 +266,7 @@ InstalledExtension manifest(const std::filesystem::path &dir, const std::string 
     m->SetString("key", key); // Preserve the signed Web Store ID when loading unpacked in CEF.
     std::ofstream out(dir / "manifest.json", std::ios::binary);
     out << CefWriteJSON(value, JSON_WRITER_PRETTY_PRINT).ToString();
+    out.flush();
     if (!out)
         throw std::runtime_error("Cannot save verified manifest");
     return e;
@@ -484,6 +485,7 @@ void ExtensionManager::save() const {
     {
         std::ofstream out(temporary);
         out << toml::table{{"extensions", list}};
+        out.flush();
         if (!out)
             throw std::runtime_error("Cannot save extension registry");
     }

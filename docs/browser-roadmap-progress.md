@@ -289,3 +289,18 @@ CEF 154, отдельный CPU display. Лог: `artifacts/build/extensions-eng
 надпись обновления сокращена до «Обновить». Описание и ограничения:
 `docs/extensions-lifecycle.md`. Проверки прежних функций и Windows ещё идут;
 пункт 4 пока не закрыт.
+
+Окончательные Linux-регрессии пункта 4 — **PASS**:
+
+- `extensions-button-tests.log`: 70/70 CTest; `extensions-python-tests.log`: 18/18 Python.
+- `extensions-button-gui.log`: полный цикл реального worker и restart повторён
+  после исправления надписей. Просмотрены update-buttons-ru-900 и
+  pending-buttons-en-900: названия кнопок помещаются. RU/EN, 1360×900 и 900×620.
+- `extensions-features-regression.log`: сеть/косметика/Dark Reader,
+  popup overlay/ввод/размер/масштаб, pin, private context, отключение/удаление
+  и настоящая загрузка из Chrome Web Store.
+- `extensions-updates-regression.log`, `extensions-import-regression.log`,
+  `extensions-passwords-regression.log`: пункты 1–3 повторно прошли GUI.
+
+Commits реализации: `6ee8ad6`, `97a852e`. Windows CI `39552056590` и окончательный
+`39552228240` ещё выполняются. До их результата пункт 4 остаётся в работе.
