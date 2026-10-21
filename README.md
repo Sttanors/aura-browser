@@ -181,6 +181,11 @@ pages have been exercised. CEF OSR/Alloy does not provide Chrome's full toolbar 
 partially. Full Chrome Web Store compatibility is not claimed. MV2 is rejected with an explanation.
 Extensions are available only to the regular profile.
 
+Normal windows share a profile; private windows share temporary storage until the last private tab/window closes.
+The Aura logo menu includes window commands and restoration of the previous normal session. After an interrupted
+exit, Aura offers recovery. Sessions preserve window/tab order, selection and pinning, and exclude private URLs.
+See [windows and sessions](docs/windows-and-sessions.md). These changes require a source build after `v0.2.0-preview.3.1`.
+
 ## Keyboard shortcuts
 
 | Shortcut | Action |
@@ -189,7 +194,8 @@ Extensions are available only to the regular profile.
 | Ctrl T / Ctrl W / Ctrl Shift T | New / close / restore tab |
 | Ctrl Tab / Ctrl Shift Tab | Next / previous tab |
 | Ctrl 1…8 / Ctrl 9 | Select tab / last tab |
-| Ctrl Shift N | New private tab |
+| Ctrl N / Ctrl Shift N | New window / private window |
+| Ctrl Alt N | New private tab |
 | Alt ← / Alt → | Back / forward |
 | Ctrl R or F5 / Ctrl Shift R | Reload/stop / reload without cache |
 | Ctrl + / Ctrl − / Ctrl 0 | Site zoom, or independent start-page zoom |
@@ -203,7 +209,7 @@ Extensions are available only to the regular profile.
 | Tab / Shift Tab | Navigate controls in open panel |
 | Enter / Space | Activate focused native control |
 | Page Up / Page Down / Home / End | Scroll open panel |
-| Ctrl Q / Ctrl Shift W | Close browser |
+| Ctrl Q / Ctrl Shift W | Exit Aura / close window |
 
 Right-click a tab for pin/mute/duplicate/close; middle-click closes it.
 The caption and borders move/resize the window; native caption controls minimize, maximize and close.

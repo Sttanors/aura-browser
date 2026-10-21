@@ -118,12 +118,25 @@ class ToolsClient final : public CefClient, public CefLifeSpanHandler {
     IMPLEMENT_REFCOUNTING(ToolsClient);
 };
 } // namespace
+BrowserState::BrowserState(const std::filesystem::path &path)
+    : profile(path), extensions(path), updates(path), passwords(path / "passwords.aura") {
+    previous_windows = profile.windows;
+    if (previous_windows.empty() && !profile.session.empty())
+        previous_windows.push_back({profile.session, profile.active});
+    unclean_start = !profile.session_clean;
+    profile.session_clean = false;
+}
 BrowserController::BrowserController(std::filesystem::path path, std::filesystem::path font,
-                                     double factor, bool accelerated)
-    : profile(std::move(path)), scale(factor), extensions(profile.directory),
-      updates(profile.directory), passwords(profile.directory / "passwords.aura") {
+                                     double factor, bool accelerated,
+                                     std::shared_ptr<BrowserState> shared, bool private_mode)
+    : state_(shared ? std::move(shared) : std::make_shared<BrowserState>(path)),
+      profile(state_->profile), private_window(private_mode), scale(factor),
+      extensions(state_->extensions), updates(state_->updates), importer(state_->importer),
+      passwords(state_->passwords), request_policy(state_->policy),
+      private_context_(state_->private_context) {
     resources = font.parent_path().parent_path();
-    request_policy->protection = std::make_shared<Protection>(resources);
+    if (!request_policy->protection)
+        request_policy->protection = std::make_shared<Protection>(resources);
     ui = std::make_unique<BrowserUi>(*this, font);
     WindowCallbacks hooks;
     hooks.draw = [this](SkCanvas &canvas) { ui->draw(canvas); };
@@ -160,8 +173,11 @@ BrowserController::BrowserController(std::filesystem::path path, std::filesystem
     hooks.close = [this] { request_quit(); };
     window = std::make_unique<BrowserWindow>(width, height, scale, std::move(hooks), accelerated,
                                              profile.ui_zoom / 100.0);
+    state_->windows.push_back(this);
 }
-BrowserController::~BrowserController() = default;
+BrowserController::~BrowserController() {
+    std::erase(state_->windows, this);
+}
 std::string BrowserController::tr(std::string_view english) const {
     return translate(profile.language, english);
 }
@@ -188,7 +204,11 @@ void BrowserController::configure_permissions(CefRefPtr<CefRequestContext> conte
                                profile.block_popups ? CEF_CONTENT_SETTING_VALUE_BLOCK
                                                     : CEF_CONTENT_SETTING_VALUE_ALLOW);
 }
-void BrowserController::apply_settings(bool update_zoom) {
+void BrowserController::apply_settings(bool update_zoom, bool propagate) {
+    if (propagate)
+        for (auto *other : state_->windows)
+            if (other != this && !other->quitting)
+                other->apply_settings(update_zoom, false);
     window->interface_zoom(profile.ui_zoom / 100.0);
     close_menu();
     request_policy->protection->configure(profile.adblock, profile.cosmetic_filtering,
@@ -234,13 +254,22 @@ void BrowserController::open_new_tab(bool private_tab) {
             private_tab);
 }
 void BrowserController::start(const std::string &initial, bool private_mode, bool resume_once) {
+    private_window = private_window || private_mode;
+    private_mode = private_window;
     background_updates_ = !private_mode;
     apply_settings();
     if (private_mode)
         new_tab(initial.empty() ? "aura://newtab" : initial, true);
     else if (!initial.empty())
         new_tab(initial);
-    else if ((profile.restore || resume_once) && !profile.session.empty()) {
+    else if ((profile.restore || resume_once) && !profile.windows.empty()) {
+        state_->previous_restored = true;
+        const auto saved = profile.windows;
+        restore_window(saved.front());
+        for (size_t i = 1; i < saved.size(); ++i)
+            state_->pending_windows.push_back({false, saved[i], ""});
+    } else if ((profile.restore || resume_once) && !profile.session.empty()) {
+        state_->previous_restored = true;
         auto saved = profile.session;
         int selected = profile.active;
         restoring_ = true;
@@ -250,12 +279,28 @@ void BrowserController::start(const std::string &initial, bool private_mode, boo
         activate(std::min(selected, static_cast<int>(tabs.size()) - 1));
     } else
         new_tab(profile.startup_page == "home" ? profile.home_page : "aura://newtab");
+    if (!private_mode && state_->windows.size() == 1 && state_->unclean_start &&
+        !state_->previous_restored && !state_->previous_windows.empty()) {
+        state_->recovery_pending = true;
+        BrowserDialog dialog;
+        dialog.owned = true;
+        dialog.origin = tr("Restore interrupted session?");
+        dialog.message = tr("Reopen your previous normal windows? Private tabs are excluded.");
+        dialog.action = [this](bool accept, const std::string &) {
+            state_->recovery_pending = false;
+            if (accept)
+                restore_previous_session();
+            changed(true);
+        };
+        dialogs.push_back(std::move(dialog));
+    }
     if (!private_mode && profile.check_updates && updates.due())
         updates.check();
 }
 void BrowserController::changed(bool persistent) {
-    if (window)
-        window->invalidate();
+    for (auto *other : state_->windows)
+        if (other->window)
+            other->window->invalidate();
     if (persistent) {
         needs_save_ = true;
         save_at_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(350);
@@ -267,10 +312,14 @@ void BrowserController::defer(std::function<void()> action) {
 void BrowserController::tick() {
     if (background_updates_ && profile.check_updates && updates.due())
         updates.check();
-    if (passwords.tick()) {
+    const bool password_changed = passwords.tick();
+    if (password_changed || password_generation_seen_ != passwords.generation) {
+        password_generation_seen_ = passwords.generation;
         if (!passwords.vault.unlocked()) {
-            ui->passwords_locked();
-            std::erase_if(dialogs, [](const auto &d) { return d.sensitive; });
+            for (auto *other : state_->windows) {
+                other->ui->passwords_locked();
+                std::erase_if(other->dialogs, [](const auto &d) { return d.sensitive; });
+            }
         }
         changed();
     }
@@ -320,6 +369,14 @@ void BrowserController::tick() {
         open_new_tab();
     else if (!quitting && current() && current()->id != old_active_id)
         activate(active);
+    if (private_context_) {
+        bool private_alive = false;
+        for (const auto *other : state_->windows)
+            for (const auto &t : other->tabs)
+                private_alive = private_alive || (t->private_tab && !t->page.closed);
+        if (!private_alive)
+            private_context_ = nullptr;
+    }
     if (ui->tick())
         changed();
     if (needs_save_ && !quitting && std::chrono::steady_clock::now() >= save_at_) {
@@ -414,6 +471,7 @@ void BrowserController::ensure_browser(Tab &t, const std::string &url) {
 void BrowserController::new_tab(std::string input, bool private_tab, bool foreground, bool pinned) {
     if (quitting)
         return;
+    private_tab = private_tab || private_window;
     std::string url;
     try {
         url = navigation_url(std::move(input), profile.search_engine);
@@ -464,7 +522,7 @@ void BrowserController::close_tab(int index) {
     if (index < 0 || index >= static_cast<int>(tabs.size()))
         return;
     auto &t = *tabs[index];
-    if (profile.quit_last_tab && !quitting &&
+    if ((profile.quit_last_tab || private_window) && !quitting &&
         std::count_if(tabs.begin(), tabs.end(), [](auto &t) { return !t->closing; }) == 1) {
         request_quit();
         return;
@@ -628,6 +686,7 @@ void BrowserController::close_menu() {
     auto callback = std::move(menu_callback);
     menu_action = {};
     menu.clear();
+    menu_width = 240;
     if (callback)
         callback->Cancel();
     changed();
@@ -665,7 +724,7 @@ void BrowserController::restart() {
                            return;
                        }
                        restart_on_exit = true;
-                       request_quit(true);
+                       request_exit(true);
                    });
 }
 void BrowserController::request_quit(bool force) {
@@ -684,6 +743,11 @@ void BrowserController::request_quit(bool force) {
     }
     close_menu();
     quit_snapshot_ = tabs_json(tabs);
+    const bool another_normal =
+        std::any_of(state_->windows.begin(), state_->windows.end(),
+                    [this](auto *w) { return w != this && !w->quitting && !w->private_window; });
+    if (!state_->exiting && another_normal)
+        quitting = true;
     try {
         save_session();
     } catch (const std::exception &e) {
@@ -709,8 +773,22 @@ bool BrowserController::finished() {
         std::all_of(closing_popups_.begin(), closing_popups_.end(),
                     [](const auto &p) { return p->page.closed; }) &&
         std::all_of(tabs.begin(), tabs.end(), [](auto &t) { return t->page.closed; });
-    if (browsers_closed && !cleanup_started_) {
-        cleanup_started_ = true;
+    const bool all_closed =
+        std::all_of(state_->windows.begin(), state_->windows.end(), [](auto *w) {
+            return w->quitting && w->tools_open == 0 && !w->extension_popup &&
+                   std::all_of(w->closing_popups_.begin(), w->closing_popups_.end(),
+                               [](const auto &p) { return p->page.closed; }) &&
+                   std::all_of(w->tabs.begin(), w->tabs.end(),
+                               [](const auto &t) { return t->page.closed; });
+        });
+    if (browsers_closed && all_closed && !state_->cleanup_started) {
+        state_->cleanup_started = true;
+        profile.session_clean = true;
+        try {
+            profile.save();
+        } catch (const std::exception &e) {
+            spdlog::error("{}", e.what());
+        }
         if (profile.clear_history_exit) {
             profile.history.clear();
             try {
@@ -729,6 +807,11 @@ void BrowserController::prepare_shutdown() {
     passwords.shutdown();
     updates.shutdown();
     extensions.shutdown();
+    detach_window();
+    private_context_ = nullptr;
+}
+void BrowserController::detach_window() {
+    ui->passwords_locked();
     closing_popups_.clear();
     extension_popup.reset();
     close_menu();
@@ -740,19 +823,82 @@ void BrowserController::prepare_shutdown() {
         t->client = nullptr;
     }
     tabs.clear();
-    private_context_ = nullptr;
+}
+void BrowserController::new_window(bool private_mode, std::string url) {
+    if (!state_->exiting)
+        state_->pending_windows.push_back({private_mode, {}, std::move(url)});
+}
+void BrowserController::restore_window(const SavedWindow &saved) {
+    restoring_ = true;
+    for (const auto &t : saved.tabs)
+        new_tab(t.url, false, false, t.pinned);
+    restoring_ = false;
+    if (tabs.empty())
+        open_new_tab();
+    activate(std::clamp(saved.active, 0, int(tabs.size()) - 1));
+}
+void BrowserController::restore_previous_session() {
+    if (state_->previous_restored || state_->previous_windows.empty())
+        return;
+    state_->previous_restored = true;
+    size_t first = 0;
+    if (!private_window && tabs.size() == 1 && tabs.front()->ntp && !tabs.front()->browser) {
+        tabs.clear();
+        restore_window(state_->previous_windows.front());
+        first = 1;
+    }
+    for (size_t i = first; i < state_->previous_windows.size(); ++i)
+        state_->pending_windows.push_back({false, state_->previous_windows[i], ""});
+}
+void BrowserController::request_exit(bool force) {
+    if (!force && profile.confirm_quit) {
+        confirm_action(tr("Close Aura?"),
+                       tr("All windows will close. Private tabs will not be saved."),
+                       [this] { request_exit(true); });
+        return;
+    }
+    try {
+        save_session();
+    } catch (const std::exception &e) {
+        if (!force) {
+            ui->toast(tr(e.what()));
+            return;
+        }
+        spdlog::error("Could not save all windows: {}", e.what());
+    }
+    state_->session_frozen = true;
+    state_->exiting = true;
+    state_->pending_windows.clear();
+    for (auto *other : state_->windows)
+        if (!other->quitting)
+            other->request_quit(true);
 }
 void BrowserController::save_session() {
-    profile.session.clear();
-    int index = 0;
-    profile.active = 0;
-    for (auto &t : tabs)
-        if (!t->private_tab && !t->closing) {
-            profile.session.push_back({t->page.url, t->pinned});
-            if (t.get() == current())
-                profile.active = index;
-            ++index;
+    if (!state_->session_frozen && !state_->recovery_pending) {
+        std::vector<SavedWindow> saved;
+        for (const auto *other : state_->windows) {
+            if (other->private_window || other->quitting)
+                continue;
+            SavedWindow window;
+            for (const auto &t : other->tabs)
+                if (!t->private_tab && !t->closing) {
+                    if (t.get() == (other->active >= 0 && other->active < int(other->tabs.size())
+                                        ? other->tabs[other->active].get()
+                                        : nullptr))
+                        window.active = int(window.tabs.size());
+                    window.tabs.push_back(
+                        {t->pending_url.empty() ? t->page.url : t->pending_url, t->pinned});
+                }
+            if (!window.tabs.empty())
+                saved.push_back(std::move(window));
         }
+        // A private-only remainder must not erase the last normal session.
+        if (!saved.empty()) {
+            profile.windows = std::move(saved);
+            profile.session = profile.windows.front().tabs;
+            profile.active = profile.windows.front().active;
+        }
+    }
     profile.save();
 }
 std::string BrowserController::report() const {
@@ -765,6 +911,8 @@ std::string BrowserController::report() const {
         << ",\"interface\":{\"requested\":" << profile.ui_zoom << ",\"applied\":" << ui_scale * 100
         << ",\"device_scale\":" << scale << ",\"width\":" << width << ",\"height\":" << height
         << "}"
+        << ",\"active_tab\":" << active
+        << ",\"private_window\":" << (private_window ? "true" : "false")
         << ",\"panel\":" << static_cast<int>(ui->visible_panel())
         << ",\"blocked_requests\":" << request_policy->protection->blocked.load()
         << ",\"adblock_ready\":" << (request_policy->protection->ready() ? "true" : "false")

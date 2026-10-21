@@ -1,0 +1,8 @@
+<!doctype html><meta charset="utf-8"><title>Window storage</title>
+<h1>Window storage fixture</h1>
+<script>
+const args=new URLSearchParams(location.search);
+if(args.has('set')) {document.cookie='aura_window='+args.get('set')+'; path=/; SameSite=Lax';localStorage.setItem('aura_window',args.get('set'));}
+function report(){document.title=JSON.stringify({cookie:document.cookie,storage:localStorage.getItem('aura_window'),name:args.get('name')});}
+report();setInterval(report,200);
+</script>

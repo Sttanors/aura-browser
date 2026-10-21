@@ -102,7 +102,7 @@ def main():
                         key_at(window,'w',4);expect('Alpha')
                         key_at(window,'t',5);expect('Beta')
                         key_at(window,'Tab',4);expect('Alpha')
-                        key_at(window,'n',5);expect('Private tab')
+                        key_at(window,'n',12);expect('Private tab')
                         navigate(base+'private.html');expect('Private isolated')
                         key_at(window,'w',4);time.sleep(.5)
                         key_at(window,'1',4);expect('Alpha')

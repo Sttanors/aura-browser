@@ -132,7 +132,7 @@ def main():
                         manager();r=state()['extensions_ui']['bounds'];click_at(window,r[0]+320,r[1]+287)
                         wait_until(lambda:any(t['title']=='Aura extension options' for t in state()['tabs']),'Extension options did not open')
                         key_at(window,'w',4);time.sleep(.5)
-                        key_at(window,'n',5);key_at(window,'l',4);type_text(window,url+'?private');key_at(window,'Return')
+                        key_at(window,'n',12);key_at(window,'l',4);type_text(window,url+'?private');key_at(window,'Return')
                         proof_private=probe(lambda p:p.get('url','').endswith('?private') and p['dark'] and p['hidden'],'Private protection failed')
                         assert proof_private['extension'] is None,'Extension ran in a private context without permission'
                         assert proof_private['fonts']['size']=='20px' and proof_private['fonts']['tiny']>=8,proof_private

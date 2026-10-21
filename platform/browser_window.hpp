@@ -30,6 +30,7 @@ class BrowserWindow {
     CefWindowHandle handle() const;
     std::uintptr_t native_id() const;
     void show();
+    void hide();
     void dispatch();
     void paint();
     void wait(int milliseconds);

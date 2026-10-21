@@ -414,6 +414,7 @@ void BrowserUi::draw(SkCanvas &c) {
     fill(c, {16, 88, 208, 40}, 11, SkColorSetA(t.surface, light ? 205 : 150));
     border(c, {16, 88, 208, 40}, 11, SkColorSetA(ink, 18));
     icon(c, "plus", 29, 99, 18, t.accent);
+    focus_target({16, 12, 208, 62});
     label(c, medium_, app_.tr("New tab"), 59, 113, 13, ink);
     label(c, regular_, "Ctrl T", 170, 112, 10, muted);
     label(c, regular_, app_.tr("Tabs"), 24, 161, 12, muted);
@@ -804,7 +805,8 @@ void BrowserUi::draw(SkCanvas &c) {
     }
     if (app_.menu_callback || app_.menu_action) {
         focus_targets_.clear();
-        Rect r{app_.menu_x, app_.menu_y, 240, static_cast<int>(app_.menu.size()) * 32 + 12};
+        Rect r{app_.menu_x, app_.menu_y, app_.menu_width,
+               static_cast<int>(app_.menu.size()) * 32 + 12};
         shadow(c, r, 12);
         fill(c, r, 12, t.surface);
         border(c, r, 12, SkColorSetA(ink, 30));
@@ -819,7 +821,11 @@ void BrowserUi::draw(SkCanvas &c) {
                 if (inside(row, hover_x_, hover_y_) && item.enabled)
                     fill(c, row, 7, SkColorSetA(t.accent, 28));
                 label(c, regular_, item.label, row.x + 13, row.y + 21, 12,
-                      item.enabled ? ink : muted, row.width - 26);
+                      item.enabled ? ink : muted,
+                      row.width - 26 - (item.shortcut.empty() ? 0 : 110));
+                if (!item.shortcut.empty())
+                    label(c, regular_, item.shortcut, row.x + row.width - 110, row.y + 21, 11,
+                          muted, 100);
             }
         }
     }
@@ -1578,7 +1584,7 @@ void BrowserUi::updates_pointer(Rect r, int x, int y) {
                                     "Your profile is kept. Installation starts after Aura closes.",
                                     [this] {
                                         app_.install_update_on_exit = true;
-                                        app_.request_quit(true);
+                                        app_.request_exit(true);
                                     });
             else
                 updates.open_download_folder();
@@ -2543,7 +2549,10 @@ bool BrowserUi::key(const CefKeyEvent &key) {
             return true;
         }
         if (ctrl && code == 'N') {
-            app_.open_new_tab(shift);
+            if (alt)
+                app_.open_new_tab(true);
+            else
+                app_.new_window(shift);
             return true;
         }
         if (ctrl && code == 'W') {
@@ -2554,7 +2563,7 @@ bool BrowserUi::key(const CefKeyEvent &key) {
             return true;
         }
         if (ctrl && code == 'Q') {
-            app_.request_quit();
+            app_.request_exit();
             return true;
         }
         if (ctrl && code == 0x09) {
@@ -2952,7 +2961,8 @@ void BrowserUi::pointer(const PointerInput &input) {
     }
     if (app_.menu_callback || app_.menu_action) {
         if (down) {
-            Rect r{app_.menu_x, app_.menu_y, 240, static_cast<int>(app_.menu.size()) * 32 + 12};
+            Rect r{app_.menu_x, app_.menu_y, app_.menu_width,
+                   static_cast<int>(app_.menu.size()) * 32 + 12};
             if (inside(r, x, y)) {
                 int i = (y - r.y - 6) / 32;
                 if (i >= 0 && i < static_cast<int>(app_.menu.size()) && app_.menu[i].enabled &&
@@ -3088,6 +3098,30 @@ void BrowserUi::pointer(const PointerInput &input) {
         return;
     }
     if (down && x < 240) {
+        if (inside({16, 12, 208, 62}, x, y)) {
+            app_.close_menu();
+            app_.menu = {
+                {1, app_.tr("New window"), true, "Ctrl+N"},
+                {2, app_.tr("New private window"), true, "Ctrl+Shift+N"},
+                {3, app_.tr("Close window"), true, "Ctrl+Shift+W"},
+                {5, app_.tr("Restore previous session"),
+                 !app_.state()->previous_restored && !app_.state()->previous_windows.empty()},
+                {4, app_.tr("Exit Aura"), true, "Ctrl+Q"}};
+            app_.menu_width = 320;
+            app_.menu_x = 16;
+            app_.menu_y = 76;
+            app_.menu_action = [this](int command) {
+                if (command == 1 || command == 2)
+                    app_.new_window(command == 2);
+                else if (command == 3)
+                    app_.request_quit();
+                else if (command == 5)
+                    app_.restore_previous_session();
+                else
+                    app_.request_exit();
+            };
+            return;
+        }
         if (inside({16, 88, 208, 40}, x, y)) {
             app_.open_new_tab(t && t->private_tab);
             return;

@@ -188,6 +188,41 @@ struct TemporaryProfile {
     }
 };
 } // namespace
+TEST(Profile, MultipleWindowsKeepOrderSelectionAndPinnedTabs) {
+    TemporaryProfile temp;
+    Profile original(temp.path);
+    original.windows = {{{{"https://one.test/", true}, {"https://two.test/", false}}, 1},
+                        {{{"https://three.test/", false}}, 0}};
+    original.save();
+    Profile restored(temp.path);
+    ASSERT_EQ(restored.windows.size(), 2);
+    ASSERT_EQ(restored.windows[0].tabs.size(), 2);
+    EXPECT_EQ(restored.windows[0].active, 1);
+    EXPECT_TRUE(restored.windows[0].tabs[0].pinned);
+    EXPECT_EQ(restored.windows[1].tabs[0].url, "https://three.test/");
+}
+TEST(Profile, SessionWindowReaderRejectsUnsupportedUrlsAndClampsSelection) {
+    TemporaryProfile temp;
+    std::ofstream(temp.path / "profile.toml") << R"TOML(schema=5
+[[windows]]
+active=999
+[[windows.tabs]]
+url="javascript:alert(1)"
+[[windows.tabs]]
+url="https://kept.test/"
+pinned=true
+[[windows]]
+active=-2
+[[windows.tabs]]
+url="data:text/html,no"
+)TOML";
+    Profile restored(temp.path);
+    ASSERT_EQ(restored.windows.size(), 1);
+    ASSERT_EQ(restored.windows[0].tabs.size(), 1);
+    EXPECT_EQ(restored.windows[0].active, 0);
+    EXPECT_EQ(restored.windows[0].tabs[0].url, "https://kept.test/");
+    EXPECT_TRUE(restored.windows[0].tabs[0].pinned);
+}
 TEST(Navigation, SelectedEngineEncodesQueriesAndLeavesAddressesAlone) {
     EXPECT_EQ(navigation_url("hello & мир", "google"),
               "https://www.google.com/search?q=hello%20%26%20%D0%BC%D0%B8%D1%80");

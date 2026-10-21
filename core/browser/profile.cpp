@@ -1,6 +1,6 @@
-#include "common/platform.hpp"
 #include "core/browser/profile.hpp"
 #include "common/config.hpp"
+#include "common/platform.hpp"
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -128,9 +128,11 @@ void Profile::load() {
         }
     }
     active = std::max(0, table["active"].value_or(0));
+    session_clean = table["session_clean"].value_or(true);
     history.clear();
     bookmarks.clear();
     session.clear();
+    windows.clear();
     auto read = [&](const char *key, std::vector<Visit> &target) {
         if (auto a = table[key].as_array())
             for (auto &node : *a)
@@ -149,11 +151,39 @@ void Profile::load() {
             if (auto t = n.as_table())
                 session.push_back({(*t)["url"].value_or(std::string("aura://newtab")),
                                    (*t)["pinned"].value_or(false)});
+    if (auto entries = table["windows"].as_array())
+        for (const auto &node : *entries) {
+            if (windows.size() >= 32)
+                break;
+            if (auto row = node.as_table()) {
+                SavedWindow window;
+                window.active = std::max(0, (*row)["active"].value_or(0));
+                if (auto tabs = (*row)["tabs"].as_array())
+                    for (const auto &tab : *tabs) {
+                        if (window.tabs.size() >= 500)
+                            break;
+                        if (auto item = tab.as_table()) {
+                            auto url = (*item)["url"].value_or(std::string{});
+                            try {
+                                if (!url.empty())
+                                    window.tabs.push_back(
+                                        {navigation_url(url), (*item)["pinned"].value_or(false)});
+                            } catch (const std::exception &) {
+                            }
+                        }
+                    }
+                if (!window.tabs.empty()) {
+                    window.active = std::min(window.active, int(window.tabs.size()) - 1);
+                    windows.push_back(std::move(window));
+                }
+            }
+        }
 }
 void Profile::save() const {
     toml::table root;
-    root.insert("schema", 4);
+    root.insert("schema", 5);
     root.insert("active", active);
+    root.insert("session_clean", session_clean);
     for (const auto &setting : settings_catalog())
         std::visit([&](auto member) { root.insert(setting.id, this->*member); }, setting.member);
     auto list = [](const std::vector<Visit> &values) {
@@ -172,6 +202,15 @@ void Profile::save() const {
     for (auto &t : session)
         tabs.push_back(toml::table{{"url", t.url}, {"pinned", t.pinned}});
     root.insert("session", std::move(tabs));
+    toml::array saved_windows;
+    for (const auto &window : windows) {
+        toml::array saved_tabs;
+        for (const auto &t : window.tabs)
+            saved_tabs.push_back(toml::table{{"url", t.url}, {"pinned", t.pinned}});
+        saved_windows.push_back(
+            toml::table{{"active", window.active}, {"tabs", std::move(saved_tabs)}});
+    }
+    root.insert("windows", std::move(saved_windows));
     const auto temporary = directory / "profile.toml.tmp";
     {
         std::ofstream file(temporary);

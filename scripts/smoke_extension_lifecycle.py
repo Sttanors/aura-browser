@@ -81,7 +81,7 @@ def main():
                 r=state()['extensions_ui']['bounds'];click_at(window,r[0]+r[2]-92,r[1]+234);time.sleep(.3)
                 key_at(window,'Escape');key_at(window,'t',4);key_at(window,'l',4);type_text(window,base+'a.html');key_at(window,'Return')
                 wait_until(lambda:len(state()['tabs'])==2 and state()['tabs'][1]['url']==base+'a.html','No second normal tab')
-                key_at(window,'n',5);key_at(window,'l',4);type_text(window,base+'private.html');key_at(window,'Return');wait_until(lambda:any(t['private'] for t in state()['tabs']),'No private tab')
+                key_at(window,'n',12);key_at(window,'l',4);type_text(window,base+'private.html');key_at(window,'Return');wait_until(lambda:any(t['private'] for t in state()['tabs']),'No private tab')
                 manager();restart(cancel=True);restart()
                 probe(lambda p:p['extension'] and p['extension'].get('worker'))
                 assert state()['extensions']['items'][0]['pinned']

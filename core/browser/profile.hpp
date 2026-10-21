@@ -21,12 +21,17 @@ struct SavedTab {
     std::string url;
     bool pinned = false;
 };
+struct SavedWindow {
+    std::vector<SavedTab> tabs;
+    int active = 0;
+};
 class Profile : public BrowserPreferences {
   public:
     explicit Profile(std::filesystem::path directory);
     std::filesystem::path directory;
     std::vector<Visit> history, bookmarks;
     std::vector<SavedTab> session;
+    std::vector<SavedWindow> windows;
     std::vector<Shortcut> shortcuts = {{"Wikipedia", "https://www.wikipedia.org/"},
                                        {"GitHub", "https://github.com/"},
                                        {"MDN Web Docs", "https://developer.mozilla.org/"}};
@@ -36,6 +41,7 @@ class Profile : public BrowserPreferences {
     void move_shortcut(size_t from, size_t to);
     void remove_shortcut(size_t index);
     int active = 0;
+    bool session_clean = true;
     void prune_history();
     void load();
     void save() const;

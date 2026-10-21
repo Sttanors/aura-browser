@@ -109,7 +109,7 @@ def main():
                             navigate(f'http://127.0.0.1:{http.server_port}/login');open_panel();click(ui()['rows'][0]);button('fill');time.sleep(.6);assert Handler.probes[-1]['password']==''
                             navigate(f'https://localhost:{https.server_port}/login');open_panel();click(ui()['rows'][0]);button('fill');time.sleep(.6);assert Handler.probes[-1]['password']==''
                             navigate(base+'/iframe');open_panel();click(ui()['rows'][0]);button('fill');time.sleep(.6);assert Handler.probes[-1]['password']==''
-                            key_at(window,'Escape');key_at(window,'Escape');key_at(window,'n',5);navigate(base+'/login');open_panel();click(ui()['rows'][0]);button('fill');time.sleep(.6);assert Handler.probes[-1]['password']==''
+                            key_at(window,'Escape');key_at(window,'Escape');key_at(window,'n',12);navigate(base+'/login');open_panel();click(ui()['rows'][0]);button('fill');time.sleep(.6);assert Handler.probes[-1]['password']==''
                             key_at(window,'Escape');key_at(window,'Escape');key_at(window,'w',4);navigate(base+'/preset');open_panel();button('capture');wait_until(lambda:state()['dialog_count']==1,'No save confirmation');key_at(window,'Return');done(2)
                             shot('ru-list.png');button('lock');wait_until(lambda:ui()['locked'],'Vault did not lock');assert ui()['count']==0
                         elif launch==1:

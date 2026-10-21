@@ -70,13 +70,46 @@ struct MenuEntry {
     int id = 0;
     std::string label;
     bool enabled = true;
+    std::string shortcut;
+};
+class BrowserController;
+struct WindowRequest {
+    bool private_mode = false;
+    std::optional<SavedWindow> saved;
+    std::string url;
+};
+struct BrowserState {
+    explicit BrowserState(const std::filesystem::path &path);
+    Profile profile;
+    ExtensionManager extensions;
+    UpdateManager updates;
+    BrowserImporter importer;
+    PasswordManager passwords;
+    std::shared_ptr<RequestPolicy> policy = std::make_shared<RequestPolicy>();
+    CefRefPtr<CefRequestContext> private_context;
+    std::vector<BrowserController *> windows;
+    std::deque<WindowRequest> pending_windows;
+    std::vector<SavedWindow> previous_windows;
+    bool previous_restored = false, unclean_start = false, recovery_pending = false;
+    bool exiting = false, session_frozen = false, cleanup_started = false;
 };
 class BrowserController {
+    std::shared_ptr<BrowserState> state_;
+
   public:
     BrowserController(std::filesystem::path profile_path, std::filesystem::path font, double scale,
-                      bool accelerated = false);
+                      bool accelerated = false, std::shared_ptr<BrowserState> shared = {},
+                      bool private_window = false);
     ~BrowserController();
-    Profile profile;
+    Profile &profile;
+    bool private_window = false;
+    std::shared_ptr<BrowserState> state() const {
+        return state_;
+    }
+    void new_window(bool private_mode = false, std::string url = "");
+    void restore_window(const SavedWindow &saved);
+    void restore_previous_session();
+    void request_exit(bool force = false);
     std::unique_ptr<BrowserWindow> window;
     std::unique_ptr<BrowserUi> ui;
     std::vector<std::unique_ptr<Tab>> tabs;
@@ -85,23 +118,23 @@ class BrowserController {
     std::vector<MenuEntry> menu;
     CefRefPtr<CefRunContextMenuCallback> menu_callback;
     std::function<void(int)> menu_action;
-    int menu_x = 0, menu_y = 0;
+    int menu_x = 0, menu_y = 0, menu_width = 240;
     int active = 0, width = 1360, height = 900;
     double scale = 1, ui_scale = 1;
     bool quitting = false;
     int find_matches = 0, find_active = 0, tools_open = 0;
     std::map<std::string, int> audit;
-    ExtensionManager extensions;
-    UpdateManager updates;
-    BrowserImporter importer;
-    PasswordManager passwords;
+    ExtensionManager &extensions;
+    UpdateManager &updates;
+    BrowserImporter &importer;
+    PasswordManager &passwords;
     void page_login(bool fill, size_t index = 0);
     bool install_update_on_exit = false, restart_on_exit = false;
     void restart();
     void refresh_extension_state();
     std::shared_ptr<ExtensionPopup> extension_popup;
     std::filesystem::path resources;
-    std::shared_ptr<RequestPolicy> request_policy = std::make_shared<RequestPolicy>();
+    std::shared_ptr<RequestPolicy> request_policy;
     Tab *current();
     Tab *tab(int id);
     void start(const std::string &initial, bool private_mode, bool resume_once = false);
@@ -128,7 +161,14 @@ class BrowserController {
     void request_quit(bool force = false);
     bool finished();
     void prepare_shutdown();
+    void detach_window();
     void save_session();
+    int created_count() const {
+        return created_;
+    }
+    int closed_count() const {
+        return closed_;
+    }
     std::string report() const;
     void defer(std::function<void()> action);
     void browser_created(int id, CefRefPtr<CefBrowser> browser);
@@ -145,7 +185,7 @@ class BrowserController {
     void open_folder();
     void open_directory(const std::filesystem::path &directory);
     std::string tr(std::string_view english) const;
-    void apply_settings(bool update_zoom = false);
+    void apply_settings(bool update_zoom = false, bool propagate = true);
     void configure_font_preferences(CefRefPtr<CefRequestContext> context);
     void setup_site_tools(int id, std::function<void()> ready);
     void update_site_tools(Tab &tab);
@@ -171,13 +211,14 @@ class BrowserController {
     std::vector<std::shared_ptr<ExtensionPopup>> closing_popups_;
     std::map<std::string, PaintBuffer> extension_icons_;
     int next_id_ = 1, created_ = 0, closed_ = 0;
-    CefRefPtr<CefRequestContext> private_context_;
+    CefRefPtr<CefRequestContext> &private_context_;
     std::vector<SavedTab> recently_closed_;
     std::vector<std::filesystem::path> download_paths_;
     std::vector<std::function<void()>> pending_;
     std::string quit_snapshot_;
     std::chrono::steady_clock::time_point save_at_ = std::chrono::steady_clock::now();
     bool needs_save_ = false;
+    uint64_t password_generation_seen_ = 0;
     bool restoring_ = false, quit_confirmed_ = false, cleanup_started_ = false;
     bool background_updates_ = false;
     int data_tasks_ = 0;

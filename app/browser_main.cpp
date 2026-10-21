@@ -3,6 +3,7 @@
 #include "core/browser/browser.hpp"
 #include "include/base/cef_compiler_specific.h"
 #include "include/cef_command_line.h"
+#include "ui/browser_ui.hpp"
 #include <csignal>
 #include <fstream>
 #include <iostream>
@@ -77,6 +78,36 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
     if (!CefInitialize(args, settings, app, sandbox_info))
         throw std::runtime_error(
             "Chromium could not initialize. Check whether this profile is already open.");
+    std::vector<std::unique_ptr<aura::BrowserController>> additional_windows;
+    std::vector<aura::BrowserController *> hidden_windows;
+    int retired_created = 0, retired_closed = 0;
+    auto group_report = [&] {
+        auto text = browser.report();
+        text.pop_back();
+        text += ",\"windows\":[";
+        bool first = true;
+        for (auto *w : browser.state()->windows) {
+            if (w->finished())
+                continue;
+            if (!first)
+                text += ',';
+            first = false;
+            text += w->report();
+        }
+        int created = retired_created, closed = retired_closed;
+        for (auto *w : browser.state()->windows) {
+            created += w->created_count();
+            closed += w->closed_count();
+        }
+        return text + "],\"cef_created_total\":" + std::to_string(created) +
+               ",\"cef_closed_total\":" + std::to_string(closed) + "}";
+    };
+    auto finished = [&] {
+        bool all = true;
+        for (auto *w : browser.state()->windows)
+            all = w->finished() && all;
+        return all && browser.state()->pending_windows.empty();
+    };
     std::string report;
     const auto report_path =
         command->HasSwitch("report")
@@ -113,38 +144,93 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
         auto last_report = std::chrono::steady_clock::now();
         auto last_pump = std::chrono::steady_clock::now();
         schedule.schedule(0);
-        while (!browser.finished()) {
-            browser.window->dispatch();
+        while (!finished()) {
+            auto shared = browser.state();
+            while (!shared->pending_windows.empty() && !shared->exiting) {
+                auto request = std::move(shared->pending_windows.front());
+                shared->pending_windows.pop_front();
+                if (std::count_if(shared->windows.begin(), shared->windows.end(),
+                                  [](auto *w) { return !w->quitting; }) >= 32) {
+                    browser.ui->toast(browser.tr("Close a window before opening another one."));
+                    continue;
+                }
+                auto child = std::make_unique<aura::BrowserController>(
+                    path, binary / "fonts/InterVariable.ttf", scale, accelerated, shared,
+                    request.private_mode);
+                if (request.saved) {
+                    child->apply_settings();
+                    child->restore_window(*request.saved);
+                } else
+                    child->start(request.url.empty() ? "aura://newtab" : request.url,
+                                 request.private_mode);
+                child->window->show();
+                additional_windows.push_back(std::move(child));
+            }
+            for (auto *w : shared->windows)
+                w->window->dispatch();
             if (schedule.take_due() ||
                 std::chrono::steady_clock::now() - last_pump >= std::chrono::milliseconds(16)) {
                 CefDoMessageLoopWork();
                 last_pump = std::chrono::steady_clock::now();
             }
-            browser.tick();
+            for (auto *w : shared->windows) {
+                if (!w->finished())
+                    w->tick();
+                else if (std::find(hidden_windows.begin(), hidden_windows.end(), w) ==
+                         hidden_windows.end()) {
+                    w->window->hide();
+                    w->detach_window();
+                    hidden_windows.push_back(w);
+                }
+            }
+            for (auto it = additional_windows.begin(); it != additional_windows.end();) {
+                auto *closed = it->get();
+                if (!closed->finished()) {
+                    ++it;
+                    continue;
+                }
+                browser.restart_on_exit = browser.restart_on_exit || closed->restart_on_exit;
+                browser.install_update_on_exit =
+                    browser.install_update_on_exit || closed->install_update_on_exit;
+                retired_created += closed->created_count();
+                retired_closed += closed->closed_count();
+                closed->detach_window();
+                std::erase(hidden_windows, closed);
+                it = additional_windows.erase(it);
+            }
             if (!report_path.empty() &&
                 std::chrono::steady_clock::now() - last_report > std::chrono::milliseconds(250)) {
-                write_report(browser.report());
+                write_report(group_report());
                 last_report = std::chrono::steady_clock::now();
             }
-            browser.window->paint();
+            for (auto *w : shared->windows)
+                if (!w->finished())
+                    w->window->paint();
             browser.window->wait(std::min(16, schedule.wait_ms()));
         }
-        report = browser.report();
-        browser.prepare_shutdown();
+        report = group_report();
+        for (auto *w : browser.state()->windows)
+            w->prepare_shutdown();
         app = nullptr;
         CefShutdown();
     } catch (...) {
-        browser.request_quit(true);
-        while (!browser.finished()) {
+        browser.request_exit(true);
+        while (!finished()) {
             CefDoMessageLoopWork();
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
-        browser.prepare_shutdown();
+        for (auto *w : browser.state()->windows)
+            w->prepare_shutdown();
         app = nullptr;
         CefShutdown();
         throw;
     }
     write_report(report);
+    for (auto *w : browser.state()->windows) {
+        browser.restart_on_exit = browser.restart_on_exit || w->restart_on_exit;
+        browser.install_update_on_exit =
+            browser.install_update_on_exit || w->install_update_on_exit;
+    }
     if (browser.install_update_on_exit && !browser.updates.launch_installer()) {
         spdlog::error("Could not launch the verified Aura installer");
         std::cerr << "Aura: could not launch the verified update installer.\n";

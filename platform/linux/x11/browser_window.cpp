@@ -1,5 +1,5 @@
-#include "common/branding_data.hpp"
 #include "platform/linux/x11/browser_window.hpp"
+#include "common/branding_data.hpp"
 #include "platform/linux/x11/software_presenter.hpp"
 
 #include "include/core/SkCanvas.h"
@@ -660,8 +660,8 @@ BrowserWindow::BrowserWindow(int width, int height, double scale, WindowCallback
     std::vector<unsigned long> brand_icon{64, 64};
     for (const auto pixel : brand::argb)
         brand_icon.push_back(pixel);
-    XChangeProperty(p.display, p.window, p.atom("_NET_WM_ICON"), XA_CARDINAL, 32,
-                    PropModeReplace, reinterpret_cast<const unsigned char *>(brand_icon.data()),
+    XChangeProperty(p.display, p.window, p.atom("_NET_WM_ICON"), XA_CARDINAL, 32, PropModeReplace,
+                    reinterpret_cast<const unsigned char *>(brand_icon.data()),
                     static_cast<int>(brand_icon.size()));
     const unsigned long pid = static_cast<unsigned long>(getpid());
     XChangeProperty(p.display, p.window, p.atom("_NET_WM_PID"), XA_CARDINAL, 32, PropModeReplace,
@@ -726,6 +726,10 @@ void BrowserWindow::interface_zoom(double factor) {
     p.resize(p.pixel_width, p.pixel_height);
 }
 BrowserWindow::~BrowserWindow() = default;
+void BrowserWindow::hide() {
+    XUnmapWindow(impl_->display, impl_->window);
+    XFlush(impl_->display);
+}
 void BrowserWindow::show() {
     XMapWindow(impl_->display, impl_->window);
     XFlush(impl_->display);
@@ -736,7 +740,9 @@ void BrowserWindow::show() {
 CefWindowHandle BrowserWindow::handle() const {
     return impl_->window;
 }
-std::uintptr_t BrowserWindow::native_id() const { return handle(); }
+std::uintptr_t BrowserWindow::native_id() const {
+    return handle();
+}
 void BrowserWindow::invalidate() {
     impl_->dirty = impl_->full_damage = true;
 }

@@ -111,11 +111,30 @@ def main():
                 else:
                     assert state['settings']['language'] == 'en', 'Language must survive restart'
                     assert state['settings']['ui_zoom'] == 125, 'Interface scale must survive restart'
+                # Exercise real additional Win32 windows with the same profile/process.
+                for _ in range(3):
+                    user.SendMessageW(window, 0x100, 27, 1)
+                    user.SendMessageW(window, 0x101, 27, 1)
+                wait(lambda s: s.get('panel') == 0, 'Settings must close before opening the window menu')
+                click(80, 35); click(100, 97)
+                group = wait(lambda s: len(s.get('windows', [])) == 2, 'New window must be a second native window')
+                child = next(w for w in group['windows'] if w['window'] != window)
+                assert user.IsWindow(child['window']) and not child['private_window']
+                assert child['pid'] == group['pid'] and child['settings']['language'] == 'en'
+                assert child['settings']['ui_zoom'] == 125
+                user.SendMessageW(child['window'], 0x10, 0, 0)
+                wait(lambda s: len(s.get('windows', [])) == 1, 'Closing a child must keep the root open')
+                click(80, 35); click(100, 129)
+                group = wait(lambda s: len(s.get('windows', [])) == 2, 'Private native window must open')
+                private = next(w for w in group['windows'] if w['window'] != window)
+                assert private['private_window'] and all(t['private'] for t in private['tabs'])
                 user.SendMessageW(window, 0x10, 0, 0)
+                wait(lambda s: len(s.get('windows', [])) == 1 and s['windows'][0]['window'] == private['window'], 'Private child must survive closing the root')
+                user.SendMessageW(private['window'], 0x10, 0, 0)
                 process.wait(timeout=30)
                 assert process.returncode == 0, process.returncode
                 final = read()
-                assert final['cef_created'] == final['cef_closed'], final
+                assert final['cef_created_total'] == final['cef_closed_total'], final
                 assert (profile/'profile.toml').is_file(), 'Profile must persist'
                 process = None
         (output/'PASS.txt').write_text('PASS: full Win32 browser, Chromium page, Unicode path/input, pointer navigation, native dialog, English, interface scaling, adblock, profile replacement and balanced CEF shutdown.\n')

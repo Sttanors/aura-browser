@@ -27,7 +27,7 @@ class Event(ctypes.Union):
     _fields_ = [("button", ButtonEvent), ("pad", ctypes.c_long * 24)]
 
 
-def click_at(window, x, y):
+def click_at(window, x, y, button=1):
     """Send window-local events; avoid moving the user's global pointer under Wayland."""
     x11 = ctypes.CDLL("libX11.so.6")
     x11.XOpenDisplay.restype = ctypes.c_void_p
@@ -37,10 +37,10 @@ def click_at(window, x, y):
     display = x11.XOpenDisplay(None)
     if not display: raise RuntimeError("Cannot open QA display")
     try:
-        for kind, mask, state in ((4, 4, 0), (5, 8, 256)):
+        for kind, mask, state in ((4, 4, 0), (5, 8, 1 << (7 + button))):
             event = Event()
             event.button = ButtonEvent(type=kind, display=display, window=int(window),
-                x=x, y=y, state=state, button=1, same_screen=True)
+                x=x, y=y, state=state, button=button, same_screen=True)
             if not x11.XSendEvent(display, int(window), False, mask, ctypes.byref(event)):
                 raise RuntimeError("Cannot send QA click")
         x11.XSync(display, False)
