@@ -369,3 +369,15 @@ private cookies, пустой новый private context после закрыт
 кнопка восстановления называется «Открыть». **72/72 CTest и GUI окон PASS**
 (`windows-dialog-tests.log`, `windows-dialog-gui.log`). Идут дополнительные
 RU/EN/small проверки и Windows CI; checkpoint пункта 5 ещё не закрыт.
+
+`windows-final-gui.log`: RU/EN меню при 900×620, распространение языка на второе
+окно, beforeunload/cancel и восстановление после crash — PASS. `windows-features-regression.log`
+полностью PASS. При повторе password-suite линковка executable совпала с запуском
+третьего Chromium: `/proc/self/exe` стал `(deleted)`, zygote exec завершился 127.
+Это ошибка порядка запуска стенда, а не свидетельство поломки vault; прогон
+повторяется на неизменяемой завершённой сборке (`windows-stable-passwords.log`).
+
+При ревью Win32 dispatch учтён общий поток сообщений: если сообщения другого окна
+обработаны первым dispatch, сохранённое исключение проверяется и при пустой очереди.
+Пояснение beforeunload теперь локализовано независимо от системного языка CEF.
+`windows-final-tests.log`: 72/72 PASS. Окончательные GUI/Windows ещё проверяются.

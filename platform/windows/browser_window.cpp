@@ -436,6 +436,9 @@ void BrowserWindow::dispatch() {
         if (impl_->failure)
             std::rethrow_exception(std::exchange(impl_->failure, {}));
     }
+    // Another window's dispatch() can drain this thread's messages first.
+    if (impl_->failure)
+        std::rethrow_exception(std::exchange(impl_->failure, {}));
 }
 void BrowserWindow::paint() {
     impl_->paint();

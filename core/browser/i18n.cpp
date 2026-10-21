@@ -391,6 +391,7 @@ constexpr Translation catalog[] = {
     {"Cancel", "Отмена"},
     {"Leave", "Выйти"},
     {"Leave this page?", "Покинуть страницу?"},
+    {"This page may contain unsaved changes.", "На странице могут быть несохранённые изменения."},
     {"OK", "ОК"},
     {"Pin tab", "Закрепить вкладку"},
     {"Unpin tab", "Открепить вкладку"},

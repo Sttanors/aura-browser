@@ -844,7 +844,10 @@ void BrowserUi::draw(SkCanvas &c) {
                                    : dialog.origin,
               r.x + 25, r.y + 38, 16, ink, r.width - 50);
         const auto lines =
-            wrap_text(font(regular_, 13), dialog.owned ? app_.tr(dialog.message) : dialog.message,
+            wrap_text(font(regular_, 13),
+                      dialog.before_unload ? app_.tr("This page may contain unsaved changes.")
+                      : dialog.owned       ? app_.tr(dialog.message)
+                                           : dialog.message,
                       r.width - 50, dialog.prompt ? 2 : 4);
         for (size_t i = 0; i < lines.size(); ++i)
             label(c, regular_, lines[i], r.x + 25, r.y + 78 + int(i) * 18, 13, muted, r.width - 50);
