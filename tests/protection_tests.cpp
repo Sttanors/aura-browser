@@ -1,9 +1,12 @@
+#include "common/config.hpp"
 #include "core/browser/extensions.hpp"
 #include "core/browser/protection.hpp"
 #include "include/cef_api_hash.h"
+#include "include/cef_parser.h"
 #include <chrono>
 #include <fstream>
 #include <gtest/gtest.h>
+#include <thread>
 using namespace aura;
 namespace {
 const auto *cef_api = cef_api_hash(CEF_API_VERSION, 0);
@@ -103,7 +106,7 @@ TEST(Extensions, RegistryPersistsEnablementAndRemoval) {
     manager.accept();
     ASSERT_EQ(manager.items.size(), 1u);
     EXPECT_TRUE(manager.restart_required);
-    EXPECT_FALSE(manager.items[0].loaded);
+    EXPECT_FALSE(manager.items[0].load_requested);
     manager.toggle(0);
     {
         ExtensionManager restored(temp.path);
@@ -173,4 +176,124 @@ TEST(Extensions, PinningPersistsWithoutRestartAndSurvivesUpdate) {
     restored.pin(0);
     EXPECT_FALSE(restored.items[0].pinned);
     EXPECT_FALSE(restored.restart_required);
+}
+
+TEST(Extensions, VersionOrderingMatchesChromiumAndRejectsMalformedValues) {
+    EXPECT_EQ(compare_extension_versions("1.0", "1"), 0);
+    EXPECT_EQ(compare_extension_versions("1.10", "1.9"), 1);
+    EXPECT_EQ(compare_extension_versions("0.9", "1.0"), -1);
+    EXPECT_EQ(compare_extension_versions("1.0.0.1", "1"), 1);
+    for (const auto &invalid :
+         {"", "0", "0.0.0.0", "1.", ".1", "01.2", "1.2.3.4.5", "1.-2", "1.beta", "65536", "1 2"})
+        EXPECT_FALSE(compare_extension_versions(invalid, "1"));
+}
+TEST(Extensions, UpdateReviewsNewPermissionsPreservesDisabledPinAndRejectsRollback) {
+    Temporary temp;
+    ExtensionManager manager(temp.path);
+    auto stage = [&](const char *name, const char *directory) {
+        manager.candidate = std::make_unique<ExtensionCandidate>(
+            inspect_crx(read_resource(fixture(name)), "", temp.path / "extensions" / directory));
+    };
+    stage("valid.crx", "pending-1");
+    manager.accept();
+    manager.pin(0);
+    manager.toggle(0);
+    stage("update.crx", "pending-2");
+    EXPECT_EQ(manager.added_permissions(), std::vector<std::string>{"tabs"});
+    manager.accept();
+    ASSERT_EQ(manager.items.size(), 1u);
+    EXPECT_EQ(manager.items[0].version, "2.0");
+    EXPECT_FALSE(manager.items[0].enabled);
+    EXPECT_TRUE(manager.items[0].pinned);
+    EXPECT_TRUE(manager.items[0].pending_update);
+    stage("valid.crx", "pending-3");
+    manager.accept();
+    EXPECT_EQ(manager.items[0].version, "2.0");
+    EXPECT_EQ(manager.status, "An older extension version was rejected.");
+    EXPECT_FALSE(manager.candidate);
+    stage("update.crx", "pending-4");
+    manager.accept();
+    EXPECT_EQ(manager.status, "This extension is already up to date.");
+    ExtensionManager restored(temp.path);
+    ASSERT_EQ(restored.items.size(), 1u);
+    EXPECT_EQ(restored.items[0].version, "2.0");
+    EXPECT_FALSE(restored.items[0].enabled);
+    EXPECT_TRUE(restored.items[0].pinned);
+    EXPECT_FALSE(restored.items[0].pending_update);
+}
+TEST(Extensions, RegistryWriteFailureRollsBackTogglePinRemovalAndInstall) {
+    Temporary temp;
+    ExtensionManager manager(temp.path);
+    auto stage = [&](const char *name, const char *directory) {
+        manager.candidate = std::make_unique<ExtensionCandidate>(
+            inspect_crx(read_resource(fixture(name)), "", temp.path / "extensions" / directory));
+    };
+    stage("valid.crx", "pending-1");
+    manager.accept();
+    const auto original = read_resource(temp.path / "extensions/registry.toml");
+    std::filesystem::create_directory(temp.path / "extensions/registry.toml.tmp");
+    manager.toggle(0);
+    EXPECT_TRUE(manager.items[0].enabled);
+    manager.pin(0);
+    EXPECT_FALSE(manager.items[0].pinned);
+    manager.remove(0);
+    ASSERT_EQ(manager.items.size(), 1u);
+    stage("update.crx", "pending-2");
+    manager.accept();
+    ASSERT_EQ(manager.items.size(), 1u);
+    EXPECT_EQ(manager.items[0].version, "1.0");
+    EXPECT_EQ(read_resource(temp.path / "extensions/registry.toml"), original);
+    EXPECT_TRUE(manager.candidate);
+    std::filesystem::remove_all(temp.path / "extensions/registry.toml.tmp");
+    manager.accept();
+    EXPECT_EQ(manager.items[0].version, "2.0");
+}
+TEST(Extensions, CancellationDiscardsVerifiedPackageAndActivityNeedsMatchingStartupIdentity) {
+    Temporary temp;
+    ExtensionManager manager(temp.path);
+    manager.fetch(utf8_path(fixture("valid.crx")));
+    manager.cancel();
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (manager.busy && std::chrono::steady_clock::now() < deadline) {
+        manager.tick();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_FALSE(manager.busy);
+    EXPECT_FALSE(manager.candidate);
+    EXPECT_TRUE(manager.items.empty());
+    manager.candidate = std::make_unique<ExtensionCandidate>(
+        inspect_crx(read_resource(fixture("valid.crx")), "", temp.path / "extensions/pending-2"));
+    manager.accept();
+    auto origin = "chrome-extension://" + manager.items[0].id + "/popup.html";
+    EXPECT_FALSE(manager.observe_origin(origin));
+    ExtensionManager restored(temp.path);
+    EXPECT_FALSE(restored.items[0].observed);
+    EXPECT_FALSE(restored.observe_origin("https://example.test/"));
+    EXPECT_FALSE(restored.observe_origin("chrome-extension://" + std::string(32, 'a') + "/"));
+    EXPECT_TRUE(restored.observe_origin(origin));
+    EXPECT_TRUE(restored.items[0].observed);
+    EXPECT_FALSE(restored.observe_origin(origin));
+}
+
+TEST(Extensions, WorkerRevisionRetainsSiblingImportsAndOptionalAccessIsExplicit) {
+    Temporary temp;
+    auto candidate = inspect_crx(read_resource(fixture("module.crx")), "", temp.path / "module");
+    auto value = CefParseJSON(read_resource(candidate.staging / "manifest.json"), JSON_PARSER_RFC);
+    auto background = value->GetDictionary()->GetDictionary("background");
+    const auto worker = background->GetString("service_worker").ToString();
+    EXPECT_EQ(worker, "background/worker-aura-3.0.js");
+    EXPECT_EQ(read_resource(candidate.staging / path_from_utf8(worker)),
+              read_resource(candidate.staging / "background/worker.js"));
+    EXPECT_TRUE(std::filesystem::is_regular_file(candidate.staging / "background/version.js"));
+    auto optional = inspect_crx(read_resource(fixture("optional.crx")), "", temp.path / "optional");
+    EXPECT_NE(std::find(optional.extension.permissions.begin(),
+                        optional.extension.permissions.end(), "optional:bookmarks"),
+              optional.extension.permissions.end());
+    EXPECT_NE(std::find(optional.extension.permissions.begin(),
+                        optional.extension.permissions.end(), "optional:https://optional.test/*"),
+              optional.extension.permissions.end());
+    EXPECT_THROW(
+        inspect_crx(read_resource(fixture("future-chromium.crx")), "", temp.path / "future"),
+        std::exception);
+    EXPECT_FALSE(std::filesystem::exists(temp.path / "future"));
 }

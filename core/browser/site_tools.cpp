@@ -30,10 +30,15 @@ std::string script(const std::filesystem::path &resources, const Profile &profil
 void BrowserController::configure_font_preferences(CefRefPtr<CefRequestContext> context) {
     // Aura owns the vault; do not offer a second Chromium save/sign-in path.
     for (const char *name : {"credentials_enable_service", "credentials_enable_autosignin"}) {
-        if (!context->HasPreference(name)) continue;
-        auto value = CefValue::Create(); value->SetBool(false); CefString error;
-        if (!context->SetPreference(name, value, error)) ++audit["password_preference_errors"];
-        else ++audit["password_preferences_disabled"];
+        if (!context->HasPreference(name))
+            continue;
+        auto value = CefValue::Create();
+        value->SetBool(false);
+        CefString error;
+        if (!context->SetPreference(name, value, error))
+            ++audit["password_preference_errors"];
+        else
+            ++audit["password_preferences_disabled"];
     }
     // Chrome uses profile preferences when recreating WebPreferences after DevTools attaches.
     // Keep them consistent with CefBrowserSettings, including across the bootstrap navigation.
@@ -74,6 +79,8 @@ void BrowserController::setup_site_tools(int id, std::function<void()> ready) {
         if (method == "Runtime.executionContextCreated") {
             ++audit["protection_context_events"];
             auto c = p->GetDictionary("context");
+            if (c && extensions.observe_origin(c->GetString("origin")))
+                changed();
             if (c && c->GetString("name") == "Aura Site Protection")
                 t->protection_contexts[c->GetInt("id")] = c->GetString("origin").ToString();
         } else if (method == "Runtime.executionContextDestroyed")
@@ -201,7 +208,7 @@ void BrowserController::extension_page(size_t index, bool options) {
     if (index >= extensions.items.size())
         return;
     auto &e = extensions.items[index];
-    if (!e.loaded) {
+    if (!e.load_requested) {
         ui->toast(tr("Restart Aura to load the extension."));
         return;
     }
@@ -339,5 +346,31 @@ void BrowserController::page_login(bool fill, size_t index) {
                     erase_secret(params);
                 });
         });
+}
+} // namespace aura
+
+namespace aura {
+void BrowserController::refresh_extension_state() {
+    for (auto &t : tabs)
+        if (!t->private_tab && t->devtools && !t->closing) {
+            t->devtools->call(
+                "Target.getTargets", "{}", [this](bool ok, const std::string &result) {
+                    if (!ok)
+                        return;
+                    auto v = CefParseJSON(result, JSON_PARSER_RFC);
+                    auto d = v && v->GetType() == VTYPE_DICTIONARY ? v->GetDictionary() : nullptr;
+                    auto list = d ? d->GetList("targetInfos") : nullptr;
+                    if (!list)
+                        return;
+                    bool observed = false;
+                    for (size_t i = 0; i < list->GetSize(); ++i)
+                        if (auto info = list->GetDictionary(i))
+                            observed =
+                                extensions.observe_origin(info->GetString("url")) || observed;
+                    if (observed)
+                        changed();
+                });
+            return;
+        }
 }
 } // namespace aura

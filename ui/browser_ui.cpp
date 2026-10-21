@@ -1,9 +1,9 @@
-#include "common/platform.hpp"
-#include "common/branding_data.hpp"
-#include "common/update_key.hpp"
 #include "ui/browser_ui.hpp"
 #include "aura/design_tokens.hpp"
+#include "common/branding_data.hpp"
 #include "common/config.hpp"
+#include "common/platform.hpp"
+#include "common/update_key.hpp"
 #include "include/cef_frame.h"
 #include "include/core/SkBitmap.h"
 #include "include/core/SkBlurTypes.h"
@@ -37,8 +37,8 @@
 #include <unistd.h>
 extern char **environ;
 #else
-#include <windows.h>
 #include <commdlg.h>
+#include <windows.h>
 #endif
 namespace aura {
 namespace {
@@ -534,7 +534,7 @@ void BrowserUi::draw(SkCanvas &c) {
     for (const auto &[index, b] : extension_buttons()) {
         focus_target(b);
         const auto &e = app_.extensions.items[index];
-        const bool usable = e.loaded && !(current && current->private_tab);
+        const bool usable = e.load_requested && !(current && current->private_tab);
         if (inside(b, hover_x_, hover_y_) ||
             (app_.extension_popup && app_.extension_popup->extension_id == e.id))
             fill(c, b, 9, SkColorSetA(t.accent, 30));
@@ -644,7 +644,10 @@ void BrowserUi::draw(SkCanvas &c) {
                                       app_.tr("Downloads"),
                                       app_.tr("Settings"),
                                       app_.tr("Extensions"),
-                                      app_.tr("Quick links"), app_.tr("About Aura and updates"), app_.tr("Import browser data"), app_.tr("Passwords")};
+                                      app_.tr("Quick links"),
+                                      app_.tr("About Aura and updates"),
+                                      app_.tr("Import browser data"),
+                                      app_.tr("Passwords")};
         label(c, medium_, titles[panel_], r.x + 28, r.y + 47, 23, ink);
         icon(c, "close", r.x + r.width - 43, r.y + 26, 19, muted);
         if (panel_ == History || panel_ == Bookmarks) {
@@ -1226,20 +1229,25 @@ void BrowserUi::choose_wallpaper() {
 void BrowserUi::choose_file(bool for_import) {
     if (for_import && app_.importer.busy)
         return;
-    const auto error_text = for_import ? "Could not open the file chooser. Paste a file path instead."
-                                      : "Could not open the image chooser. Paste a file path instead.";
+    const auto error_text = for_import
+                                ? "Could not open the file chooser. Paste a file path instead."
+                                : "Could not open the image chooser. Paste a file path instead.";
 #ifdef _WIN32
     std::wstring file(32768, L'\0');
-    const auto title = CefString(app_.tr(for_import ? "Choose browser data" : "Choose background image")).ToWString();
+    const auto title =
+        CefString(app_.tr(for_import ? "Choose browser data" : "Choose background image"))
+            .ToWString();
     const auto initial = app_.profile.directory.wstring();
     OPENFILENAMEW dialog{};
     dialog.lStructSize = sizeof(dialog);
     dialog.hwndOwner = app_.window->handle();
-    dialog.lpstrFilter = for_import
-        ? (app_.profile.language == "ru"
-            ? L"Данные браузера\0*.html;*.htm;*.json;*.sqlite;History;Bookmarks\0Все файлы\0*.*\0\0"
-            : L"Browser data\0*.html;*.htm;*.json;*.sqlite;History;Bookmarks\0All files\0*.*\0\0")
-        : L"PNG / JPEG\0*.png;*.jpg;*.jpeg\0\0";
+    dialog.lpstrFilter =
+        for_import ? (app_.profile.language == "ru"
+                          ? L"Данные браузера\0*.html;*.htm;*.json;*.sqlite;History;Bookmarks\0Все "
+                            L"файлы\0*.*\0\0"
+                          : L"Browser data\0*.html;*.htm;*.json;*.sqlite;History;Bookmarks\0All "
+                            L"files\0*.*\0\0")
+                   : L"PNG / JPEG\0*.png;*.jpg;*.jpeg\0\0";
     dialog.lpstrFile = file.data();
     dialog.nMaxFile = static_cast<DWORD>(file.size());
     dialog.lpstrTitle = title.c_str();
@@ -1251,7 +1259,8 @@ void BrowserUi::choose_file(bool for_import) {
             import_input_.set(utf8_path(std::filesystem::path(file)));
             import_input_focus_ = false;
             app_.importer.preview(import_input_.value);
-        } else if (!import_wallpaper(utf8_path(std::filesystem::path(file)))) toast(app_.tr(wallpaper_error_));
+        } else if (!import_wallpaper(utf8_path(std::filesystem::path(file))))
+            toast(app_.tr(wallpaper_error_));
     } else if (CommDlgExtendedError())
         toast(app_.tr(error_text));
     app_.changed();
@@ -1273,8 +1282,9 @@ void BrowserUi::choose_file(bool for_import) {
         "--file-selection",
         "--modal",
         "--title=" + app_.tr(for_import ? "Choose browser data" : "Choose background image"),
-        for_import ? "--file-filter=" + app_.tr("Browser data") + " | *.html *.htm *.json *.sqlite History Bookmarks" :
-                     "--file-filter=PNG / JPEG | *.png *.PNG *.jpg *.JPG *.jpeg *.JPEG",
+        for_import ? "--file-filter=" + app_.tr("Browser data") +
+                         " | *.html *.htm *.json *.sqlite History Bookmarks"
+                   : "--file-filter=PNG / JPEG | *.png *.PNG *.jpg *.JPG *.jpeg *.JPEG",
         "--file-filter=" + app_.tr("All files") + " | *",
         "--filename=" + utf8_path(app_.profile.directory) + "/"};
     std::vector<char *> argv;
@@ -1336,8 +1346,9 @@ void BrowserUi::poll_wallpaper_picker() {
         }
         settings_error_.clear();
     } else if (!WIFEXITED(status) || WEXITSTATUS(status) != 1)
-        toast(app_.tr(picker_import_ ? "Could not open the file chooser. Paste a file path instead."
-                                   : "Could not open the image chooser. Paste a file path instead."));
+        toast(app_.tr(picker_import_
+                          ? "Could not open the file chooser. Paste a file path instead."
+                          : "Could not open the image chooser. Paste a file path instead."));
     picker_output_.clear();
     app_.changed();
 #endif
@@ -1514,14 +1525,17 @@ std::string BrowserUi::shortcuts_report() const {
 }
 void BrowserUi::draw_updates(SkCanvas &c, Rect r) {
     const auto &t = interface_theme(app_.profile);
-    label(c, medium_, "Aura " + std::string(browser_version), r.x + 28, r.y + 94, 18, t.text, r.width - 56);
+    label(c, medium_, "Aura " + std::string(browser_version), r.x + 28, r.y + 94, 18, t.text,
+          r.width - 56);
     auto &updates = app_.updates;
-    label(c, regular_, app_.tr(updates.status) + (updates.status == "Downloading the update..."
-              ? " " + std::to_string(updates.download_percent()) + "%" : ""),
+    label(c, regular_,
+          app_.tr(updates.status) + (updates.status == "Downloading the update..."
+                                         ? " " + std::to_string(updates.download_percent()) + "%"
+                                         : ""),
           r.x + 28, r.y + 127, 12, t.muted, r.width - 56);
     if (updates.release)
-        label(c, medium_, app_.tr("Available version: ") + updates.release->version,
-              r.x + 28, r.y + 157, 13, t.accent, r.width - 56);
+        label(c, medium_, app_.tr("Available version: ") + updates.release->version, r.x + 28,
+              r.y + 157, 13, t.accent, r.width - 56);
     const auto kind = updates.installation_kind();
     auto button = [&](int index, const std::string &text, bool enabled) {
         Rect b{r.x + 28, r.y + 185 + index * 46, r.width - 56, 36};
@@ -1532,15 +1546,17 @@ void BrowserUi::draw_updates(SkCanvas &c, Rect r) {
         centered_label(c, medium_, app_.tr(text), b, 12, enabled ? t.text : t.muted, 12, 12);
     };
     button(0, updates.busy() ? "Cancel" : "Check for updates", updates.ready_file.empty());
-    button(1, "Download verified update", bool(updates.release) && !updates.busy() &&
-                                          updates.ready_file.empty() && kind != "system");
+    button(1, "Download verified update",
+           bool(updates.release) && !updates.busy() && updates.ready_file.empty() &&
+               kind != "system");
     const bool installer = kind == "run" || kind == "setup";
     button(2, installer ? "Close Aura and install update" : "Show verified download",
            !updates.ready_file.empty());
     button(3, "Release notes and downloads", !updates.busy());
     const auto help = kind == "system" ? "Update this installation with your Linux package manager."
-        : kind == "portable" ? "Unpack the verified ZIP separately. Keep your existing profile."
-        : "Your profile is kept. Installation starts after Aura closes.";
+                      : kind == "portable"
+                          ? "Unpack the verified ZIP separately. Keep your existing profile."
+                          : "Your profile is kept. Installation starts after Aura closes.";
     label(c, regular_, app_.tr(help), r.x + 28, r.y + 405, 12, t.muted, r.width - 56);
 }
 void BrowserUi::updates_pointer(Rect r, int x, int y) {
@@ -1558,15 +1574,18 @@ void BrowserUi::updates_pointer(Rect r, int x, int y) {
         else if (index == 2 && !updates.ready_file.empty()) {
             const auto kind = updates.installation_kind();
             if (kind == "run" || kind == "setup")
-                app_.confirm_action("Install Aura update", "Your profile is kept. Installation starts after Aura closes.", [this] {
-                    app_.install_update_on_exit = true;
-                    app_.request_quit(true);
-                });
+                app_.confirm_action("Install Aura update",
+                                    "Your profile is kept. Installation starts after Aura closes.",
+                                    [this] {
+                                        app_.install_update_on_exit = true;
+                                        app_.request_quit(true);
+                                    });
             else
                 updates.open_download_folder();
         } else if (index == 3 && !updates.busy())
-            app_.new_tab(updates.release ? updates.release->page_url() :
-                         "https://github.com/Sttanors/aura-browser/releases/latest");
+            app_.new_tab(updates.release
+                             ? updates.release->page_url()
+                             : "https://github.com/Sttanors/aura-browser/releases/latest");
         app_.changed();
         return;
     }
@@ -1579,45 +1598,56 @@ std::string BrowserUi::updates_report() const {
     for (int index = 0; index < 4; ++index) {
         if (index)
             out += ',';
-        out += "[" + std::to_string(r.x + 28) + "," + std::to_string(r.y + 185 + index * 46) +
-               "," + std::to_string(r.width - 56) + ",36]";
+        out += "[" + std::to_string(r.x + 28) + "," + std::to_string(r.y + 185 + index * 46) + "," +
+               std::to_string(r.width - 56) + ",36]";
     }
     return out + "]}";
 }
 void BrowserUi::draw_import(SkCanvas &c, Rect r) {
     const auto &t = interface_theme(app_.profile);
     auto &importer = app_.importer;
-    label(c, regular_, "HTML / JSON · Firefox places.sqlite · Chromium History", r.x + 28, r.y + 88, 12, t.muted, r.width - 56);
+    label(c, regular_, "HTML / JSON · Firefox places.sqlite · Chromium History", r.x + 28, r.y + 88,
+          12, t.muted, r.width - 56);
     Rect input{r.x + 28, r.y + 108, r.width - 172, 36};
-    if (!importer.busy) focus_target(input);
+    if (!importer.busy)
+        focus_target(input);
     fill(c, input, 9, SkColorSetA(t.text, 7));
     border(c, input, 9, import_input_focus_ ? t.accent : SkColorSetA(t.muted, 190));
     if (import_input_.value.empty() && !import_input_focus_)
-        label(c, regular_, app_.tr("Paste a file path or choose Browse"), input.x + 12, input.y + 24, 12, t.muted, input.width - 24);
+        label(c, regular_, app_.tr("Paste a file path or choose Browse"), input.x + 12,
+              input.y + 24, 12, t.muted, input.width - 24);
     else
-        draw_editor(c, import_input_, {input.x + 10, input.y + 2, input.width - 20, 32}, 12, import_input_focus_);
+        draw_editor(c, import_input_, {input.x + 10, input.y + 2, input.width - 20, 32}, 12,
+                    import_input_focus_);
     auto button = [&](Rect b, const std::string &text, bool enabled) {
-        if (enabled) focus_target(b);
+        if (enabled)
+            focus_target(b);
         fill(c, b, 9, SkColorSetA(t.accent, enabled && inside(b, hover_x_, hover_y_) ? 30 : 12));
         border(c, b, 9, SkColorSetA(t.muted, enabled ? 180 : 60));
         centered_label(c, medium_, app_.tr(text), b, 12, enabled ? t.text : t.muted, 10, 10);
     };
     button({r.x + r.width - 132, r.y + 108, 104, 36}, "Browse", !importer.busy);
-    button({r.x + 28, r.y + 162, 200, 36}, importer.busy ? "Cancel" : "Preview import", importer.busy || !import_input_.value.empty());
+    button({r.x + 28, r.y + 162, 200, 36}, importer.busy ? "Cancel" : "Preview import",
+           importer.busy || !import_input_.value.empty());
     button({r.x + 244, r.y + 162, 220, 36}, "Detected profiles", !importer.busy);
     label(c, regular_, app_.tr(importer.status), r.x + 28, r.y + 225, 12, t.muted, r.width - 56);
     if (auto data = importer.candidate.get()) {
         label(c, medium_, app_.tr(data->source), r.x + 28, r.y + 257, 15, t.text, r.width - 56);
-        label(c, regular_, data->limited ? app_.tr("This is a partial preview of a large data set.") :
-              app_.tr("Skipped or duplicate records: ") + std::to_string(data->skipped + data->duplicates),
+        label(c, regular_,
+              data->limited ? app_.tr("This is a partial preview of a large data set.")
+                            : app_.tr("Skipped or duplicate records: ") +
+                                  std::to_string(data->skipped + data->duplicates),
               r.x + 28, r.y + 283, 12, t.muted, r.width - 56);
         auto check = [&](int row, const std::string &title, size_t count, bool selected) {
             Rect b{r.x + 28, r.y + 302 + row * 40, r.width - 56, 32};
-            if (count) focus_target(b);
+            if (count)
+                focus_target(b);
             fill(c, {b.x, b.y + 6, 20, 20}, 5, SkColorSetA(t.accent, selected && count ? 45 : 10));
             border(c, {b.x, b.y + 6, 20, 20}, 5, SkColorSetA(t.muted, count ? 190 : 70));
-            if (selected && count) icon(c, "check", b.x + 4, b.y + 10, 12, t.accent);
-            label(c, regular_, app_.tr(title) + " · " + std::to_string(count), b.x + 32, b.y + 23, 13, count ? t.text : t.muted, b.width - 32);
+            if (selected && count)
+                icon(c, "check", b.x + 4, b.y + 10, 12, t.accent);
+            label(c, regular_, app_.tr(title) + " · " + std::to_string(count), b.x + 32, b.y + 23,
+                  13, count ? t.text : t.muted, b.width - 32);
         };
         check(0, "Bookmarks", data->bookmarks.size(), import_bookmarks_);
         check(1, "History", data->history.size(), import_history_);
@@ -1625,22 +1655,28 @@ void BrowserUi::draw_import(SkCanvas &c, Rect r) {
               r.x + 28, r.y + 393, 12, t.muted, r.width - 56);
         if (r.height >= 620) {
             label(c, medium_, app_.tr("Sample addresses"), r.x + 28, r.y + 431, 12, t.text);
-            const auto &values = import_bookmarks_ && !data->bookmarks.empty() ? data->bookmarks : data->history;
+            const auto &values =
+                import_bookmarks_ && !data->bookmarks.empty() ? data->bookmarks : data->history;
             for (size_t i = 0; i < std::min<size_t>(3, values.size()); ++i)
-                label(c, regular_, values[i].title + " · " + values[i].url, r.x + 28, r.y + 458 + i * 25, 12, t.muted, r.width - 56);
+                label(c, regular_, values[i].title + " · " + values[i].url, r.x + 28,
+                      r.y + 458 + i * 25, 12, t.muted, r.width - 56);
         }
     } else if (importer.result) {
         const auto &result = *importer.result;
         const std::pair<std::string, size_t> counts[] = {
-            {"Bookmarks added: ", result.bookmarks_added}, {"History entries added: ", result.history_added},
-            {"Duplicate records: ", result.duplicates}, {"Excluded by history limits: ", result.history_limited}};
+            {"Bookmarks added: ", result.bookmarks_added},
+            {"History entries added: ", result.history_added},
+            {"Duplicate records: ", result.duplicates},
+            {"Excluded by history limits: ", result.history_limited}};
         for (size_t i = 0; i < std::size(counts); ++i)
             label(c, regular_, app_.tr(counts[i].first) + std::to_string(counts[i].second),
                   r.x + 28, r.y + 265 + int(i) * 28, 13, t.text, r.width - 56);
     }
-    const bool selected = importer.candidate &&
-        ((import_bookmarks_ && !importer.candidate->bookmarks.empty()) || (import_history_ && !importer.candidate->history.empty()));
-    button({r.x + 28, r.y + r.height - 82, 240, 36}, "Import selected data", selected && !importer.busy);
+    const bool selected =
+        importer.candidate && ((import_bookmarks_ && !importer.candidate->bookmarks.empty()) ||
+                               (import_history_ && !importer.candidate->history.empty()));
+    button({r.x + 28, r.y + r.height - 82, 240, 36}, "Import selected data",
+           selected && !importer.busy);
     if (importer.result && !importer.result->backup.empty())
         button({r.x + r.width - 256, r.y + r.height - 82, 228, 36}, "Show backup folder", true);
     label(c, regular_, app_.tr("Bookmarks use a flat list. History keeps your current limits."),
@@ -1666,19 +1702,24 @@ void BrowserUi::import_pointer(Rect r, int x, int y) {
             for (size_t i = 0; i < std::min<size_t>(sources.size(), limit); ++i)
                 app_.menu.push_back({int(i + 1), sources[i].label});
             app_.menu_action = [this, sources](int id) {
-                if (id < 1 || static_cast<size_t>(id) > sources.size()) return;
+                if (id < 1 || static_cast<size_t>(id) > sources.size())
+                    return;
                 import_input_.set(utf8_path(sources[id - 1].path));
                 app_.importer.preview(import_input_.value);
                 app_.changed();
             };
         }
     } else if (inside({r.x + 28, r.y + 162, 200, 36}, x, y)) {
-        if (importer.busy) importer.cancel();
-        else if (!import_input_.value.empty()) importer.preview(import_input_.value);
+        if (importer.busy)
+            importer.cancel();
+        else if (!import_input_.value.empty())
+            importer.preview(import_input_.value);
     } else if (importer.candidate && !importer.busy) {
-        if (!importer.candidate->bookmarks.empty() && inside({r.x + 28, r.y + 302, r.width - 56, 32}, x, y))
+        if (!importer.candidate->bookmarks.empty() &&
+            inside({r.x + 28, r.y + 302, r.width - 56, 32}, x, y))
             import_bookmarks_ = !import_bookmarks_;
-        else if (!importer.candidate->history.empty() && inside({r.x + 28, r.y + 342, r.width - 56, 32}, x, y))
+        else if (!importer.candidate->history.empty() &&
+                 inside({r.x + 28, r.y + 342, r.width - 56, 32}, x, y))
             import_history_ = !import_history_;
         else if (inside({r.x + 28, r.y + r.height - 82, 240, 36}, x, y)) {
             importer.apply(app_.profile, import_bookmarks_, import_history_);
@@ -1690,26 +1731,33 @@ void BrowserUi::import_pointer(Rect r, int x, int y) {
     app_.changed();
 }
 std::string BrowserUi::import_report() const {
-    if (panel_ != Import) return "null";
+    if (panel_ != Import)
+        return "null";
     const auto r = panel_bounds();
-    auto rect = [](Rect b) { return "[" + std::to_string(b.x) + "," + std::to_string(b.y) + "," + std::to_string(b.width) + "," + std::to_string(b.height) + "]"; };
+    auto rect = [](Rect b) {
+        return "[" + std::to_string(b.x) + "," + std::to_string(b.y) + "," +
+               std::to_string(b.width) + "," + std::to_string(b.height) + "]";
+    };
     auto &importer = app_.importer;
-    std::string out = "{\"input\":" + rect({r.x + 28, r.y + 108, r.width - 172, 36}) +
+    std::string out =
+        "{\"input\":" + rect({r.x + 28, r.y + 108, r.width - 172, 36}) +
         ",\"browse\":" + rect({r.x + r.width - 132, r.y + 108, 104, 36}) +
         ",\"preview\":" + rect({r.x + 28, r.y + 162, 200, 36}) +
         ",\"profiles\":" + rect({r.x + 244, r.y + 162, 220, 36}) +
         ",\"bookmarks\":" + rect({r.x + 28, r.y + 302, r.width - 56, 32}) +
         ",\"history\":" + rect({r.x + 28, r.y + 342, r.width - 56, 32}) +
         ",\"apply\":" + rect({r.x + 28, r.y + r.height - 82, 240, 36}) +
-        ",\"path\":" + json_quote(import_input_.value) + ",\"status\":" + json_quote(importer.status) +
-        ",\"busy\":" + (importer.busy ? "true" : "false") +
-        ",\"preview_bookmarks\":" + std::to_string(importer.candidate ? importer.candidate->bookmarks.size() : 0) +
-        ",\"preview_history\":" + std::to_string(importer.candidate ? importer.candidate->history.size() : 0) +
+        ",\"path\":" + json_quote(import_input_.value) +
+        ",\"status\":" + json_quote(importer.status) +
+        ",\"busy\":" + (importer.busy ? "true" : "false") + ",\"preview_bookmarks\":" +
+        std::to_string(importer.candidate ? importer.candidate->bookmarks.size() : 0) +
+        ",\"preview_history\":" +
+        std::to_string(importer.candidate ? importer.candidate->history.size() : 0) +
         ",\"ready\":" + (importer.candidate ? "true" : "false");
     if (importer.result)
         out += ",\"result\":{\"bookmarks\":" + std::to_string(importer.result->bookmarks_added) +
-            ",\"history\":" + std::to_string(importer.result->history_added) +
-            ",\"backup\":" + json_quote(utf8_path(importer.result->backup)) + "}";
+               ",\"history\":" + std::to_string(importer.result->history_added) +
+               ",\"backup\":" + json_quote(utf8_path(importer.result->backup)) + "}";
     return out + "}";
 }
 std::vector<BrowserUi::SettingsRow> BrowserUi::settings_rows(Rect panel) const {
@@ -1744,29 +1792,30 @@ std::vector<BrowserUi::SettingsRow> BrowserUi::settings_rows(Rect panel) const {
     }
     const struct {
         const char *id, *section, *title, *description;
-    } actions[] = {{"passwords", "Data", "Passwords", "Manage saved logins and encrypted transfer files."},
-                   {"import", "Data", "Import browser data",
-                    "Preview bookmarks and history from Firefox, Chrome or an HTML export."},
-                   {"updates", "General", "About Aura and updates",
-                    "View your version and check for verified browser updates."},
-                   {"shortcuts", "Start page", "Manage quick links",
-                    "Add, edit, remove and reorder your shortcuts."},
-                   {"wallpaper_clear", "Start page", "Remove background image",
-                    "Return to the Aura background. Your original image is kept."},
-                   {"extensions", "Protection", "Manage extensions",
-                    "Install extensions from Chrome Web Store or a signed CRX3 file."},
-                   {"history", "Data", "Clear Aura history",
-                    "Remove the Aura history list. Keep cookies and bookmarks."},
-                   {"cookies", "Data", "Clear cookies",
-                    "Sign out of websites. Bookmarks and downloads are kept."},
-                   {"cache", "Data", "Clear cached files",
-                    "Remove cached network files. Websites may load more slowly once."},
-                   {"reset", "Data", "Reset settings",
-                    "Restore preferences. Keep history, bookmarks and downloaded files."},
-                   {"folder", "Downloads", "Show folder",
-                    "Open the current download folder in the file manager."},
-                   {"downloads", "Downloads", "Clear completed downloads",
-                    "Remove finished entries from the panel. Keep the files."}};
+    } actions[] = {
+        {"passwords", "Data", "Passwords", "Manage saved logins and encrypted transfer files."},
+        {"import", "Data", "Import browser data",
+         "Preview bookmarks and history from Firefox, Chrome or an HTML export."},
+        {"updates", "General", "About Aura and updates",
+         "View your version and check for verified browser updates."},
+        {"shortcuts", "Start page", "Manage quick links",
+         "Add, edit, remove and reorder your shortcuts."},
+        {"wallpaper_clear", "Start page", "Remove background image",
+         "Return to the Aura background. Your original image is kept."},
+        {"extensions", "Protection", "Manage extensions",
+         "Install extensions from Chrome Web Store or a signed CRX3 file."},
+        {"history", "Data", "Clear Aura history",
+         "Remove the Aura history list. Keep cookies and bookmarks."},
+        {"cookies", "Data", "Clear cookies",
+         "Sign out of websites. Bookmarks and downloads are kept."},
+        {"cache", "Data", "Clear cached files",
+         "Remove cached network files. Websites may load more slowly once."},
+        {"reset", "Data", "Reset settings",
+         "Restore preferences. Keep history, bookmarks and downloaded files."},
+        {"folder", "Downloads", "Show folder",
+         "Open the current download folder in the file manager."},
+        {"downloads", "Downloads", "Clear completed downloads",
+         "Remove finished entries from the panel. Keep the files."}};
     for (const auto &a : actions) {
         if (!query.empty()) {
             if (exact)
@@ -2185,6 +2234,8 @@ void BrowserUi::panel(Panel value) {
     clear_password_fields();
     password_mode_ = 0;
     panel_ = value;
+    if (value == Extensions)
+        app_.refresh_extension_state();
     shortcut_focus_ = -1;
     panel_scroll_ = 0;
     if (value != None) {
@@ -2219,8 +2270,11 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
     if (ctrl && code == 'A')
         e.select_all();
     else if (ctrl && (code == 'C' || code == 'X')) {
-        bool secret = panel_ == Passwords && (&e == &password_fields_[0] || &e == &password_fields_[1] || &e == &password_fields_[2]);
-        if (secret) return true;
+        bool secret =
+            panel_ == Passwords && (&e == &password_fields_[0] || &e == &password_fields_[1] ||
+                                    &e == &password_fields_[2]);
+        if (secret)
+            return true;
         app_.window->copy(e.selected());
         if (code == 'X')
             e.insert("");
@@ -2245,13 +2299,16 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
                 live = target;
             else if (panel_ == Extensions && target == &extension_input_ && extension_input_focus_)
                 live = &extension_input_;
-            else if (panel_ == Import && target == &import_input_ && import_input_focus_ && !app_.importer.busy)
+            else if (panel_ == Import && target == &import_input_ && import_input_focus_ &&
+                     !app_.importer.busy)
                 live = &import_input_;
-            else if (panel_ == Passwords && password_focus_ >= 0 && !app_.passwords.busy && target == &password_fields_[password_focus_])
+            else if (panel_ == Passwords && password_focus_ >= 0 && !app_.passwords.busy &&
+                     target == &password_fields_[password_focus_])
                 live = target;
             else if (!app_.dialogs.empty() && target == &app_.dialogs.front().input)
                 live = target;
-            if (live && !text.empty() && (panel_ != Passwords || live->value.size() + text.size() <= 8192))
+            if (live && !text.empty() &&
+                (panel_ != Passwords || live->value.size() + text.size() <= 8192))
                 live->insert(text);
             if (live == &find)
                 app_.find_text(find.value);
@@ -2324,8 +2381,8 @@ bool BrowserUi::key(const CefKeyEvent &key) {
     }
     if (!app_.extension_popup && down && keyboard_focus_ >= 0 &&
         keyboard_focus_ < int(focus_targets_.size()) && (code == 0x0D || code == 0x20) &&
-        !settings_search_focus_ && settings_edit_.empty() && !extension_input_focus_ && !import_input_focus_ &&
-        shortcut_focus_ < 0 && password_focus_ < 0 && !editing) {
+        !settings_search_focus_ && settings_edit_.empty() && !extension_input_focus_ &&
+        !import_input_focus_ && shortcut_focus_ < 0 && password_focus_ < 0 && !editing) {
         const auto r = focus_targets_[keyboard_focus_];
         const int previous = keyboard_focus_;
         const auto previous_panel = panel_;
@@ -2390,8 +2447,16 @@ bool BrowserUi::key(const CefKeyEvent &key) {
             }
         }
         if (panel_ == Passwords && password_focus_ >= 0) {
-            if (code == 0x1B || code == 0x0D) {password_focus_ = -1; app_.changed(); return true;}
-            if (!app_.passwords.busy) {editor_key(password_fields_[password_focus_], key); app_.passwords.touch(); app_.changed();}
+            if (code == 0x1B || code == 0x0D) {
+                password_focus_ = -1;
+                app_.changed();
+                return true;
+            }
+            if (!app_.passwords.busy) {
+                editor_key(password_fields_[password_focus_], key);
+                app_.passwords.touch();
+                app_.changed();
+            }
             return code < 0x20 || ctrl || (code >= 0x21 && code <= 0x2E);
         }
         if (panel_ == Import && import_input_focus_) {
@@ -2701,8 +2766,8 @@ void BrowserUi::text(const std::string &value) {
                 CefKeyEvent event = last_key_;
                 event.type = KEYEVENT_CHAR;
 #ifdef _WIN32
-            // CEF's Windows backend maps this field to WM_CHAR's Unicode wParam.
-            event.windows_key_code = ch;
+                // CEF's Windows backend maps this field to WM_CHAR's Unicode wParam.
+                event.windows_key_code = ch;
 #endif
                 event.character = ch;
                 event.unmodified_character = ch;
@@ -2723,7 +2788,11 @@ void BrowserUi::text(const std::string &value) {
         if (shortcut_focus_ >= 0)
             (shortcut_focus_ == 0 ? shortcut_title_ : shortcut_url_).insert(clean);
     } else if (panel_ == Passwords) {
-        if (password_focus_ >= 0 && !app_.passwords.busy && password_fields_[password_focus_].value.size() + clean.size() <= 8192) {password_fields_[password_focus_].insert(clean); app_.passwords.touch();}
+        if (password_focus_ >= 0 && !app_.passwords.busy &&
+            password_fields_[password_focus_].value.size() + clean.size() <= 8192) {
+            password_fields_[password_focus_].insert(clean);
+            app_.passwords.touch();
+        }
         erase_secret(clean);
     } else if (panel_ == Import) {
         if (import_input_focus_ && !app_.importer.busy) {
@@ -2831,7 +2900,8 @@ void BrowserUi::pointer(const PointerInput &input) {
     }
     if (input.kind == PointerInput::Wheel && panel_ == Passwords) {
         if (!app_.passwords.busy && inside(panel_bounds(), x, y))
-            panel_scroll_ = std::clamp(panel_scroll_ + (input.dy < 0 ? 1 : -1), 0, std::max(0, int(app_.passwords.vault.logins().size()) - 1));
+            panel_scroll_ = std::clamp(panel_scroll_ + (input.dy < 0 ? 1 : -1), 0,
+                                       std::max(0, int(app_.passwords.vault.logins().size()) - 1));
         return;
     }
     if (input.kind == PointerInput::Wheel && panel_ == Extensions) {
@@ -3255,29 +3325,39 @@ void BrowserUi::draw_extensions(SkCanvas &c, Rect r) {
                        extension_input_focus_ ? 255 : 190));
     draw_editor(c, extension_input_, {input.x + 10, input.y + 2, input.width - 20, 33}, 12,
                 extension_input_focus_);
-    chip({r.x + r.width - 140, r.y + 90, 112, 37}, m.busy ? "Verifying..." : "Download", !m.busy,
-         !m.busy);
+    chip({r.x + r.width - 140, r.y + 90, 112, 37}, m.busy ? "Cancel" : "Download", !m.busy, true);
     label(c, regular_, app_.tr(m.status), r.x + 28, r.y + 154, 12, t.accent, r.width - 56);
     if (m.candidate) {
         const auto &e = m.candidate->extension;
         label(c, medium_, e.name + " · " + e.version, r.x + 28, r.y + 192, 18, t.text,
               r.width - 56);
-        label(c, regular_, app_.tr("Requested permissions and website access"), r.x + 28, r.y + 224,
-              12, t.muted, r.width - 56);
+        const auto old = std::find_if(m.items.begin(), m.items.end(),
+                                      [&](const auto &item) { return item.id == e.id; });
+        const auto added = m.added_permissions();
+        label(c, regular_,
+              app_.tr(old == m.items.end() ? "Requested permissions and website access"
+                                           : "New permissions are highlighted"),
+              r.x + 28, r.y + 224, 12, t.muted, r.width - 56);
         c.save();
         c.clipRect(SkRect::MakeXYWH(r.x + 24, r.y + 239, r.width - 48, r.height - 362));
         if (e.permissions.empty())
             label(c, regular_, app_.tr("No additional permissions"), r.x + 40, r.y + 266, 13,
                   t.text);
         for (size_t i = panel_scroll_; i < e.permissions.size(); i++)
-            label(c, regular_, "• " + e.permissions[i], r.x + 40,
-                  r.y + 266 + (i - panel_scroll_) * 29, 13, t.text, r.width - 80);
+            label(c, regular_,
+                  (std::find(added.begin(), added.end(), e.permissions[i]) != added.end() ? "+ "
+                                                                                          : "• ") +
+                      (e.permissions[i].starts_with("optional:")
+                           ? app_.tr("Optional: ") + e.permissions[i].substr(9)
+                           : e.permissions[i]),
+                  r.x + 40, r.y + 266 + (i - panel_scroll_) * 29, 13, t.text, r.width - 80);
         c.restore();
         label(c, regular_,
               std::to_string(e.permissions.size()) + " " +
                   app_.tr("permissions · scroll to review all"),
               r.x + 28, r.y + r.height - 106, 11, t.muted, r.width - 56);
-        chip({r.x + 28, r.y + r.height - 88, 158, 36}, "Install extension", true);
+        chip({r.x + 28, r.y + r.height - 88, 158, 36},
+             old == m.items.end() ? "Install extension" : "Update extension", true);
         chip({r.x + 198, r.y + r.height - 88, 112, 36}, "Cancel");
     } else {
         label(c, regular_, app_.tr("Changes take effect after restarting Aura."), r.x + 28,
@@ -3301,25 +3381,31 @@ void BrowserUi::draw_extensions(SkCanvas &c, Rect r) {
             chip({r.x + r.width - 156, y + 8, 128, 32},
                  e.pinned ? "Unpin extension" : "Pin extension");
             label(c, regular_,
-                  app_.tr(!e.enabled ? "Disabled"
-                          : e.loaded ? "Running"
-                                     : "Restart Aura to activate"),
+                  app_.tr(e.pending_update ? "Update after restart"
+                          : !e.enabled ? (e.load_requested ? "Disabled after restart" : "Disabled")
+                          : !e.load_requested ? "Restart Aura to activate"
+                          : e.observed        ? "Activity detected"
+                                              : "Enabled; awaiting activity"),
                   r.x + 40, y + 47, 12, t.muted, r.width - 80);
             chip({r.x + 40, y + 60, 104, 34}, e.enabled ? "Disable" : "Enable");
             chip({r.x + 152, y + 60, 108, 34}, "Open popup", false,
-                 e.loaded && e.enabled && !e.popup.empty());
+                 e.load_requested && e.enabled && !e.popup.empty());
             chip({r.x + 268, y + 60, 104, 34}, "Options", false,
-                 e.loaded && e.enabled && !e.options.empty());
+                 e.load_requested && e.enabled && !e.options.empty());
             chip({r.x + 380, y + 60, 104, 34}, "Remove");
+            chip({r.x + 492, y + 60, 104, 34}, "Check update", false, !m.busy);
         }
         c.restore();
         chip({r.x + 28, r.y + r.height - 88, 216, 36}, "Open Chrome Web Store",
              m.items.empty() && extension_input_.value.empty());
+        if (m.restart_required)
+            chip({r.x + r.width - 256, r.y + r.height - 88, 228, 36}, "Restart Aura", true,
+                 !m.busy);
         label(c, regular_, app_.tr("Some Chrome tab and toolbar APIs are unavailable in Aura."),
               r.x + 28, r.y + r.height - 106, 11, t.muted, r.width - 56);
     }
     label(c, regular_,
-          app_.tr(m.restart_required ? "Restart required · close Aura and open it again"
+          app_.tr(m.restart_required ? "Restart required · use Restart Aura"
                                      : "MV3 extensions · signed CRX3 packages"),
           r.x + 28, r.y + r.height - 25, 11, m.restart_required ? t.accent : t.muted, r.width - 56);
 }
@@ -3330,9 +3416,12 @@ void BrowserUi::extensions_pointer(Rect r, int x, int y) {
         app_.window->caret(r.x + 40, r.y + 127);
         return;
     }
-    if (!m.busy && inside({r.x + r.width - 140, r.y + 90, 112, 37}, x, y)) {
+    if (inside({r.x + r.width - 140, r.y + 90, 112, 37}, x, y)) {
         panel_scroll_ = 0;
-        m.fetch(extension_input_.value);
+        if (m.busy)
+            m.cancel();
+        else
+            m.fetch(extension_input_.value);
         return;
     }
     if (m.candidate) {
@@ -3343,6 +3432,11 @@ void BrowserUi::extensions_pointer(Rect r, int x, int y) {
             m.reject();
             panel_scroll_ = 0;
         }
+        return;
+    }
+    if (m.restart_required && !m.busy &&
+        inside({r.x + r.width - 256, r.y + r.height - 88, 228, 36}, x, y)) {
+        app_.restart();
         return;
     }
     if (inside({r.x + 28, r.y + r.height - 88, 216, 36}, x, y)) {
@@ -3364,7 +3458,13 @@ void BrowserUi::extensions_pointer(Rect r, int x, int y) {
         app_.extension_page(index, false);
     else if (inside({r.x + 268, top + 60, 104, 34}, x, y))
         app_.extension_page(index, true);
-    else if (inside({r.x + 380, top + 60, 104, 34}, x, y))
+    else if (!m.busy && inside({r.x + 492, top + 60, 104, 34}, x, y)) {
+        m.check_update(index);
+        if (m.items[index].source != "Chrome Web Store") {
+            extension_input_.set("");
+            extension_input_focus_ = true;
+        }
+    } else if (inside({r.x + 380, top + 60, 104, 34}, x, y))
         app_.confirm_action("Remove extension?", m.items[index].name, [this, index] {
             app_.extensions.remove(index);
             panel_scroll_ = 0;
@@ -3382,7 +3482,8 @@ std::string BrowserUi::extensions_report() const {
            ",\"input\":" + rect({r.x + 28, r.y + 90, r.width - 180, 37}) +
            ",\"download\":" + rect({r.x + r.width - 140, r.y + 90, 112, 37}) +
            ",\"install\":" + rect({r.x + 28, r.y + r.height - 88, 158, 36}) +
-           ",\"cancel\":" + rect({r.x + 198, r.y + r.height - 88, 112, 36}) + "}";
+           ",\"cancel\":" + rect({r.x + 198, r.y + r.height - 88, 112, 36}) +
+           ",\"restart\":" + rect({r.x + r.width - 256, r.y + r.height - 88, 228, 36}) + "}";
 }
 } // namespace aura
 

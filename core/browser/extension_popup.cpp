@@ -77,7 +77,9 @@ class ExtensionPopupClient final : public DiagnosticClient,
     }
     void OnLoadEnd(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, int status) override {
         DiagnosticClient::OnLoadEnd(browser, frame, status);
-        if (frame->IsMain() && frame->GetURL().ToString().starts_with("chrome-extension://")) {
+        if (frame->IsMain() && !popup_->page.failed &&
+            frame->GetURL().ToString().starts_with("chrome-extension://")) {
+            owner_.extensions.observe_origin(frame->GetURL());
             owner_.defer([&owner = owner_, popup = popup_] {
                 if (owner.extension_popup == popup && !popup->page.closing) {
                     owner.resize_extension_popup();
@@ -149,7 +151,7 @@ void BrowserController::open_extension_popup(size_t index) {
         ui->toast(tr("Extensions are unavailable in private tabs."));
         return;
     }
-    if (!e.enabled || !e.loaded) {
+    if (!e.enabled || !e.load_requested) {
         ui->toast(tr("Restart Aura to load the extension."));
         return;
     }

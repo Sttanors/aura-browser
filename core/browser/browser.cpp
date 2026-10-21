@@ -1,7 +1,7 @@
-#include "common/platform.hpp"
 #include "core/browser/browser.hpp"
 #include "aura/design_tokens.hpp"
 #include "common/config.hpp"
+#include "common/platform.hpp"
 #include "core/browser/client.hpp"
 #include "include/cef_cookie.h"
 #include "include/cef_frame.h"
@@ -20,8 +20,8 @@
 #include <unistd.h>
 extern char **environ;
 #else
-#include <windows.h>
 #include <shellapi.h>
+#include <windows.h>
 #endif
 #include <spdlog/spdlog.h>
 namespace aura {
@@ -120,7 +120,8 @@ class ToolsClient final : public CefClient, public CefLifeSpanHandler {
 } // namespace
 BrowserController::BrowserController(std::filesystem::path path, std::filesystem::path font,
                                      double factor, bool accelerated)
-    : profile(std::move(path)), scale(factor), extensions(profile.directory), updates(profile.directory), passwords(profile.directory / "passwords.aura") {
+    : profile(std::move(path)), scale(factor), extensions(profile.directory),
+      updates(profile.directory), passwords(profile.directory / "passwords.aura") {
     resources = font.parent_path().parent_path();
     request_policy->protection = std::make_shared<Protection>(resources);
     ui = std::make_unique<BrowserUi>(*this, font);
@@ -232,14 +233,14 @@ void BrowserController::open_new_tab(bool private_tab) {
                                                             : "about:blank",
             private_tab);
 }
-void BrowserController::start(const std::string &initial, bool private_mode) {
+void BrowserController::start(const std::string &initial, bool private_mode, bool resume_once) {
     background_updates_ = !private_mode;
     apply_settings();
     if (private_mode)
         new_tab(initial.empty() ? "aura://newtab" : initial, true);
     else if (!initial.empty())
         new_tab(initial);
-    else if (profile.restore && !profile.session.empty()) {
+    else if ((profile.restore || resume_once) && !profile.session.empty()) {
         auto saved = profile.session;
         int selected = profile.active;
         restoring_ = true;
@@ -343,6 +344,10 @@ void BrowserController::ensure_browser(Tab &t, const std::string &url) {
     t.loading = true;
     t.progress = .04;
     if (t.browser) {
+        if (!t.site_tools_ready) {
+            t.pending_url = url;
+            return;
+        }
         t.browser->GetHost()->WasHidden(&t != current());
         t.browser->GetMainFrame()->LoadURL(url);
         return;
@@ -362,6 +367,7 @@ void BrowserController::ensure_browser(Tab &t, const std::string &url) {
                           r.y + int((caret.y + caret.height) / ui_scale));
         }
     };
+    t.pending_url = url;
     t.client = new BrowserClient(*this, t);
     CefWindowInfo info;
     info.SetAsWindowless(window->handle());
@@ -645,6 +651,23 @@ void BrowserController::answer_dialog(bool accept) {
         dialog.action(accept, dialog.input.value);
     changed();
 }
+void BrowserController::restart() {
+    if (quitting || extensions.busy || passwords.busy || importer.busy || updates.busy()) {
+        ui->toast(tr("Finish the current operation before restarting."));
+        return;
+    }
+    confirm_action(tr("Restart Aura?"), tr("Regular tabs will reopen. Private tabs will close."),
+                   [this] {
+                       try {
+                           save_session();
+                       } catch (...) {
+                           ui->toast(tr("Cannot save the session. Restart cancelled."));
+                           return;
+                       }
+                       restart_on_exit = true;
+                       request_quit(true);
+                   });
+}
 void BrowserController::request_quit(bool force) {
     if (quitting && !force)
         return;
@@ -669,7 +692,7 @@ void BrowserController::request_quit(bool force) {
     quitting = true;
     close_extension_popup(false);
     while (!dialogs.empty())
-        answer_dialog(force);
+        answer_dialog(force && dialogs.front().before_unload);
     quitting = true;
     for (auto &t : tabs) {
         t->closing = true;
@@ -734,7 +757,7 @@ void BrowserController::save_session() {
 }
 std::string BrowserController::report() const {
     std::ostringstream out;
-    out << "{\"product\":\"Aura\",\"window\":" << window->native_id()
+    out << "{\"product\":\"Aura\",\"pid\":" << process_id() << ",\"window\":" << window->native_id()
         << ",\"cef_created\":" << created_ << ",\"cef_closed\":" << closed_ << ",\"compositor\":\""
         << json_escape(window->compositor()) << "\",\"renderer\":\""
         << json_escape(window->renderer()) << "\",\"presentation_frames\":" << window->frames()
@@ -803,12 +826,17 @@ void BrowserController::browser_created(int id, CefRefPtr<CefBrowser> browser) {
         t->browser = browser;
         if (t->private_tab)
             configure_font_preferences(browser->GetHost()->GetRequestContext());
-        const auto initial = t->page.url;
+
         t->devtools = new DevToolsSession(browser);
         t->devtools->attach();
-        setup_site_tools(id, [this, id, initial] {
-            if (auto t = tab(id); t && t->browser && !t->closing)
-                t->browser->GetMainFrame()->LoadURL(initial);
+        setup_site_tools(id, [this, id] {
+            if (auto t = tab(id); t && t->browser && !t->closing) {
+                t->site_tools_ready = true;
+                auto initial = std::move(t->pending_url);
+                t->pending_url.clear();
+                if (!t->ntp && !initial.empty())
+                    t->browser->GetMainFrame()->LoadURL(initial);
+            }
         });
         ++created_;
     }
@@ -1034,7 +1062,8 @@ void BrowserController::open_directory(const std::filesystem::path &directory) {
     const auto path = utf8_path(directory);
 #ifdef _WIN32
     const auto folder = path_from_utf8(path).wstring();
-    if (reinterpret_cast<INT_PTR>(ShellExecuteW(window->handle(), L"open", folder.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
+    if (reinterpret_cast<INT_PTR>(ShellExecuteW(window->handle(), L"open", folder.c_str(), nullptr,
+                                                nullptr, SW_SHOWNORMAL)) <= 32)
         ui->toast(tr("Could not open the folder"));
 #else
     pid_t child{};

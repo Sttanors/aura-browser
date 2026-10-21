@@ -165,7 +165,10 @@ Open the **puzzle** menu to manage extensions. On a Chrome Web Store extension p
 **Install in Aura**, or paste a store URL, extension ID or path to a signed `.crx` into the manager.
 Aura verifies the CRX3 signature and ID, then asks you to review permissions and confirm installation.
 Installing, updating, disabling or removing extensions takes effect after restarting Aura.
-To update, download the same ID again and confirm its permissions.
+Use **Check update** for a Web Store installation, or select a newer signed CRX for a local one.
+Added permissions are highlighted. **Restart Aura** applies changes and restores normal tabs; private tabs close.
+The manager distinguishes a requested load from observed activity. See [extension lifecycle](docs/extensions-lifecycle.md)
+for limits and verification. These changes are in source builds after `v0.2.0-preview.3.1`.
 
 Extension popups appear as overlays below the toolbar. Escape, clicking outside, close or clicking the
 icon again dismisses them. Options pages open in tabs. Use **Pin** or the popup pin icon for quick toolbar

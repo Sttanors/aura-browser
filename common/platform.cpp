@@ -1,9 +1,21 @@
 #include "common/platform.hpp"
+#include "common/config.hpp"
 #include <stdexcept>
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <spawn.h>
+#include <unistd.h>
+extern char **environ;
 #endif
 namespace aura {
+uint64_t process_id() {
+#ifdef _WIN32
+    return GetCurrentProcessId();
+#else
+    return static_cast<uint64_t>(getpid());
+#endif
+}
 std::filesystem::path executable_directory() {
 #ifdef _WIN32
     std::wstring path(32768, L'\0');
@@ -14,6 +26,49 @@ std::filesystem::path executable_directory() {
     return std::filesystem::path(path).parent_path();
 #else
     return std::filesystem::read_symlink("/proc/self/exe").parent_path();
+#endif
+}
+bool launch_process(const std::filesystem::path &executable,
+                    const std::vector<std::string> &arguments) {
+#ifdef _WIN32
+    auto quote = [](const std::wstring &value) {
+        std::wstring out = L"\"";
+        size_t slashes = 0;
+        for (wchar_t c : value) {
+            if (c == L'\\') {
+                ++slashes;
+                continue;
+            }
+            out.append(c == L'"' ? slashes * 2 + 1 : slashes, L'\\');
+            slashes = 0;
+            out += c;
+        }
+        out.append(slashes * 2, L'\\');
+        out += L'"';
+        return out;
+    };
+    std::wstring command = quote(executable.native());
+    for (const auto &arg : arguments)
+        command += L" " + quote(path_from_utf8(arg).native());
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION child{};
+    if (!CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, FALSE,
+                        CREATE_NEW_PROCESS_GROUP, nullptr, executable.parent_path().c_str(),
+                        &startup, &child))
+        return false;
+    CloseHandle(child.hThread);
+    CloseHandle(child.hProcess);
+    return true;
+#else
+    std::vector<std::string> owned{executable.string()};
+    owned.insert(owned.end(), arguments.begin(), arguments.end());
+    std::vector<char *> argv;
+    for (auto &arg : owned)
+        argv.push_back(arg.data());
+    argv.push_back(nullptr);
+    pid_t pid = 0;
+    return posix_spawn(&pid, executable.c_str(), nullptr, nullptr, argv.data(), environ) == 0;
 #endif
 }
 std::tm local_time(std::time_t value) {

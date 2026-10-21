@@ -3,11 +3,11 @@
 #include "core/browser/devtools.hpp"
 #include "core/browser/extensions.hpp"
 #include "core/browser/i18n.hpp"
+#include "core/browser/imports.hpp"
+#include "core/browser/passwords.hpp"
 #include "core/browser/profile.hpp"
 #include "core/browser/protection.hpp"
 #include "core/browser/updates.hpp"
-#include "core/browser/imports.hpp"
-#include "core/browser/passwords.hpp"
 #include "core/cef/diagnostic_client.hpp"
 #include "include/cef_context_menu_handler.h"
 #include "include/cef_download_handler.h"
@@ -29,7 +29,8 @@ struct Tab {
     bool ntp = true, private_tab = false, pinned = false, loading = false, back = false,
          forward = false, muted = false, closing = false;
     double progress = 0, zoom = 0;
-    std::string icon_url;
+    std::string icon_url, pending_url;
+    bool site_tools_ready = false;
     CefRefPtr<DevToolsSession> devtools;
     std::map<int, std::string> protection_contexts;
     std::string protection_script;
@@ -95,13 +96,15 @@ class BrowserController {
     BrowserImporter importer;
     PasswordManager passwords;
     void page_login(bool fill, size_t index = 0);
-    bool install_update_on_exit = false;
+    bool install_update_on_exit = false, restart_on_exit = false;
+    void restart();
+    void refresh_extension_state();
     std::shared_ptr<ExtensionPopup> extension_popup;
     std::filesystem::path resources;
     std::shared_ptr<RequestPolicy> request_policy = std::make_shared<RequestPolicy>();
     Tab *current();
     Tab *tab(int id);
-    void start(const std::string &initial, bool private_mode);
+    void start(const std::string &initial, bool private_mode, bool resume_once = false);
     void tick();
     void changed(bool persistent = false);
     void new_tab(std::string url = "aura://newtab", bool private_tab = false,
@@ -158,7 +161,8 @@ class BrowserController {
     void open_new_tab(bool private_tab = false);
     std::filesystem::path downloads_directory() const;
     void clear_data(const std::string &kind);
-    void confirm_action(std::string title, std::string message, std::function<void()> action, bool sensitive = false);
+    void confirm_action(std::string title, std::string message, std::function<void()> action,
+                        bool sensitive = false);
     void cancel_permissions(int tab_id);
     void configure_permissions(CefRefPtr<CefRequestContext> context, const std::string &url = "",
                                const std::string &top = "");

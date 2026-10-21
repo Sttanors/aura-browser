@@ -1,11 +1,14 @@
-#include "common/platform.hpp"
 #include "core/browser/extensions.hpp"
 #include "common/config.hpp"
+#include "common/platform.hpp"
 #include "core/browser/protection.hpp"
 #include "include/cef_parser.h"
+#include "include/cef_version.h"
 #include <algorithm>
 #include <archive.h>
 #include <archive_entry.h>
+#include <array>
+#include <charconv>
 #include <chrono>
 #include <cstring>
 #include <fstream>
@@ -14,7 +17,62 @@
 #include <set>
 #include <toml++/toml.hpp>
 namespace aura {
+std::optional<int> compare_extension_versions(const std::string &a, const std::string &b) {
+    auto parse = [](const std::string &text) -> std::optional<std::array<int, 4>> {
+        std::array<int, 4> numbers{};
+        size_t start = 0, index = 0;
+        while (start < text.size() && index < 4) {
+            auto end = text.find('.', start);
+            if (end == std::string::npos)
+                end = text.size();
+            if (end == start || (end - start > 1 && text[start] == '0'))
+                return {};
+            int value = 0;
+            auto parsed = std::from_chars(text.data() + start, text.data() + end, value);
+            if (parsed.ec != std::errc{} || parsed.ptr != text.data() + end || value < 0 ||
+                value > 65535)
+                return {};
+            numbers[index++] = value;
+            if (end == text.size()) {
+                start = end;
+                break;
+            }
+            start = end + 1;
+            if (start == text.size())
+                return {};
+        }
+        if (start != text.size() || index == 0 ||
+            std::all_of(numbers.begin(), numbers.end(), [](int n) { return n == 0; }))
+            return {};
+        return numbers;
+    };
+    auto x = parse(a), y = parse(b);
+    if (!x || !y)
+        return {};
+    return *x < *y ? -1 : *x > *y ? 1 : 0;
+}
 namespace {
+std::string chromium_version() {
+    return std::to_string(CHROME_VERSION_MAJOR) + "." + std::to_string(CHROME_VERSION_MINOR) + "." +
+           std::to_string(CHROME_VERSION_BUILD) + "." + std::to_string(CHROME_VERSION_PATCH);
+}
+std::string read_crx_file(const std::filesystem::path &path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in)
+        throw std::runtime_error("Cannot read this extension file.");
+    std::string bytes;
+    char chunk[65536];
+    while (in) {
+        in.read(chunk, sizeof chunk);
+        auto n = in.gcount();
+        if (bytes.size() + n > 50 * 1024 * 1024)
+            throw std::runtime_error("Extension package exceeds 50 MB.");
+        bytes.append(chunk, static_cast<size_t>(n));
+    }
+    if (!in.eof())
+        throw std::runtime_error("Cannot read this extension file.");
+    return bytes;
+}
 bool valid_id(const std::string &id) {
     return id.size() == 32 &&
            std::all_of(id.begin(), id.end(), [](char c) { return c >= 'a' && c <= 'p'; });
@@ -132,8 +190,16 @@ InstalledExtension manifest(const std::filesystem::path &dir, const std::string 
     e.id = id;
     e.name = m->GetString("name").ToString();
     e.version = m->GetString("version").ToString();
-    if (e.name.empty() || e.version.empty() || e.name.size() > 256 || e.version.size() > 64)
+    if (e.name.empty() || !compare_extension_versions(e.version, e.version) ||
+        e.name.size() > 256 || e.version.size() > 64)
         throw std::runtime_error("Invalid extension name or version");
+    if (m->HasKey("minimum_chrome_version")) {
+        auto order =
+            compare_extension_versions(m->GetString("minimum_chrome_version"), chromium_version());
+        if (!order || *order > 0)
+            throw std::runtime_error(
+                "This extension requires a newer Chromium version. Update Aura first.");
+    }
     // Resolve the displayed Web Store name from the bundled default locale.
     if (e.name.starts_with("__MSG_") && e.name.ends_with("__")) {
         auto locale = m->GetString("default_locale").ToString();
@@ -163,6 +229,11 @@ InstalledExtension manifest(const std::filesystem::path &dir, const std::string 
             for (size_t i = 0; i < list->GetSize(); i++)
                 if (list->GetType(i) == VTYPE_STRING)
                     permissions.insert(list->GetString(i).ToString());
+    for (const auto *kind : {"optional_permissions", "optional_host_permissions"})
+        if (auto list = m->GetList(kind))
+            for (size_t i = 0; i < list->GetSize(); ++i)
+                if (list->GetType(i) == VTYPE_STRING)
+                    permissions.insert("optional:" + list->GetString(i).ToString());
     // Content scripts can access matched sites even without host_permissions.
     if (auto list = m->GetList("content_scripts"))
         for (size_t i = 0; i < list->GetSize(); i++)
@@ -172,6 +243,26 @@ InstalledExtension manifest(const std::filesystem::path &dir, const std::string 
                         permissions.insert(matches->GetString(j).ToString());
     e.permissions.assign(permissions.begin(), permissions.end());
     e.icon = manifest_icon(m);
+    if (auto background = m->GetDictionary("background");
+        background && background->HasKey("service_worker")) {
+        const auto worker = entry(background, "service_worker");
+        if (worker.empty() || !std::filesystem::is_regular_file(dir / path_from_utf8(worker)))
+            throw std::runtime_error("Extension background worker is missing or invalid.");
+        const auto original = path_from_utf8(worker);
+        const auto alias =
+            original.parent_path() / path_from_utf8(utf8_path(original.stem()) + "-aura-" +
+                                                    e.version + utf8_path(original.extension()));
+        try {
+            std::filesystem::copy_file(dir / original, dir / alias,
+                                       std::filesystem::copy_options::none);
+        } catch (...) {
+            throw std::runtime_error("Cannot prepare the extension background worker.");
+        }
+        auto portable = alias.generic_u8string();
+        background->SetString(
+            "service_worker",
+            std::string(reinterpret_cast<const char *>(portable.data()), portable.size()));
+    }
     m->SetString("key", key); // Preserve the signed Web Store ID when loading unpacked in CEF.
     std::ofstream out(dir / "manifest.json", std::ios::binary);
     out << CefWriteJSON(value, JSON_WRITER_PRETTY_PRINT).ToString();
@@ -325,7 +416,8 @@ ExtensionManager::ExtensionManager(std::filesystem::path profile) : root_(profil
                 e.version = (*row)["version"].value_or("");
                 e.directory = (*row)["directory"].value_or("");
                 e.enabled = (*row)["enabled"].value_or(false);
-                e.loaded = e.enabled;
+                e.load_requested = e.enabled;
+                e.runtime_version = e.enabled ? e.version : "";
                 e.pinned = (*row)["pinned"].value_or(false);
                 e.icon = (*row)["icon"].value_or("");
                 if (!e.icon.empty() && !safe_path(e.icon))
@@ -411,17 +503,28 @@ void ExtensionManager::unpack(std::string bytes, std::string id, std::string sou
     auto directory =
         root_ /
         ("pending-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    future_ = std::async(std::launch::async, [bytes = std::move(bytes), id, source, directory] {
-        auto c = inspect_crx(bytes, id, directory);
-        c.extension.source = source;
-        return c;
-    });
+    try {
+        future_ = std::async(std::launch::async, [bytes = std::move(bytes), id, source, directory] {
+            auto c = inspect_crx(bytes, id, directory);
+            c.extension.source = source;
+            return c;
+        });
+    } catch (...) {
+        busy = false;
+        status = "Cannot start extension verification.";
+    }
 }
 class ExtensionFetch final : public CefURLRequestClient {
   public:
     ExtensionFetch(ExtensionManager &manager, std::string id)
-        : manager_(manager), id_(std::move(id)) {}
+        : manager_(manager), id_(std::move(id)), generation_(manager.request_generation_) {}
     void OnRequestComplete(CefRefPtr<CefURLRequest> request) override {
+        if (generation_ != manager_.request_generation_)
+            return;
+        if (manager_.discard_download_) {
+            manager_.busy = false;
+            return;
+        }
         auto response = request->GetResponse();
         if (request->GetRequestStatus() != UR_SUCCESS || !response ||
             response->GetStatus() != 200 ||
@@ -433,6 +536,10 @@ class ExtensionFetch final : public CefURLRequestClient {
             manager_.unpack(std::move(bytes_), id_, "Chrome Web Store");
     }
     void OnDownloadData(CefRefPtr<CefURLRequest> request, const void *data, size_t size) override {
+        if (generation_ != manager_.request_generation_) {
+            request->Cancel();
+            return;
+        }
         if (bytes_.size() + size > 50 * 1024 * 1024) {
             request->Cancel();
             return;
@@ -449,88 +556,213 @@ class ExtensionFetch final : public CefURLRequestClient {
   private:
     ExtensionManager &manager_;
     std::string id_, bytes_;
+    uint64_t generation_;
     IMPLEMENT_REFCOUNTING(ExtensionFetch);
 };
 void ExtensionManager::fetch(const std::string &input) {
     if (busy)
         return;
     reject();
+    discard_download_ = false;
+    ++request_generation_;
     status.clear();
     busy = true;
     auto id = chrome_store_id(input);
     if (id.empty()) {
-        auto path = path_from_utf8(input);
-        if (!path.is_absolute() || path.extension() != ".crx" ||
-            !std::filesystem::is_regular_file(path) ||
-            std::filesystem::file_size(path) > 50 * 1024 * 1024) {
+        try {
+            auto path = path_from_utf8(input);
+            if (!path.is_absolute() || path.extension() != ".crx" ||
+                !std::filesystem::is_regular_file(path) ||
+                std::filesystem::file_size(path) > 50 * 1024 * 1024) {
+                busy = false;
+                status = "Enter a Chrome Web Store URL, extension ID or absolute .crx file path.";
+                return;
+            }
+            const auto directory =
+                root_ /
+                ("pending-" +
+                 std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+            future_ = std::async(std::launch::async, [path, directory] {
+                auto candidate = inspect_crx(read_crx_file(path), "", directory);
+                candidate.extension.source = "Local CRX3";
+                return candidate;
+            });
+        } catch (...) {
             busy = false;
-            status = "Enter a Chrome Web Store URL, extension ID or absolute .crx file path.";
-            return;
+            status = "Cannot read this extension file.";
         }
-        unpack(read_resource(path), "", "Local CRX3");
         return;
     }
     status = "Downloading and verifying the extension...";
     auto req = CefRequest::Create();
-    req->SetURL("https://clients2.google.com/service/update2/"
-                "crx?response=redirect&prodversion=154.0.8037.98&acceptformat=crx3&x=id%3D" +
-                id + "%26uc");
+    req->SetURL("https://clients2.google.com/service/update2/crx?response=redirect&prodversion=" +
+                chromium_version() + "&acceptformat=crx3&x=id%3D" + id + "%26uc");
     req->SetFlags(UR_FLAG_NONE);
+    deadline_ = std::chrono::steady_clock::now() + std::chrono::seconds(45);
     request_ = CefURLRequest::Create(req, new ExtensionFetch(*this, id), nullptr);
     if (!request_) {
         busy = false;
         status = "Could not start extension download.";
     }
 }
+void ExtensionManager::cancel() {
+    if (!busy)
+        return;
+    discard_download_ = true;
+    ++request_generation_;
+    if (request_)
+        request_->Cancel();
+    status = "Extension operation cancelled.";
+    if (!future_.valid())
+        busy = false;
+}
+void ExtensionManager::check_update(size_t index) {
+    if (index >= items.size() || busy)
+        return;
+    if (items[index].source != "Chrome Web Store") {
+        status = "Choose a newer signed CRX file to update this local extension.";
+        return;
+    }
+    fetch(items[index].id);
+}
+std::vector<std::string> ExtensionManager::added_permissions() const {
+    if (!candidate)
+        return {};
+    auto permissions = candidate->extension.permissions;
+    for (const auto &e : items)
+        if (e.id == candidate->extension.id) {
+            std::erase_if(permissions, [&](const auto &p) {
+                return std::find(e.permissions.begin(), e.permissions.end(), p) !=
+                       e.permissions.end();
+            });
+            break;
+        }
+    return permissions;
+}
 void ExtensionManager::tick() {
+    if (busy && request_ && !future_.valid() && std::chrono::steady_clock::now() >= deadline_) {
+        cancel();
+        status = "Extension download timed out. Try again.";
+    }
     if (future_.valid() && future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
         try {
-            candidate = std::make_unique<ExtensionCandidate>(future_.get());
-            status = "Review permissions before installing.";
+            auto result = future_.get();
+            if (discard_download_) {
+                std::error_code error;
+                std::filesystem::remove_all(result.staging, error);
+            } else {
+                candidate = std::make_unique<ExtensionCandidate>(std::move(result));
+                status = "Review permissions before installing.";
+                for (const auto &old : items)
+                    if (old.id == candidate->extension.id) {
+                        auto order =
+                            compare_extension_versions(candidate->extension.version, old.version);
+                        if (!order || *order <= 0) {
+                            reject();
+                            status = order && *order == 0
+                                         ? "This extension is already up to date."
+                                         : "An older extension version was rejected.";
+                        } else
+                            status = "Review the update and its new permissions.";
+                        break;
+                    }
+            }
         } catch (const std::exception &e) {
-            status = e.what();
+            if (!discard_download_)
+                status = e.what();
         }
         busy = false;
         request_ = nullptr;
     }
 }
 void ExtensionManager::accept() {
-    if (!candidate)
+    if (!candidate || busy)
         return;
     auto e = candidate->extension;
     for (const auto &old : items)
-        if (old.id == e.id)
+        if (old.id == e.id) {
+            auto order = compare_extension_versions(e.version, old.version);
+            if (!order || *order <= 0) {
+                reject();
+                status = order && *order == 0 ? "This extension is already up to date."
+                                              : "An older extension version was rejected.";
+                return;
+            }
             e.pinned = old.pinned;
+            e.enabled = old.enabled;
+            e.load_requested = old.load_requested;
+            e.observed = old.observed;
+            e.runtime_version = old.runtime_version;
+            e.pending_update = true;
+        }
+    auto before = items;
     e.directory = e.id + "-" + candidate->staging.filename().string().substr(8);
-    auto target = root_ / e.directory;
-    std::filesystem::rename(candidate->staging, target);
-    std::erase_if(items, [&](auto &x) { return x.id == e.id; });
-    items.push_back(e);
-    candidate.reset();
-    save();
-    restart_required = true;
-    status = "Installed. Restart Aura to load the extension.";
+    const auto staging = candidate->staging, target = root_ / e.directory;
+    bool moved = false;
+    try {
+        std::filesystem::rename(staging, target);
+        moved = true;
+        std::erase_if(items, [&](const auto &x) { return x.id == e.id; });
+        items.push_back(e);
+        save();
+        candidate.reset();
+        restart_required = true;
+        status = "Installed. Restart Aura to load the extension.";
+    } catch (...) {
+        items = std::move(before);
+        if (moved) {
+            std::error_code error;
+            std::filesystem::rename(target, staging, error);
+            if (error)
+                candidate.reset();
+        }
+        status = "Cannot save extension changes. Previous settings were kept.";
+    }
 }
 void ExtensionManager::reject() {
     if (candidate) {
-        std::filesystem::remove_all(candidate->staging);
+        std::error_code error;
+        std::filesystem::remove_all(candidate->staging, error);
         candidate.reset();
         status = "Installation cancelled.";
     }
 }
 void ExtensionManager::toggle(size_t i) {
-    if (i >= items.size())
+    if (i >= items.size() || busy)
         return;
     items[i].enabled = !items[i].enabled;
-    save();
-    restart_required = true;
-    status = "Restart Aura to apply extension changes.";
+    try {
+        save();
+        restart_required = true;
+        status = "Restart Aura to apply extension changes.";
+    } catch (...) {
+        items[i].enabled = !items[i].enabled;
+        status = "Cannot save extension changes. Previous settings were kept.";
+    }
+}
+bool ExtensionManager::observe_origin(const std::string &origin) {
+    if (!origin.starts_with("chrome-extension://"))
+        return false;
+    auto id = origin.substr(19, 32);
+    if (origin.size() > 51 && origin[51] != '/')
+        return false;
+    for (auto &e : items)
+        if (e.id == id && e.load_requested && !e.observed) {
+            e.observed = true;
+            return true;
+        }
+    return false;
 }
 void ExtensionManager::pin(size_t index) {
     if (index >= items.size())
         return;
     items[index].pinned = !items[index].pinned;
-    save();
+    try {
+        save();
+    } catch (...) {
+        items[index].pinned = !items[index].pinned;
+        status = "Cannot save extension changes. Previous settings were kept.";
+    }
 }
 std::filesystem::path ExtensionManager::icon_path(size_t index) const {
     if (index >= items.size())
@@ -548,12 +780,20 @@ std::filesystem::path ExtensionManager::icon_path(size_t index) const {
 void ExtensionManager::remove(size_t i) {
     if (i >= items.size())
         return;
+    auto before = items;
     items.erase(items.begin() + i);
-    save();
-    restart_required = true;
-    status = "Removed. Restart Aura to finish unloading the extension.";
+    try {
+        save();
+        restart_required = true;
+        status = "Removed. Restart Aura to finish unloading the extension.";
+    } catch (...) {
+        items = std::move(before);
+        status = "Cannot save extension changes. Previous settings were kept.";
+    }
 }
 void ExtensionManager::shutdown() {
+    discard_download_ = true;
+    ++request_generation_;
     if (request_)
         request_->Cancel();
     request_ = nullptr;
@@ -578,9 +818,24 @@ std::string ExtensionManager::report() const {
         first = false;
         out += "{\"id\":" + json_quote(e.id) + ",\"name\":" + json_quote(e.name) +
                ",\"enabled\":" + (e.enabled ? "true" : "false") +
-               ",\"loaded\":" + (e.loaded ? "true" : "false") +
+               ",\"loaded\":" + (e.observed ? "true" : "false") +
+               ",\"load_requested\":" + (e.load_requested ? "true" : "false") +
+               ",\"runtime_version\":" + json_quote(e.runtime_version) +
+               ",\"observed\":" + (e.observed ? "true" : "false") +
+               ",\"pending_update\":" + (e.pending_update ? "true" : "false") +
+               ",\"version\":" + json_quote(e.version) +
                ",\"pinned\":" + (e.pinned ? "true" : "false") + ",\"icon\":" + json_quote(e.icon) +
                "}";
+    }
+    out += "],\"candidate_version\":" +
+           (candidate ? json_quote(candidate->extension.version) : "null") +
+           ",\"added_permissions\":[";
+    first = true;
+    for (const auto &permission : added_permissions()) {
+        if (!first)
+            out += ",";
+        first = false;
+        out += json_quote(permission);
     }
     return out + "]}";
 }

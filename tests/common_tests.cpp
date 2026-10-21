@@ -1,14 +1,14 @@
-#include <thread>
 #include "aura/design_tokens.hpp"
 #include "common/config.hpp"
-#include "common/platform.hpp"
-#include <fstream>
 #include "common/geometry.hpp"
 #include "common/paint_buffer.hpp"
+#include "common/platform.hpp"
 #include "common/pump_schedule.hpp"
 #include <climits>
+#include <fstream>
 #include <gtest/gtest.h>
 #include <limits>
+#include <thread>
 
 using namespace aura;
 TEST(PaintBuffer, FirstPaintOwnsAllPixelsEvenWhenDirtyRegionIsSmall) {
@@ -415,18 +415,38 @@ TEST(Profile, DynamicShortcutsPersistOrderAndMigrateLegacySlots) {
 }
 
 TEST(Platform, ReplacesExistingUnicodeFileAndPreservesItOnFailure) {
-    const auto root=std::filesystem::temp_directory_path()/path_from_utf8("aura-замена-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto root =
+        std::filesystem::temp_directory_path() /
+        path_from_utf8("aura-замена-" +
+                       std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     std::filesystem::create_directories(root);
-    const auto target=root/path_from_utf8("профиль.toml"),temporary=root/"pending";
-    {std::ofstream stream(target);stream<<"old";}
-    {std::ofstream stream(temporary);stream<<"new";}
+    const auto target = root / path_from_utf8("профиль.toml"), temporary = root / "pending";
+    {
+        std::ofstream stream(target);
+        stream << "old";
+    }
+    {
+        std::ofstream stream(temporary);
+        stream << "new";
+    }
     std::error_code error;
-    replace_file(temporary,target,error);
-    EXPECT_FALSE(error);EXPECT_FALSE(std::filesystem::exists(temporary));
-    {std::ifstream stream(target);std::string value;stream>>value;EXPECT_EQ(value,"new");}
-    replace_file(temporary,target,error);
+    replace_file(temporary, target, error);
+    EXPECT_FALSE(error);
+    EXPECT_FALSE(std::filesystem::exists(temporary));
+    {
+        std::ifstream stream(target);
+        std::string value;
+        stream >> value;
+        EXPECT_EQ(value, "new");
+    }
+    replace_file(temporary, target, error);
     EXPECT_TRUE(error);
-    {std::ifstream stream(target);std::string value;stream>>value;EXPECT_EQ(value,"new");}
+    {
+        std::ifstream stream(target);
+        std::string value;
+        stream >> value;
+        EXPECT_EQ(value, "new");
+    }
     std::filesystem::remove_all(root);
 }
 
@@ -434,13 +454,21 @@ TEST(Platform, ReplacesExistingUnicodeFileAndPreservesItOnFailure) {
 #include <windows.h>
 TEST(Platform, ReplacesFileAfterTemporaryWindowsReaderLock) {
     const auto root = std::filesystem::temp_directory_path() /
-        ("aura-sharing-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+                      ("aura-sharing-" +
+                       std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     std::filesystem::create_directories(root);
     const auto target = root / "target", pending = root / "pending";
-    { std::ofstream file(target); file << "before"; }
-    { std::ofstream file(pending); file << "after"; }
-    const auto reader = CreateFileW(target.c_str(), GENERIC_READ,
-        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    {
+        std::ofstream file(target);
+        file << "before";
+    }
+    {
+        std::ofstream file(pending);
+        file << "after";
+    }
+    const auto reader =
+        CreateFileW(target.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     ASSERT_NE(reader, INVALID_HANDLE_VALUE);
     std::thread release([reader] {
         std::this_thread::sleep_for(std::chrono::milliseconds(30));
@@ -450,8 +478,47 @@ TEST(Platform, ReplacesFileAfterTemporaryWindowsReaderLock) {
     replace_file(pending, target, error);
     release.join();
     EXPECT_FALSE(error);
-    { std::ifstream file(target); std::string value; file >> value; EXPECT_EQ(value, "after"); }
+    {
+        std::ifstream file(target);
+        std::string value;
+        file >> value;
+        EXPECT_EQ(value, "after");
+    }
     EXPECT_FALSE(std::filesystem::exists(pending));
     std::filesystem::remove_all(root);
 }
 #endif
+
+TEST(Platform, ProcessArgumentsPreserveUnicodeQuotesAndTrailingSlashes) {
+    auto root = std::filesystem::temp_directory_path() /
+                ("aura-launch-" +
+                 std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directory(root);
+    const auto target = root / path_from_utf8("Аргументы с пробелами.txt");
+    const std::vector<std::string> values = {
+        "plain", "with spaces",    "quote\"inside", "C:\\path with spaces\\", "Русский",
+        "",      "back\\\\\"quote"};
+    std::vector<std::string> arguments = {
+        "-c",
+        "from pathlib import Path; import sys; p=Path(sys.argv[1]); t=p.with_suffix('.tmp'); "
+        "t.write_bytes(chr(0).join(sys.argv[2:]).encode('utf-8')); t.replace(p)",
+        utf8_path(target)};
+    arguments.insert(arguments.end(), values.begin(), values.end());
+    ASSERT_TRUE(launch_process(path_from_utf8(AURA_TEST_PYTHON), arguments));
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!std::filesystem::exists(target) && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    ASSERT_TRUE(std::filesystem::exists(target));
+    std::ifstream file(target, std::ios::binary);
+    std::string actual{std::istreambuf_iterator<char>(file), {}};
+    std::string expected;
+    for (const auto &value : values) {
+        if (&value != &values.front())
+            expected += '\0';
+        expected += value;
+    }
+    EXPECT_EQ(actual, expected);
+    file.close();
+    std::filesystem::remove_all(root);
+    EXPECT_FALSE(launch_process(root / "nonexistent-program", {}));
+}

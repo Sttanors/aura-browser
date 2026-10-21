@@ -39,6 +39,7 @@ endif()
 if(BUILD_TESTING)
   add_executable(aura_tests tests/common_tests.cpp tests/update_tests.cpp tests/password_tests.cpp)
   target_link_libraries(aura_tests PRIVATE aura_common GTest::gtest_main)
+  target_compile_definitions(aura_tests PRIVATE AURA_TEST_PYTHON="${Python3_EXECUTABLE}")
   include(GoogleTest)
   gtest_discover_tests(aura_tests)
   add_test(NAME bootstrap_validation COMMAND "${Python3_EXECUTABLE}" -m unittest discover

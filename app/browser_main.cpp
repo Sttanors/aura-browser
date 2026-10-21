@@ -51,6 +51,16 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
             throw std::runtime_error("Unknown theme");
         browser.profile.theme = it - std::begin(ids);
     }
+    std::vector<std::string> restart_arguments{"--data-dir=" + aura::utf8_path(path),
+                                               "--resume-session"};
+    for (const char *name : {"report", "scale", "gpu", "software-rendering"})
+        if (command->HasSwitch(name)) {
+            auto value = command->GetSwitchValue(name).ToString();
+            if (std::string_view(name) == "report" && !value.empty())
+                value = aura::utf8_path(std::filesystem::absolute(aura::path_from_utf8(value)));
+            restart_arguments.push_back(std::string("--") + name +
+                                        (value.empty() ? "" : "=" + value));
+        }
     auto extension_paths = browser.extensions.enabled_paths();
     if (command->HasSwitch("load-extension"))
         extension_paths = command->GetSwitchValue("load-extension").ToString();
@@ -97,7 +107,8 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
                 throw std::runtime_error("Chromium startup timed out");
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
-        browser.start(command->GetSwitchValue("url").ToString(), command->HasSwitch("private"));
+        browser.start(command->GetSwitchValue("url").ToString(), command->HasSwitch("private"),
+                      command->HasSwitch("resume-session"));
         browser.window->show();
         auto last_report = std::chrono::steady_clock::now();
         auto last_pump = std::chrono::steady_clock::now();
@@ -137,6 +148,17 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
     if (browser.install_update_on_exit && !browser.updates.launch_installer()) {
         spdlog::error("Could not launch the verified Aura installer");
         std::cerr << "Aura: could not launch the verified update installer.\n";
+    }
+    if (browser.restart_on_exit && !browser.install_update_on_exit) {
+#ifdef _WIN32
+        const auto executable = binary / "aura_browser.exe";
+#else
+        const auto executable = binary / "aura_browser";
+#endif
+        if (!aura::launch_process(executable, restart_arguments)) {
+            spdlog::error("Could not restart Aura");
+            std::cerr << "Aura: could not restart. Open Aura again to restore the saved session.\n";
+        }
     }
     spdlog::info("Aura closed; all browser callbacks completed before CefShutdown");
     spdlog::shutdown();
