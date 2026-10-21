@@ -24,16 +24,22 @@ docker run --rm --user "$(id -u):$(id -g)" --cpus=4 --memory=6g --memory-swap=6g
 if [[ ${1:-} == --test ]]; then
     for task_family in debian arch fedora; do
         case $task_family in
-            debian) task_image=debian:trixie-slim; task_package='aura-browser_0.2.0-preview.3-1_amd64.deb' ;;
-            arch) task_image=archlinux:base; task_package=aura-browser-0.2.0rc3-1-x86_64.pkg.tar.gz ;;
-            fedora) task_image=fedora:44; task_package='aura-browser-0.2.0-preview.3-1.x86_64.rpm' ;;
+            debian) task_image=debian:trixie-slim; task_package=$(python3 "$task_root/scripts/release_identity.py" --package debian) ;;
+            arch) task_image=archlinux:base; task_package=$(python3 "$task_root/scripts/release_identity.py" --package arch) ;;
+            fedora) task_image=fedora:44; task_package=$(python3 "$task_root/scripts/release_identity.py" --package fedora) ;;
         esac
+        task_version=$(python3 "$task_root/scripts/release_identity.py" --version)
+        if [[ $task_family == arch ]]; then
+            task_package_version="$(python3 "$task_root/scripts/release_identity.py" --arch-version)-1"
+        else
+            task_package_version="$(python3 "$task_root/scripts/release_identity.py" --native-version)-1"
+        fi
         docker run --rm --cpus=2 --memory=2g --memory-swap=2g --pids-limit=512 \
             -e AURA_PACKAGE_TEST_CONTAINER=1 -v "$task_root:/source:ro" \
             --mount type=tmpfs,destination=/source/local \
             --mount type=tmpfs,destination=/source/.aura-profile \
             --mount type=tmpfs,destination=/source/.git \
             -v "$task_root/artifacts/native-packages:/packages:ro" "$task_image" \
-            sh /source/packaging/linux/native/test-installed.sh "$task_family" "/packages/$task_package"
+            sh /source/packaging/linux/native/test-installed.sh "$task_family" "/packages/$task_package" "$task_version" "$task_package_version"
     done
 fi

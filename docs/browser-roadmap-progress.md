@@ -15,7 +15,7 @@
 | 5 | Окна, приватные окна, восстановление сессий | Реализован, проверен; оговорки ниже |
 | 6 | Обновление и возможности блокировщика рекламы | Реализован, проверен; оговорки ниже |
 | 7 | Производительность Linux и Wayland | Реализован, проверен; оговорки ниже |
-| 8 | Проверка совместимости сайтов и окружений | Ожидает |
+| 8 | Проверка совместимости сайтов и окружений | В работе |
 
 ## 1. Обновления и подлинность
 
@@ -676,3 +676,40 @@ portable packaging и установленный branded browser. Сбой ст�
 Native Wayland surfaces и аппаратный GPU остаются отдельными нереализованными/
 непроверенными возможностями, прежний физический freeze не объявляется исправленным.
 Переход к пункту 8. Просмотрен итоговый page-125-1.25.png, видимых швов/ореолов нет.
+
+## 8. Совместимость сайтов и окружений
+
+Начало: 2026-10-21. Критерии: реальные страницы и локальные API/security/media
+сценарии без отключения CSP/CORS/TLS/sandbox; матрица подтверждённых/ограниченных/
+непроверенных возможностей. Отдельно install/reinstall/remove/profile retention
+Debian/Arch/Fedora и Windows, согласованная версия About/PE/installer/packages,
+публикация новой сборки с подписанными точными hashes после успешных проверок.
+
+Обнаружено до исправления: browser_version 0.2.0-preview.3.1, но Windows PE,
+Inno AppVersion и Linux package metadata жёстко содержат preview.3; script
+standalone Windows installer также скачивает фиксированный старый tag.
+Для новой сборки выбирается 0.3.0-preview.1 / release sequence 5; все упаковщики
+будут читать общую идентичность, а не держать независимые версии.
+
+Общая release_identity читает common/update_key.hpp. CMake project, PE numeric/
+product version, Inno AppVersion/VersionInfo/installed DisplayVersion и Linux
+package metadata/имена используют одну идентичность. Linux native packager
+проверяет реальное `--version` исполняемого файла перед упаковкой; install tests
+сравнивают версию программы и данные dpkg/rpm/pacman. Выбран 0.3.0-preview.1 / 5.
+23/23 Python и 86/86 CTest — PASS; header/public key не менялся, кроме версии/sequence.
+
+Первый compatibility GUI — PASS: три запуска normal/restart/private, 14 API
+checks в каждом; IndexedDB marker сохраняется только в normal; CSP inline script,
+CORS forbidden fetch, cross-origin frame access и untrusted TLS заблокированы;
+реально декодирован/проигран WebM VP9+Opus. Wikipedia/MDN/GitHub — HTTP 200,
+правильные title и отсутствие load error. В CPU runtime capability probes:
+H.264/HEVC canPlayType пусты, WebGL=false, Widevine=false. Эти возможности
+не объявляются работающими. Windows CI дополнен таким же API/media/CSP/CORS/
+origin fixture и IndexedDB restart test через native address bar, без fake CDP.
+
+Добавлена docs/compatibility.md: измеренная матрица API/codecs/security/live sites
+и непроверенные окружения. Windows fixture будет проверять normal/restart, полный
+private API и untrusted TLS сценарий пока проверены Linux. Inno numeric/textual
+product version разделены согласно официальным директивам; installed registry
+DisplayVersion и PE сравниваются с общей identity. Новые дистрибутивные сборки
+ещё не созданы/проверены; публикация не выполнялась.

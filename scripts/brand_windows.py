@@ -3,11 +3,14 @@ import ctypes
 from ctypes import wintypes
 from pathlib import Path
 import struct
+from release_identity import read_identity
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def version_resource(dll=False):
+def version_resource(dll=False, identity=None):
+    identity = identity or read_identity()
+    major, minor, patch, sequence = identity.numeric_version
     def block(key, value=b'', children=b'', text=False):
         name = (key+'\0').encode('utf-16le')
         data = struct.pack('<HHH', 0, len(value)//2 if text else len(value), int(text))+name
@@ -17,12 +20,12 @@ def version_resource(dll=False):
         data += children
         return struct.pack('<H', len(data))+data[2:]
     strings = {'CompanyName':'Aura Browser project', 'FileDescription':'Aura Browser',
-               'FileVersion':'0.2.0.3', 'ProductName':'Aura Browser', 'ProductVersion':'0.2.0-preview.3',
+               'FileVersion':'.'.join(map(str, identity.numeric_version)), 'ProductName':'Aura Browser', 'ProductVersion':identity.version,
                'OriginalFilename':'aura_browser.dll' if dll else 'aura_browser.exe'}
     table = b''.join(block(k,(v+'\0').encode('utf-16le'),text=True) for k,v in strings.items())
     info = block('StringFileInfo',children=block('040904B0',children=table,text=True),text=True)
     var = block('VarFileInfo',children=block('Translation',struct.pack('<HH',0x409,1200)),text=True)
-    fixed = struct.pack('<13I',0xFEEF04BD,0x10000,2,3,2,3,0x3f,0,0x40004,2 if dll else 1,0,0,0)
+    fixed = struct.pack('<13I',0xFEEF04BD,0x10000,(major<<16)|minor,(patch<<16)|sequence,(major<<16)|minor,(patch<<16)|sequence,0x3f,0,0x40004,2 if dll else 1,0,0,0)
     return block('VS_VERSION_INFO',fixed,info+var)
 
 

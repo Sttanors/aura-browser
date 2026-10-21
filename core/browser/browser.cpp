@@ -2,6 +2,7 @@
 #include "aura/design_tokens.hpp"
 #include "common/config.hpp"
 #include "common/platform.hpp"
+#include "common/update_key.hpp"
 #include "core/browser/client.hpp"
 #include "include/cef_cookie.h"
 #include "include/cef_frame.h"
@@ -39,7 +40,9 @@ std::string tabs_json(const std::vector<std::unique_ptr<Tab>> &tabs) {
         out << "{\"url\":\"" << json_escape(t->page.url) << "\",\"title\":\""
             << json_escape(t->page.title)
             << "\",\"private\":" << (t->private_tab ? "true" : "false")
-            << ",\"loaded\":" << (t->page.loaded ? "true" : "false") << ",\"frame_rate\":"
+            << ",\"loaded\":" << (t->page.loaded ? "true" : "false")
+            << ",\"failed\":" << (t->page.failed ? "true" : "false")
+            << ",\"http_status\":" << t->page.http_status << ",\"frame_rate\":"
             << (t->browser ? t->browser->GetHost()->GetWindowlessFrameRate() : 0)
             << ",\"frames\":" << t->page.view.generation() << ",\"zoom_percent\":"
             << std::round(
@@ -420,6 +423,8 @@ void BrowserController::ensure_browser(Tab &t, const std::string &url) {
     t.page.title = url_host(url);
     t.ntp = false;
     t.page.failed = false;
+    t.page.http_status = 0;
+    t.page.error.clear();
     t.page.loaded = false;
     t.loading = true;
     t.progress = .04;
@@ -934,7 +939,8 @@ std::string BrowserController::report() const {
     out << "{\"product\":\"Aura\",\"pid\":" << process_id() << ",\"window\":" << window->native_id()
         << ",\"cef_created\":" << created_ << ",\"cef_closed\":" << closed_ << ",\"compositor\":\""
         << json_escape(window->compositor()) << "\",\"renderer\":\""
-        << json_escape(window->renderer()) << "\",\"presentation_frames\":" << window->frames()
+        << json_escape(window->renderer()) << "\",\"version\":" << json_quote(std::string(browser_version))
+        << ",\"release_sequence\":" << browser_release_sequence << ",\"presentation_frames\":" << window->frames()
         << ",\"presentation\":" << window->presentation_stats()
         << ",\"interface\":{\"requested\":" << profile.ui_zoom << ",\"applied\":" << ui_scale * 100
         << ",\"device_scale\":" << scale << ",\"width\":" << width << ",\"height\":" << height

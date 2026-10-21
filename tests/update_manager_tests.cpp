@@ -1,4 +1,5 @@
 #include "common/config.hpp"
+#include "common/update_key.hpp"
 #include "core/browser/updates.hpp"
 #include "include/cef_api_hash.h"
 #include <ctime>
@@ -37,7 +38,7 @@ class UpdateManagerFlow : public testing::Test {
         char *bytes = nullptr;
         auto length = BIO_get_mem_data(bio.get(), &bytes);
         public_key.assign(bytes, length);
-        metadata(5);
+        metadata(browser_release_sequence + 1);
     }
     void TearDown() override {
         std::filesystem::remove_all(directory);
@@ -107,7 +108,7 @@ TEST_F(UpdateManagerFlow, ChecksAuthenticatesDownloadsAndVerifiesWithoutReplacin
     manager.check();
     settle(manager);
     ASSERT_TRUE(manager.release);
-    EXPECT_EQ(manager.release->sequence, 5);
+    EXPECT_EQ(manager.release->sequence, browser_release_sequence + 1);
     manager.download();
     settle(manager);
     ASSERT_FALSE(manager.ready_file.empty());
@@ -122,14 +123,14 @@ TEST_F(UpdateManagerFlow, RejectsOlderSignedChannelAfterRestart) {
     {
         UpdateManager manager(directory);
         connect(manager);
-        metadata(6);
+        metadata(browser_release_sequence + 2);
         manager.check();
         settle(manager);
         ASSERT_TRUE(manager.release);
     }
     UpdateManager manager(directory);
     connect(manager);
-    metadata(5);
+    metadata(browser_release_sequence + 1);
     EXPECT_FALSE(manager.due());
     manager.check();
     settle(manager);

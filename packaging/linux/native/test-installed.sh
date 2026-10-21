@@ -21,6 +21,14 @@ case $family in
 esac
 useradd --create-home --home-dir '/home/Aura user' aura-test
 runuser -u aura-test -- aura-browser --help
+actual_version=$(runuser -u aura-test -- aura-browser --version)
+test "$actual_version" = "$3"
+case $family in
+    debian) package_version=$(dpkg-query -W -f='${Version}' aura-browser) ;;
+    fedora) package_version=$(rpm -q --qf '%{VERSION}-%{RELEASE}' aura-browser) ;;
+    arch) package_version=$(pacman -Q aura-browser); package_version=${package_version#* } ;;
+esac
+test "$package_version" = "$4"
 desktop-file-validate /usr/share/applications/aura-browser.desktop
 test -f /opt/aura-browser/branding/aura.png
 test -f /usr/share/icons/hicolor/scalable/apps/aura-browser.svg

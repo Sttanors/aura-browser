@@ -1,5 +1,6 @@
 #include "common/config.hpp"
 #include "common/platform.hpp"
+#include "common/update_key.hpp"
 #include "core/browser/browser.hpp"
 #include "include/base/cef_compiler_specific.h"
 #include "include/cef_command_line.h"
@@ -18,8 +19,12 @@
 namespace {
 int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbox_info) {
     const auto binary = aura::executable_directory();
+    if (command->HasSwitch("version")) {
+        std::cout << aura::browser_version << '\n';
+        return 0;
+    }
     if (command->HasSwitch("help")) {
-        std::cout << "Aura browser\n  --url=URL --data-dir=PROFILE --theme=aurora-dark "
+        std::cout << "Aura browser\n  --version --url=URL --data-dir=PROFILE --theme=aurora-dark "
                      "--scale=1.5\n  --private --report=FILE --software-rendering (default) --gpu "
                      "(experimental)\n";
         return 0;

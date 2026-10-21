@@ -2,10 +2,10 @@
 import argparse
 import os
 from pathlib import Path
-import re
 import subprocess
 import tempfile
 from sign_update import ROOT, sign
+from release_identity import read_identity
 
 
 def main():
@@ -13,9 +13,8 @@ def main():
     parser.add_argument('--tag', required=True)
     parser.add_argument('--key', type=Path, required=True)
     args = parser.parse_args()
-    identity = (ROOT/'common/update_key.hpp').read_text()
-    version = re.search(r'browser_version = "([^"]+)"', identity)[1]
-    sequence = int(re.search(r'browser_release_sequence = (\d+)', identity)[1])
+    identity = read_identity()
+    version, sequence = identity.version, identity.sequence
     if args.tag != 'v'+version:
         raise ValueError('Release tag must match the compiled browser version and sequence')
     gh = os.environ.get('GH_BIN', 'gh')

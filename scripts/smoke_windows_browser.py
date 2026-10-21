@@ -12,6 +12,8 @@ import time
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from dependencies import ROOT
+from release_identity import read_identity
+from smoke_compatibility import Server as CompatServer, Handler as CompatHandler
 
 
 def main():
@@ -28,9 +30,12 @@ def main():
     profile = output/'profile-кириллица'
     shutil.rmtree(profile, ignore_errors=True)
     profile.mkdir()
-    (profile/'profile.toml').write_text('language="ru"\nfilter_updates=false\nrestore=false\n', encoding='utf-8')
+    (profile/'profile.toml').write_text('language="ru"\nfilter_updates=false\ncheck_updates=false\nrestore=false\nblock_popups=true\n', encoding='utf-8')
     server = ThreadingHTTPServer(('127.0.0.1', 0), partial(SimpleHTTPRequestHandler, directory=str(ROOT/'tests/fixtures')))
     threading.Thread(target=server.serve_forever, daemon=True).start()
+    compat_servers=[CompatServer(('127.0.0.1',0),partial(CompatHandler,directory=str(ROOT/'tests/fixtures/browser'))) for _ in range(2)]
+    for source in compat_servers:threading.Thread(target=source.serve_forever,daemon=True).start()
+    compat_url=f'http://127.0.0.1:{compat_servers[0].server_port}/compat.html?remote=http://127.0.0.1:{compat_servers[1].server_port}'
     url = f'http://127.0.0.1:{server.server_port}/browser/a.html'
     binary = Path(os.environ.get('AURA_TEST_BINARY', str(ROOT/'build/windows-x64-release/aura_browser.exe')))
     process = None
@@ -58,6 +63,7 @@ def main():
                 user.GetClassLongPtrW.restype = ctypes.c_size_t
                 assert user.GetClassLongPtrW(window, -14), 'Window class must expose the Aura large icon'
                 assert user.GetClassLongPtrW(window, -34), 'Window class must expose the Aura small icon'
+                assert state.get('version')==read_identity().version, 'Running browser must match the source/release identity'
                 assert state['adblock_ready'], 'Rust ad blocker must initialize'
                 assert 'DIB' in state['renderer'], state['renderer']
                 def click(x, y):
@@ -123,6 +129,19 @@ def main():
                 wait(lambda s: (s.get('filters_ui') or {}).get('input_length') == len('||ci-example.test^$script'), 'Native typing must reach the custom filter editor')
                 rect=read()['filters_ui']['save'];click(rect[0]+rect[2]//2,rect[1]+rect[3]//2)
                 wait(lambda s: s['filter_lists']['revision'] > 0 and not s['filter_lists']['busy'] and (s.get('filters_ui') or {}).get('list_revision') == s['filter_lists']['revision'] and s['filters_ui']['custom_count'] == 1, 'Filter engine and painted rule list must finish applying on Windows')
+                # Run the same real API/media/origin fixture as Linux, through native navigation.
+                for _ in range(3):
+                    user.SendMessageW(window, 0x100, 27, 1)
+                    user.SendMessageW(window, 0x101, 27, 1)
+                previous_reports=len(CompatHandler.reports)
+                click(480,55);type_text(compat_url)
+                user.SendMessageW(window,0x100,13,1);user.SendMessageW(window,0x101,13,1)
+                wait(lambda s:len(CompatHandler.reports)>previous_reports,'Compatibility API fixture must finish on Windows',timeout=100)
+                api=CompatHandler.reports[-1]
+                (output/f'api-result-{launch}.json').write_text(json.dumps(api,indent=2,ensure_ascii=False),encoding='utf-8')
+                assert api['passed'],api
+                assert api['capabilities']['initial_indexeddb']==('fictional-persistent-marker' if launch else ''),api
+                wait(lambda s:any(t.get('title')=='Compatibility PASS' and not t.get('failed') for t in s.get('tabs',[])),'Native report must acknowledge compatibility page')
                 # Exercise real additional Win32 windows with the same profile/process.
                 for _ in range(3):
                     user.SendMessageW(window, 0x100, 27, 1)
@@ -156,11 +175,12 @@ def main():
                 assert final['cef_created_total'] == final['cef_closed_total'], final
                 assert (profile/'profile.toml').is_file(), 'Profile must persist'
                 process = None
-        (output/'PASS.txt').write_text('PASS: full Win32 browser, Chromium page, Unicode path/input, pointer navigation, native dialog, English, interface scaling, adblock, profile replacement and balanced CEF shutdown.\n')
+        (output/'PASS.txt').write_text('PASS: full Win32 browser, Chromium page, Unicode path/input, pointer navigation, native dialog, English, interface scaling, adblock, real API/media/CSP/CORS/origin and IndexedDB persistence, profile replacement and balanced CEF shutdown.\n')
     finally:
         if process and process.poll() is None:
             subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'], check=False)
         server.shutdown()
+        for source in compat_servers:source.shutdown();source.server_close()
 
 if __name__ == '__main__':
     main()

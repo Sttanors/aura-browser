@@ -4,10 +4,20 @@
 #ifndef OutputDir
   #define OutputDir "..\..\artifacts"
 #endif
+#ifndef AuraVersion
+  #error AuraVersion is required
+#endif
+#ifndef AuraNumericVersion
+  #error AuraNumericVersion is required
+#endif
 [Setup]
 AppId={{9B640453-B1CB-4653-A0B7-7DCCBA5F3D6E}
 AppName=Aura Browser
-AppVersion=0.2.0-preview.3
+AppVersion={#AuraVersion}
+VersionInfoVersion={#AuraNumericVersion}
+VersionInfoProductVersion={#AuraNumericVersion}
+VersionInfoProductTextVersion={#AuraVersion}
+VersionInfoTextVersion={#AuraVersion}
 AppPublisher=Sttanors
 AppPublisherURL=https://github.com/Sttanors/aura-browser
 AppSupportURL=https://github.com/Sttanors/aura-browser/issues

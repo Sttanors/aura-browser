@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 import time
 import zipfile
+from release_identity import read_identity
 
 ROOT = Path(__file__).resolve().parents[1]
 NATIVE = ROOT/'packaging/linux/native'
@@ -54,7 +55,8 @@ def stage_runtime(archive: Path, stage: Path):
     subprocess.run(['desktop-file-validate',str(stage/'usr/share/applications/aura-browser.desktop')],check=True)
 
 
-def build_deb(stage: Path, output: Path):
+def build_deb(stage: Path, output: Path, identity=None):
+    identity = identity or read_identity()
     control = stage/'DEBIAN'
     control.mkdir()
     # Let Debian derive versioned dependencies from actual ELF symbol usage.
@@ -69,7 +71,7 @@ def build_deb(stage: Path, output: Path):
     depends += ', libxpresent1, libxrandr2, ca-certificates, xdg-utils'
     size=sum(p.stat().st_size for p in stage.rglob('*') if p.is_file())//1024
     (control/'control').write_text(f'''Package: aura-browser
-Version: 0.2.0~preview.3-1
+Version: {identity.native_version}-1
 Section: web
 Priority: optional
 Architecture: amd64
@@ -84,11 +86,12 @@ Description: Aura desktop browser (preview)
     shutil.rmtree(control)
 
 
-def build_arch(stage: Path, output: Path):
+def build_arch(stage: Path, output: Path, identity=None):
+    identity = identity or read_identity()
     size=sum(p.stat().st_size for p in stage.rglob('*') if p.is_file())
     meta=f'''pkgname = aura-browser
 pkgbase = aura-browser
-pkgver = 0.2.0rc3-1
+pkgver = {identity.arch_version}-1
 pkgdesc = Aura desktop browser (preview)
 url = https://github.com/Sttanors/aura-browser
 builddate = {int(time.time())}
@@ -105,7 +108,8 @@ license = custom:license-not-specified
     (stage/'.PKGINFO').unlink();(stage/'.MTREE').unlink()
 
 
-def build_rpm(stage: Path, output: Path):
+def build_rpm(stage: Path, output: Path, identity=None):
+    identity = identity or read_identity()
     with tempfile.TemporaryDirectory(prefix='aura-rpm-') as tmp:
         top=Path(tmp)
         for directory in ['BUILD','BUILDROOT','RPMS','SOURCES','SPECS','SRPMS']:
@@ -115,7 +119,7 @@ def build_rpm(stage: Path, output: Path):
 %global __provides_exclude_from ^/opt/aura-browser/.*$
 %global __requires_exclude ^(libcef[.]so|libvulkan[.]so[.]1|libvk_swiftshader[.]so).*$
 Name: aura-browser
-Version: 0.2.0~preview.3
+Version: @AURA_VERSION@
 Release: 1
 Summary: Aura desktop browser (preview)
 License: LicenseRef-License-Not-Specified
@@ -135,25 +139,27 @@ cp -a "%{aura_stage}/." %{buildroot}/
 /usr/share/icons/hicolor/scalable/apps/aura-browser.svg
 /usr/share/licenses/aura-browser
 /usr/share/doc/aura-browser
-''')
+'''.replace('@AURA_VERSION@',identity.native_version))
         subprocess.run(['rpmbuild','-bb',str(spec),'--define','_topdir '+str(top),'--define','aura_stage '+str(stage),'--define','_binary_payload w6.gzdio'],check=True)
         packages=list((top/'RPMS').rglob('*.rpm'));assert len(packages)==1
         shutil.copyfile(packages[0],output)
 
 
 def build(archive: Path, output: Path):
+    identity=read_identity()
     output.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='aura-native-') as tmp:
         stage=Path(tmp)
         stage_runtime(archive.resolve(),stage)
-        subprocess.run([str(stage/'opt/aura-browser/aura_browser'),'--help'],check=True,stdout=subprocess.DEVNULL)
+        actual=subprocess.check_output([str(stage/'opt/aura-browser/aura_browser'),'--version'],text=True).strip()
+        if actual != identity.version:raise ValueError('Runtime version does not match package identity: '+actual)
         for name, builder in [
-            ('aura-browser_0.2.0-preview.3-1_amd64.deb',build_deb),
-            ('aura-browser-0.2.0rc3-1-x86_64.pkg.tar.gz',build_arch),
-            ('aura-browser-0.2.0-preview.3-1.x86_64.rpm',build_rpm),
+            (identity.package_name('debian'),build_deb),
+            (identity.package_name('arch'),build_arch),
+            (identity.package_name('fedora'),build_rpm),
         ]:
             path=output.resolve()/name
-            builder(stage,path)
+            builder(stage,path,identity)
             path.with_suffix(path.suffix+'.sha256').write_text(hashlib.sha256(path.read_bytes()).hexdigest()+'  '+path.name+'\n')
             print(path,flush=True)
 
