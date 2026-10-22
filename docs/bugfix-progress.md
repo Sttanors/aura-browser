@@ -25,7 +25,7 @@ TOML переносится в уникальный `profile.toml.corrupt[.N]`, 
 Weston Pixman/Xwayland SHM: Ctrl+Q на защищённой странице → prompt → Escape →
 тот же живой документ, последующая работа/выход; остальные три запуска suite
 проверяют normal/private окна, beforeunload окна, сессии и crash recovery.
-Лог: `/tmp/aura-bugfix-windows-2.log`.
+Лог: `artifacts/build/bugfix-2026-10-22/aura-bugfix-windows-2.log`.
 
 ## 3. Настоящие popup-контексты — 22 октября 2026
 
@@ -37,7 +37,7 @@ OnBeforePopup разрешает создание Chromium context с отдел
 Проверка: Linux build PASS; новый `--suite=popups` PASS: ненулевой возвращённый
 WindowProxy, opener и двусторонний postMessage с проверками source/origin,
 повторное использование named window без третьей вкладки, window.close,
-normal/private и balanced CEF shutdown. Лог: `/tmp/aura-bugfix-popups.log`.
+normal/private и balanced CEF shutdown. Лог: `artifacts/build/bugfix-2026-10-22/aura-bugfix-popups.log`.
 
 ## 4. Стартовая страница и история — 22 октября 2026
 
@@ -48,7 +48,7 @@ Native start page представлена отдельным `about:blank#aura-
 
 Проверка: Linux build PASS; новый `--suite=navigation` PASS: A → B → start → Back B
 → Forward start → Back B, IsAudioMuted=false, отмена перехода с protected document
-оставляет документ B. Лог: `/tmp/aura-bugfix-navigation.log`.
+оставляет документ B. Лог: `artifacts/build/bugfix-2026-10-22/aura-bugfix-navigation.log`.
 
 ## 5. Отмена закрытия и недавно закрытые вкладки — 22 октября 2026
 
@@ -59,7 +59,7 @@ Private tabs по-прежнему исключены.
 Проверка: Linux build PASS; расширенный `--suite=navigation` PASS: Ctrl+W → Escape
 → Ctrl+Shift+T не создаёт duplicate; после реального Ctrl+W тот же Ctrl+Shift+T
 возвращает B. Повторно прошли история/start/audio/beforeunload из пункта 4.
-Лог: `/tmp/aura-bugfix-navigation-5.log`.
+Лог: `artifacts/build/bugfix-2026-10-22/aura-bugfix-navigation-5.log`.
 
 ## 6. Распознавание адресов — 22 октября 2026
 
@@ -84,9 +84,9 @@ UTF-8 boundaries; редактор рисует ограниченное окн�
 полное byte-for-byte равенство, SHA-256
 `da05fd143235cb0779089b5ed8f8d9370baf50b7e01a4cdc9d92a9ee1b99058b`.
 Предыдущие неуспешные прогоны выявили пустой INCR header; итоговый успешный лог
-`/tmp/aura-bugfix-clipboard-4.log`, результаты в `artifacts/clipboard-smoke`.
+`artifacts/build/bugfix-2026-10-22/aura-bugfix-clipboard-4.log`, результаты в `artifacts/clipboard-smoke`.
 
-## 8. Сосуществование .run и системного пакета — проверка выполняется
+## 8. Сосуществование .run и системного пакета — 22 октября 2026
 
 Добавлены post-install/upgrade hooks DEB/Arch/RPM. Для обычных локальных аккаунтов
 проверяются стандартные пользовательские ярлыки; файловые операции выполняются
@@ -99,10 +99,43 @@ unmanaged override сохраняются. Для custom XDG_DATA_HOME helper м
 launcher/desktop entry. Проверка использует отдельный system-root в тестах.
 25/25 Python tests PASS; 88/88 CTest PASS. Собраны отдельные тестовые packages с
 новыми hooks из прежнего Debian runtime только для проверки packaging migration;
-они не являются новыми опубликованными сборками приложения. Проверка реальной
-install/reinstall/remove миграции в Debian/Arch/Fedora ещё выполняется.
+они не являются новыми опубликованными сборками приложения.
 
-Финальные GUI regression suites и Windows CI также должны подтвердить весь набор.
+Реальная install/reinstall/remove проверка **Debian, Arch и Fedora — PASS**:
+после первой установки создана старая managed .run-запись с launcher и runtime,
+повторная установка native package запускает hook, сохраняет launcher backup,
+убирает shadowing entry, оставляет старый runtime и профиль. Системный launcher
+сообщает правильную версию. Удаление native package сохраняет профиль.
+Логи: `artifacts/build/bugfix-2026-10-22/aura-bugfix-package-{debian,arch,fedora}.log`.
+
+Финальные GUI regression suites и Windows CI завершены; результаты ниже.
 Первый browser regression прошёл реальные пользовательские действия, но обнаружил
 пропущенный audit counter `page_opened_tabs` на новом CEF popup path. Счётчик
 добавлен после успешного OnAfterCreated; assertions не ослаблялись.
+
+
+## Итоговая регрессия
+
+Linux build и 88/88 CTest, 25/25 Python — PASS. Последовательные GUI suites
+browser, windows, settings, features, interface, rendering, compatibility — PASS.
+Отдельные новые popups/navigation/clipboard suites — PASS, результаты выше.
+Все GUI выполнялись только на частном Weston Pixman/Xwayland SHM без GLX;
+пользовательский профиль и физический GPU не использовались.
+
+Compatibility: API/security/media PASS, публичные Wikipedia/MDN/GitHub — 3/3.
+Rendering: все 11 сочетаний 75–200%, DPI 1/1.25, light/dark — PASS.
+Просмотрен итоговый en-small-fit.png; подписи и controls помещаются в окно.
+Логи сохранены в `artifacts/build/bugfix-2026-10-22/`.
+
+Исходники отправлены в main commit `e3e918e`. Опубликованные файлы
+v0.3.0-preview.1 не заменялись; тестовые packages migration используют прежний
+Debian runtime и не предназначены для распространения исправлений C++.
+
+
+[Windows CI 39744249663](https://github.com/Sttanors/aura-browser/actions/runs/39744249663)
+— **success** для `e3e918e`: compilation, unit tests, real browser integration,
+новый WindowProxy/opener/postMessage/close fixture, portable packaging и настоящий
+установленный Windows browser с повторной integration проверкой и uninstall.
+Все восемь пунктов закрыты в указанном объёме. Новые функции из раздела идей
+не реализовывались. Для доставки пользователям нужен отдельный новый релиз;
+существующий подписанный v0.3.0-preview.1 остаётся неизменным.
