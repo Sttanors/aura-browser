@@ -362,26 +362,31 @@ Rect BrowserUi::panel_bounds() const {
                            : panel_ == Passwords  ? 900
                            : panel_ == Import     ? 900
                            : panel_ == Groups     ? 900
+                           : panel_ == Containers ? 900
                            : panel_ == Filters    ? 900
                                                   : 660,
                            r.width - 24);
-    const int h = std::min(
-        panel_ == Settings     ? 760
-        : panel_ == Extensions ? 700
-        : panel_ == Shortcuts  ? 700
-        : panel_ == Passwords  ? 700
-        : panel_ == Import     ? 700
-        : panel_ == Groups
-            ? std::clamp(260 + int(std::count_if(
-                                   app_.profile.groups.begin(), app_.profile.groups.end(),
-                                   [&](const auto &g) { return g.workspace == app_.workspace; })) *
-                                   88,
-                         400, 700)
-        : panel_ == Filters ? 700
-        : panel_ == Workspaces
-            ? std::clamp(218 + int(app_.profile.workspaces.size()) * 52, 380, 700)
-            : 580,
-        height_ - 124);
+    const int h =
+        std::min(panel_ == Settings     ? 760
+                 : panel_ == Extensions ? 700
+                 : panel_ == Shortcuts  ? 700
+                 : panel_ == Passwords  ? 700
+                 : panel_ == Import     ? 700
+                 : panel_ == Containers
+                     ? std::clamp(260 + int(app_.profile.containers.size()) * 88, 440, 700)
+                 : panel_ == Groups
+                     ? std::clamp(260 + int(std::count_if(app_.profile.groups.begin(),
+                                                          app_.profile.groups.end(),
+                                                          [&](const auto &g) {
+                                                              return g.workspace == app_.workspace;
+                                                          })) *
+                                            88,
+                                  400, 700)
+                 : panel_ == Filters ? 700
+                 : panel_ == Workspaces
+                     ? std::clamp(218 + int(app_.profile.workspaces.size()) * 52, 380, 700)
+                     : 580,
+                 height_ - 124);
     return {r.x + (r.width - w) / 2, std::max(100, (height_ - h) / 2), w, h};
 }
 Rect BrowserUi::dialog_bounds() const {
@@ -603,8 +608,10 @@ void BrowserUi::draw(SkCanvas &c) {
             label(c, regular_,
                   tab.sleeping      ? app_.tr("Sleeping")
                   : tab.private_tab ? app_.tr("Private browsing")
-                  : tab.ntp         ? app_.tr("A fresh perspective")
-                                    : url_host(tab.page.url),
+                  : tab.ntp
+                      ? app_.tr("A fresh perspective")
+                      : (tab.container ? app_.profile.container_label(tab.container) + " · " : "") +
+                            url_host(tab.page.url),
                   57, y + 36, 10, muted, 139);
         if (hover || selected)
             icon(c, tab.pinned ? "pin" : "close", 202, y + 16, 14, muted);
@@ -655,8 +662,22 @@ void BrowserUi::draw(SkCanvas &c) {
          addr.x + 12, addr.y + 10, 17, muted);
     label(c, regular_,
           current && !current->ntp ? current->page.url : app_.tr("Search or enter an address"),
-          addr.x + 40, addr.y + 24, 12, current && !current->ntp ? ink : muted, addr.width - 110);
-    label(c, regular_, "Ctrl L", addr.x + addr.width - 48, addr.y + 24, 9, muted);
+          addr.x + 40, addr.y + 24, 12, current && !current->ntp ? ink : muted,
+          addr.width - (current && current->container
+                            ? std::min(84, std::max(48, addr.width / 3)) + 64
+                            : 110));
+    if (current && current->container) {
+        const auto container = app_.profile.container(current->container);
+        const int width = std::min(84, std::max(48, addr.width / 3));
+        const auto color = tab_group_color(app_.profile, container ? container->color : 0);
+        const Rect badge{addr.x + addr.width - width - 12, addr.y + 7, width, 24};
+        focus_target(badge);
+        fill(c, badge, 6, SkColorSetA(color, 22));
+        border(c, badge, 6, SkColorSetA(color, 85));
+        centered_label(c, medium_, app_.profile.container_label(current->container), badge, 10,
+                       color, 5, 5);
+    } else
+        label(c, regular_, "Ctrl L", addr.x + addr.width - 48, addr.y + 24, 9, muted);
     button({width_ - 150, 37, 34, 36}, "star", true,
            current && app_.profile.bookmarked(current->page.url));
     button({width_ - 110, 37, 34, 36}, "download", true, panel_ == Downloads);
@@ -667,7 +688,8 @@ void BrowserUi::draw(SkCanvas &c) {
     for (const auto &[index, b] : extension_buttons()) {
         focus_target(b);
         const auto &e = app_.extensions.items[index];
-        const bool usable = e.load_requested && !(current && current->private_tab);
+        const bool usable =
+            e.load_requested && !(current && (current->private_tab || current->container));
         if (inside(b, hover_x_, hover_y_) ||
             (app_.extension_popup && app_.extension_popup->extension_id == e.id))
             fill(c, b, 9, SkColorSetA(t.accent, 30));
@@ -740,7 +762,8 @@ void BrowserUi::draw(SkCanvas &c) {
                                       app_.tr("Passwords"),
                                       app_.tr("Filter lists"),
                                       app_.tr("Workspaces"),
-                                      app_.tr("Tab groups")};
+                                      app_.tr("Tab groups"),
+                                      app_.tr("Site containers")};
         label(c, medium_, titles[panel_], r.x + 28, r.y + 47, 23, ink);
         icon(c, "close", r.x + r.width - 43, r.y + 26, 19, muted);
         if (panel_ == History || panel_ == Bookmarks) {
@@ -840,6 +863,8 @@ void BrowserUi::draw(SkCanvas &c) {
             draw_workspaces(c, r);
         if (panel_ == Groups)
             draw_groups(c, r);
+        if (panel_ == Containers)
+            draw_containers(c, r);
     }
 
     if (editing) {
@@ -2364,6 +2389,12 @@ void BrowserUi::panel(Panel value) {
     clear_password_fields();
     password_mode_ = 0;
     panel_ = value;
+    if (value != Workspaces)
+        workspace_input_focus_ = false;
+    if (value != Groups)
+        group_input_focus_ = false;
+    if (value != Containers)
+        container_input_focus_ = false;
     if (value == Extensions)
         app_.refresh_extension_state();
     shortcut_focus_ = -1;
@@ -2391,6 +2422,7 @@ void BrowserUi::dismiss() {
     clear_password_fields();
     editing = false;
     panel_ = None;
+    workspace_input_focus_ = group_input_focus_ = container_input_focus_ = false;
     app_.close_menu();
     if (auto t = app_.current(); t && t->browser)
         t->browser->GetHost()->SetFocus(true);
@@ -2435,6 +2467,8 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
                 live = &filter_input_;
             else if (panel_ == Workspaces && target == &workspace_input_ && workspace_input_focus_)
                 live = &workspace_input_;
+            else if (panel_ == Containers && target == &container_input_ && container_input_focus_)
+                live = &container_input_;
             else if (panel_ == Groups && target == &group_input_ && group_input_focus_)
                 live = &group_input_;
             else if (panel_ == Extensions && target == &extension_input_ && extension_input_focus_)
@@ -2451,7 +2485,8 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
                 (panel_ != Passwords || live->value.size() + text.size() <= 8192) &&
                 (live != &filter_input_ || live->value.size() + text.size() <= 4096) &&
                 (live != &workspace_input_ || live->value.size() + text.size() <= 120) &&
-                (live != &group_input_ || live->value.size() + text.size() <= 120))
+                (live != &group_input_ || live->value.size() + text.size() <= 120) &&
+                (live != &container_input_ || live->value.size() + text.size() <= 120))
                 live->insert(text);
             if (live == &find)
                 app_.find_text(find.value);
@@ -2513,6 +2548,7 @@ bool BrowserUi::key(const CefKeyEvent &key) {
         filter_input_focus_ = false;
         workspace_input_focus_ = false;
         group_input_focus_ = false;
+        container_input_focus_ = false;
         if (auto tab = app_.current(); tab && tab->browser)
             tab->browser->GetHost()->SetFocus(false);
         if (!focus_targets_.empty()) {
@@ -2529,7 +2565,8 @@ bool BrowserUi::key(const CefKeyEvent &key) {
         keyboard_focus_ < int(focus_targets_.size()) && (code == 0x0D || code == 0x20) &&
         !settings_search_focus_ && settings_edit_.empty() && !extension_input_focus_ &&
         !import_input_focus_ && !filter_input_focus_ && shortcut_focus_ < 0 &&
-        password_focus_ < 0 && !workspace_input_focus_ && !group_input_focus_ && !editing) {
+        password_focus_ < 0 && !workspace_input_focus_ && !group_input_focus_ &&
+        !container_input_focus_ && !editing) {
         const auto r = focus_targets_[keyboard_focus_];
         const int previous = keyboard_focus_;
         const auto previous_panel = panel_;
@@ -2564,6 +2601,10 @@ bool BrowserUi::key(const CefKeyEvent &key) {
         }
     }
     if (down) {
+        if (ctrl && alt && code == 'C' && app_.dialogs.empty()) {
+            open_containers();
+            return true;
+        }
         if (ctrl && alt && code == 'V' && app_.dialogs.empty() && panel_ == None && !editing) {
             app_.toggle_split();
             return true;
@@ -2592,6 +2633,34 @@ bool BrowserUi::key(const CefKeyEvent &key) {
                 app_.changed();
                 return code < 0x20 || ctrl || (code >= 0x21 && code <= 0x2E);
             }
+            return true;
+        }
+        if (panel_ == Containers && container_input_focus_) {
+            if (code == 0x0D) {
+                save_container();
+                return true;
+            }
+            if (code == 0x1B) {
+                container_input_focus_ = false;
+                app_.changed();
+                return true;
+            }
+            if (!ctrl || (code != 'L' && code != 'T' && code != 'W' && code != 'Q')) {
+                editor_key(container_input_, key);
+                app_.changed();
+                return code < 0x20 || ctrl || (code >= 0x21 && code <= 0x2E);
+            }
+        }
+        if (panel_ == Containers && !container_input_focus_ &&
+            (code == 0x21 || code == 0x22 || code == 0x24 || code == 0x23)) {
+            const int capacity = std::max(1, (panel_bounds().height - 260) / 88);
+            const int maximum = std::max(0, int(app_.profile.containers.size()) - capacity);
+            container_scroll_ = std::clamp(
+                code == 0x24   ? 0
+                : code == 0x23 ? maximum
+                               : container_scroll_ + (code == 0x22 ? capacity : -capacity),
+                0, maximum);
+            app_.changed();
             return true;
         }
         if (panel_ == Groups && group_input_focus_) {
@@ -3041,6 +3110,9 @@ void BrowserUi::text(const std::string &value) {
             app_.passwords.touch();
         }
         erase_secret(clean);
+    } else if (panel_ == Containers) {
+        if (container_input_focus_ && container_input_.value.size() + clean.size() <= 120)
+            container_input_.insert(clean);
     } else if (panel_ == Groups) {
         if (group_input_focus_ && group_input_.value.size() + clean.size() <= 120)
             group_input_.insert(clean);
@@ -3172,6 +3244,12 @@ void BrowserUi::pointer(const PointerInput &input) {
     if (input.kind == PointerInput::Wheel && panel_ == Filters) {
         panel_scroll_ = std::clamp(panel_scroll_ + (input.dy < 0 ? 1 : -1), 0,
                                    std::max(0, int(filter_lines_.size()) - 1));
+        return;
+    }
+    if (input.kind == PointerInput::Wheel && panel_ == Containers) {
+        const int capacity = std::max(1, (panel_bounds().height - 260) / 88);
+        container_scroll_ = std::clamp(container_scroll_ + (input.dy < 0 ? 1 : -1), 0,
+                                       std::max(0, int(app_.profile.containers.size()) - capacity));
         return;
     }
     if (input.kind == PointerInput::Wheel && panel_ == Groups) {
@@ -3374,6 +3452,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                 workspaces_pointer(r, x, y);
             else if (panel_ == Groups)
                 groups_pointer(r, x, y);
+            else if (panel_ == Containers)
+                containers_pointer(r, x, y);
         }
         return;
     }
@@ -3402,7 +3482,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                 {6, app_.tr("Workspaces"), !app_.private_window, "Ctrl+Shift+E"},
                 {7, app_.tr("Tab groups"), !app_.private_window, "Ctrl+Alt+G"},
                 {8, app_.tr(app_.split_enabled() ? "Exit split view" : "Two pages side by side"),
-                 true, "Ctrl+Alt+V"}};
+                 true, "Ctrl+Alt+V"},
+                {9, app_.tr("Site containers"), !app_.private_window, "Ctrl+Alt+C"}};
             app_.menu_width = 320;
             app_.menu_x = 16;
             app_.menu_y = 76;
@@ -3419,6 +3500,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                     open_groups();
                 else if (command == 8)
                     app_.toggle_split();
+                else if (command == 9)
+                    open_containers();
                 else
                     app_.request_exit();
             };
@@ -3464,18 +3547,20 @@ void BrowserUi::pointer(const PointerInput &input) {
                     drag_y_ = y;
                     if (input.button == 3) {
                         const int id = app_.tabs[index]->id;
-                        app_.menu = {{1, app_.tabs[index]->pinned ? app_.tr("Unpin tab")
-                                                                  : app_.tr("Pin tab")},
-                                     {2, app_.tabs[index]->muted ? app_.tr("Unmute tab")
-                                                                 : app_.tr("Mute tab")},
-                                     {3, app_.tr("Duplicate tab")},
-                                     {4, app_.tr("Close tab")},
-                                     {5, app_.tr("Reopen closed tab")},
-                                     {6, app_.tr("Move to workspace"), !app_.private_window},
-                                     {7, app_.tr("Tab groups"), !app_.private_window},
-                                     {8, app_.tr("Sleep tab"),
-                                      !app_.tabs[index]->pinned && !app_.tabs[index]->private_tab &&
-                                          !app_.tabs[index]->ntp}};
+                        app_.menu = {
+                            {1,
+                             app_.tabs[index]->pinned ? app_.tr("Unpin tab") : app_.tr("Pin tab")},
+                            {2,
+                             app_.tabs[index]->muted ? app_.tr("Unmute tab") : app_.tr("Mute tab")},
+                            {3, app_.tr("Duplicate tab")},
+                            {4, app_.tr("Close tab")},
+                            {5, app_.tr("Reopen closed tab")},
+                            {6, app_.tr("Move to workspace"), !app_.private_window},
+                            {7, app_.tr("Tab groups"), !app_.private_window},
+                            {8, app_.tr("Sleep tab"),
+                             !app_.tabs[index]->pinned && !app_.tabs[index]->private_tab &&
+                                 !app_.tabs[index]->ntp},
+                            {9, app_.tr("Open in container"), !app_.tabs[index]->private_tab}};
                         app_.menu_x = std::clamp(x + 8, 8, width_ - 250);
                         app_.menu_y = std::clamp(
                             y, 32, std::max(32, height_ - int(app_.menu.size()) * 32 - 20));
@@ -3502,6 +3587,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                                 open_groups(id);
                             else if (command == 8)
                                 app_.sleep_tab(id);
+                            else if (command == 9)
+                                open_containers(id);
                             else
                                 app_.reopen();
                         };
@@ -3517,6 +3604,14 @@ void BrowserUi::pointer(const PointerInput &input) {
             }
     }
     if (down && y >= 32 && y < 80) {
+        if (t && t->container) {
+            const auto addr = address_bounds();
+            const int width = std::min(84, std::max(48, addr.width / 3));
+            if (inside({addr.x + addr.width - width - 12, addr.y + 7, width, 24}, x, y)) {
+                open_containers();
+                return;
+            }
+        }
         if (inside(address_bounds(), x, y)) {
             focus_address();
             return;
@@ -5103,5 +5198,182 @@ std::string BrowserUi::split_report() const {
                   ",\"active\":" + (t == app_.current() ? "true" : "false") + "}";
     }
     return result + "]}";
+}
+} // namespace aura
+
+namespace aura {
+void BrowserUi::open_containers(int id) {
+    auto source = id >= 0 ? app_.tab(id) : app_.current();
+    if (app_.private_window || (source && source->private_tab)) {
+        app_.ui->toast(app_.tr("Containers are unavailable in private tabs."));
+        return;
+    }
+    container_target_ = id >= 0 ? id : (app_.current() ? app_.current()->id : -1);
+    container_edit_ = -1;
+    container_color_ = 0;
+    container_scroll_ = 0;
+    container_input_.set("");
+    container_error_.clear();
+    panel(Containers);
+    container_input_focus_ = false;
+}
+void BrowserUi::save_container() {
+    if (app_.private_window)
+        return;
+    bool success = false;
+    if (container_edit_ > 0)
+        success = app_.profile.rename_container(container_edit_, container_input_.value,
+                                                container_color_);
+    else
+        success = app_.profile.add_container(container_input_.value, container_color_) > 0;
+    if (!success) {
+        container_error_ = app_.tr("Enter a short unique container name. Up to 32 containers.");
+        app_.changed();
+        return;
+    }
+    container_input_.set("");
+    container_input_focus_ = false;
+    container_edit_ = -1;
+    container_error_.clear();
+    app_.changed(true);
+}
+void BrowserUi::draw_containers(SkCanvas &canvas, Rect r) {
+    const auto &t = interface_theme(app_.profile);
+    auto &c = canvas;
+    const bool enabled = !app_.private_window;
+    label(c, regular_,
+          app_.tr(enabled ? "Cookies are separate. History and bookmarks are shared."
+                          : "Containers are unavailable in private windows."),
+          r.x + 28, r.y + 73, 12, t.muted, r.width - 56);
+    auto button = [&](Rect b, const std::string &text, bool usable = true, SkColor color = 0) {
+        usable = usable && enabled;
+        if (usable)
+            focus_target(b);
+        const auto ink = color ? color : t.accent;
+        fill(c, b, 8, SkColorSetA(ink, usable && inside(b, hover_x_, hover_y_) ? 35 : 16));
+        border(c, b, 8, SkColorSetA(ink, usable ? 120 : 30));
+        centered_label(c, medium_, app_.tr(text), b, 12, usable ? t.text : t.muted, 5, 5);
+    };
+    label(c, regular_, app_.tr("Container name"), r.x + 28, r.y + 99, 11, t.muted);
+    Rect input{r.x + 28, r.y + 108, r.width - 196, 36};
+    if (enabled)
+        focus_target(input);
+    fill(c, input, 8, t.background);
+    border(c, input, 8, SkColorSetA(t.accent, container_input_focus_ ? 220 : 85));
+    draw_editor(c, container_input_, {input.x + 10, input.y + 2, input.width - 20, 32}, 13,
+                container_input_focus_);
+    button({r.x + r.width - 156, r.y + 108, 128, 36},
+           container_edit_ > 0 ? "Save name" : "Create container");
+    static const char *colors[] = {"Accent", "Blue", "Green", "Rose", "Amber", "Teal"};
+    for (int i = 0; i < 6; i++) {
+        Rect b{r.x + 28 + i * 90, r.y + 154, 82, 32};
+        button(b, colors[i], true, tab_group_color(app_.profile, i));
+        if (container_color_ == i) {
+            border(c, b, 8, SkColorSetA(t.text, 210));
+            icon(c, "check", b.x + b.width - 11, b.y + 2, 9, t.text);
+        }
+    }
+    label(c, regular_, container_error_, r.x + 28, r.y + 205, 11, t.text, r.width - 56);
+    const int capacity = std::max(1, (r.height - 260) / 88);
+    container_scroll_ = std::clamp(container_scroll_, 0,
+                                   std::max(0, int(app_.profile.containers.size()) - capacity));
+    for (int i = container_scroll_;
+         i < int(app_.profile.containers.size()) && i < container_scroll_ + capacity; i++) {
+        const auto &item = app_.profile.containers[i];
+        const int y = r.y + 212 + (i - container_scroll_) * 88;
+        fill(c, {r.x + 28, y + 8, 12, 12}, 3, tab_group_color(app_.profile, item.color));
+        label(c, medium_, app_.profile.container_label(item.id), r.x + 48, y + 19, 13, t.text,
+              r.width - 120);
+        button({r.x + 28, y + 36, 148, 34}, "New tab");
+        button({r.x + 184, y + 36, 170, 34}, "Open page copy",
+               app_.tab(container_target_) && !app_.tab(container_target_)->private_tab);
+        button({r.x + 362, y + 36, 112, 34}, "Rename", item.id != 0);
+        button({r.x + 482, y + 36, 82, 34}, "Remove",
+               item.id != 0 && !app_.container_in_use(item.id));
+    }
+    label(c, regular_,
+          app_.tr("Close a container's tabs before removing it. Site data clears after restart."),
+          r.x + 28, r.y + r.height - 22, 10, t.muted, r.width - 56);
+}
+void BrowserUi::containers_pointer(Rect r, int x, int y) {
+    if (app_.private_window)
+        return;
+    if (inside({r.x + 28, r.y + 108, r.width - 196, 36}, x, y)) {
+        container_input_focus_ = true;
+        keyboard_focus_ = -1;
+        return;
+    }
+    if (inside({r.x + r.width - 156, r.y + 108, 128, 36}, x, y)) {
+        save_container();
+        return;
+    }
+    for (int i = 0; i < 6; i++)
+        if (inside({r.x + 28 + i * 90, r.y + 154, 82, 32}, x, y)) {
+            container_color_ = i;
+            app_.changed();
+            return;
+        }
+    container_input_focus_ = false;
+    if (y < r.y + 212)
+        return;
+    const int position = (y - r.y - 212) / 88 + container_scroll_;
+    if (position < 0 || position >= int(app_.profile.containers.size()))
+        return;
+    const auto item = app_.profile.containers[position];
+    const int top = r.y + 212 + (position - container_scroll_) * 88;
+    if (inside({r.x + 28, top + 36, 148, 34}, x, y)) {
+        panel(None);
+        app_.new_tab("aura://newtab", false, true, false, app_.workspace, 0, item.id);
+    } else if (inside({r.x + 184, top + 36, 170, 34}, x, y)) {
+        auto source = app_.tab(container_target_);
+        if (!source || source->private_tab)
+            return;
+        auto url = source->page.url;
+        panel(None);
+        app_.new_tab(url, false, true, false, app_.workspace, 0, item.id);
+    } else if (item.id && inside({r.x + 362, top + 36, 112, 34}, x, y)) {
+        container_edit_ = item.id;
+        container_input_.set(item.name, true);
+        container_color_ = item.color;
+        container_input_focus_ = true;
+        app_.changed();
+    } else if (item.id && !app_.container_in_use(item.id) &&
+               inside({r.x + 482, top + 36, 82, 34}, x, y)) {
+        app_.confirm_action(
+            app_.tr("Remove container?"),
+            item.name + "\n" +
+                app_.tr("Cookies and site storage will be deleted the next time Aura starts."),
+            [this, id = item.id] { app_.remove_container(id); });
+    }
+}
+std::string BrowserUi::containers_report() const {
+    if (panel_ != Containers)
+        return "null";
+    const auto r = panel_bounds();
+    auto rect = [](Rect b) {
+        return "[" + std::to_string(b.x) + "," + std::to_string(b.y) + "," +
+               std::to_string(b.width) + "," + std::to_string(b.height) + "]";
+    };
+    std::string out = "{\"input\":" + rect({r.x + 28, r.y + 108, r.width - 196, 36}) +
+                      ",\"save\":" + rect({r.x + r.width - 156, r.y + 108, 128, 36}) +
+                      ",\"input_length\":" + std::to_string(container_input_.value.size()) +
+                      ",\"error\":" + json_quote(container_error_) + ",\"items\":[";
+    const int capacity = std::max(1, (r.height - 260) / 88);
+    for (int i = container_scroll_;
+         i < int(app_.profile.containers.size()) && i < container_scroll_ + capacity; i++) {
+        if (i != container_scroll_)
+            out += ",";
+        const auto &item = app_.profile.containers[i];
+        const int y = r.y + 212 + (i - container_scroll_) * 88;
+        out += "{\"id\":" + std::to_string(item.id) +
+               ",\"name\":" + json_quote(app_.profile.container_label(item.id)) +
+               ",\"color\":" + std::to_string(item.color) +
+               ",\"in_use\":" + (app_.container_in_use(item.id) ? "true" : "false") +
+               ",\"new_tab\":" + rect({r.x + 28, y + 36, 148, 34}) +
+               ",\"copy\":" + rect({r.x + 184, y + 36, 170, 34}) +
+               ",\"rename\":" + rect({r.x + 362, y + 36, 112, 34}) +
+               ",\"remove\":" + rect({r.x + 482, y + 36, 82, 34}) + "}";
+    }
+    return out + "]}";
 }
 } // namespace aura

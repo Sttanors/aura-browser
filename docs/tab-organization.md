@@ -38,6 +38,15 @@ logical pixels. The close control exits split while keeping the documents open.
 Normal pairs and the preferred width are restored with the session. Private pairs
 are excluded. Opening a start tab, switching workspaces or closing a pane ends split.
 
+**Site containers — Ctrl+Alt+C.** Each named container has its own persistent
+cookies, localStorage, IndexedDB and cache. Tabs, links and popups inherit the
+container. The manager opens a new tab or a copy of the current URL in another
+container; the original stays open. Private tabs cannot be copied into one.
+History, bookmarks, settings and the password vault are shared. Extension popups
+are available in the default container. Close the container's tabs in every window
+before removing it; its website data is deleted on the next Aura launch. Unknown
+container IDs are never restored under the default identity.
+
 ## Русский
 
 **Пространства — Ctrl+Shift+E.** Создавайте, переименовывайте и переключайте их в
@@ -71,3 +80,11 @@ Cookies сайтов общие: пространства предназначе
 Крестик завершает разделение, сохраняя документы открытыми. Обычные пары и ширина
 восстанавливаются с сессией; пары с приватной вкладкой не записываются.
 Начальная вкладка, смена пространства или закрытие стороны завершают разделение.
+
+**Контейнеры сайтов — Ctrl+Alt+C.** У каждого отдельные постоянные cookies,
+localStorage, IndexedDB и cache. Вкладки, ссылки и popup наследуют контейнер.
+Менеджер открывает новую вкладку или копию текущего URL в другом контейнере;
+исходник остаётся открытым. Приватную вкладку скопировать в него нельзя.
+История, закладки, настройки и vault общие. Окна расширений доступны в default
+контейнере. Перед удалением закройте его вкладки во всех окнах; данные сайтов
+очистятся при следующем запуске. Неизвестный id не заменяется default identity.

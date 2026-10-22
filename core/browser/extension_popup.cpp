@@ -147,6 +147,10 @@ void BrowserController::open_extension_popup(size_t index) {
     if (index >= extensions.items.size() || quitting)
         return;
     const auto e = extensions.items[index];
+    if (current() && current()->container) {
+        ui->toast(tr("Extension popups are available in the default container."));
+        return;
+    }
     if (current() && current()->private_tab) {
         ui->toast(tr("Extensions are unavailable in private tabs."));
         return;

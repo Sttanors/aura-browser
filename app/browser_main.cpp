@@ -94,6 +94,12 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
         throw std::runtime_error("Chromium could not initialize (exit code " +
                                  std::to_string(code) + ").");
     }
+    try {
+        if (!browser.profile.cleanup_container_data())
+            browser.ui->toast(browser.tr("Some container data could not be removed."));
+    } catch (const std::exception &error) {
+        browser.ui->toast(error.what());
+    }
     std::vector<std::unique_ptr<aura::BrowserController>> additional_windows;
     std::vector<aura::BrowserController *> hidden_windows;
     int retired_created = 0, retired_closed = 0;

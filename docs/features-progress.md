@@ -10,7 +10,7 @@
 | 2 | Группы вкладок | Реализовано, Linux проверки PASS |
 | 3 | Спящие вкладки | Реализовано, Linux проверки PASS |
 | 4 | Две страницы рядом | Реализовано, Linux проверки PASS |
-| 5 | Контейнеры сайтов | В очереди |
+| 5 | Контейнеры сайтов | Реализовано, Linux проверки PASS |
 | 6 | Полноценные профили | В очереди |
 | 7 | Палитра команд | В очереди |
 | 8 | Режим чтения | В очереди |
@@ -203,3 +203,59 @@ PASS во всех 11 комбинациях zoom 75–200%, dark/light и devic
 full painter и repeated page-only repaint совпадают на rounded corners (≤1 channel).
 Логи /tmp/aura-split-{gui-popup,rendering-regression}.log. Пункт 4 завершён;
 Windows CI для него пока не выполнялся.
+
+## 5. План контейнеров сайтов
+
+Контейнер — именованный persistent CefRequestContext с отдельными cookies,
+localStorage/IndexedDB и cache. Вкладки/links/popups наследуют контейнер; private
+всегда использует отдельный непостоянный context. История, закладки и настройки
+общие; полную изоляцию профиля даст пункт 6. Контейнер обозначается именем у адреса
+и в sidebar, цвет дополняет имя. Ctrl+Alt+C / меню открывают каталог, create/rename,
+новую вкладку или копию текущей страницы в другом контейнере (исходная остаётся).
+
+Удаление разрешено после фактического закрытия всех вкладок контейнера во всех
+окнах. Каталог и сохранённые вкладки удаляются сразу; очистка его native cache
+отложена до следующего запуска после успешного CEF singleton initialization,
+когда старых request contexts уже нет. Это явно объясняется в подтверждении.
+Дизайн использует существующие tokens/Inter и компактный список RU/EN.
+
+Промежуточная проверка контейнеров нашла два ограничения CEF Chrome runtime:
+вложенная cache-папка приводит к незаметному OTR fallback, а новый persistent
+context инициализируется асинхронно и не готов для CreateBrowserSync сразу.
+Исправлено: cache/AuraContainer-<id> непосредственно под root_cache_path;
+OnRequestContextInitialized handler сообщает готовность, tick создаёт browser
+только после неё. Пока context готовится, закрытие вкладки не передаёт в CEF
+висячий client; ожидание ограничено 30 сек, ошибка показывается в странице.
+Проверка storage restart повторяется. Приватный режим не получает persistent id.
+
+Источник ограничения профилей:
+https://raw.githubusercontent.com/chromiumembedded/cef/master/libcef/browser/chrome/chrome_browser_context.cc
+
+## 5. Контейнеры — итоговая реализация и проверки
+
+Каталог до 32 контейнеров с именем и цветом; Ctrl+Alt+C, меню Aura и контекстное
+меню вкладки. New tab создаёт новую identity tab; Open page copy открывает URL в
+выбранном context, оставляя исходник. Имя видно в sidebar и отдельной кнопке у
+адреса (нажатие открывает каталог). Приватные вкладки не копируются в persistent
+context. Окна расширений ограничены default container, options открываются в нём.
+История, bookmarks, настройки и vault общие; это не отдельные полные профили.
+
+Schema 9 сохраняет container id. Неизвестный id исключает сохранённую вкладку из
+restore, а не подменяет identity на default. Ссылки, настоящие popup, новые и
+восстановленные вкладки сохраняют id; context общий для всех окон данного каталога.
+Удаление блокируется живыми вкладками во всех окнах, убирает связанные session и
+recently closed entries; native profile очищается после следующего CEF init.
+Cleanup не следует symlinks; не затрагивает default profile. Clear cookies/cache
+охватывает и contexts контейнеров, включая неоткрытые в текущем окне.
+
+Проверено: Linux build, 95/95 CTest (catalog/roundtrip, неизвестный id, удаление
+сохранённых вкладок, deferred cleanup и symlink guard); native GUI три запуска —
+PASS: раздельные настоящие cookies/localStorage/IndexedDB, наследование tab/link/
+popup/second window, private isolation, restart без повторного seed данных,
+межоконная блокировка удаления, закрытие при context initialization, cleanup при
+следующем запуске и сохранность default data. Private sentinel отсутствует в
+profile.toml и backups. EN/RU 900×620 просмотрены; устранено наложение имени на URL.
+Попутно нормализован pending native newtab URL для restore/recently closed.
+Popup и split regression suites — PASS. Логи /tmp/aura-containers-{build-final,
+ctest-final,gui-final,popups-regression,split-regression}.log.
+Windows CI для пунктов 4–5 пока не запускался. Checkpoint 5 завершён.

@@ -225,6 +225,30 @@ void Profile::load() {
                     workspaces.push_back({id, std::move(name)});
             }
         }
+    containers = {{0, "Default"}};
+    if (auto entries = table["containers"].as_array())
+        for (const auto &entry : *entries) {
+            if (containers.size() >= 32)
+                break;
+            if (auto row = entry.as_table()) {
+                const int id = (*row)["id"].value_or(0);
+                auto name = trim((*row)["name"].value_or(std::string{}));
+                if (id <= 0 || id > 1000000 || container(id) || name.empty() || name.size() > 120 ||
+                    name.find_first_of("\r\n\t") != std::string::npos)
+                    continue;
+                containers.push_back(
+                    {id, std::move(name), std::clamp((*row)["color"].value_or(0), 0, 5)});
+            }
+        }
+    container_trash.clear();
+    if (auto entries = table["container_trash"].as_array())
+        for (const auto &entry : *entries) {
+            const int id = entry.value_or(0);
+            if (id > 0 && id <= 1000000 && !container(id) && container_trash.size() < 1000 &&
+                std::find(container_trash.begin(), container_trash.end(), id) ==
+                    container_trash.end())
+                container_trash.push_back(id);
+        }
     groups.clear();
     if (auto entries = table["groups"].as_array())
         for (const auto &entry : *entries) {
@@ -261,13 +285,14 @@ void Profile::load() {
     prune_history();
     if (auto a = table["session"].as_array())
         for (auto &n : *a)
-            if (auto t = n.as_table())
-                session.push_back(
-                    {(*t)["url"].value_or(std::string("aura://newtab")),
-                     (*t)["pinned"].value_or(false),
-                     has_workspace((*t)["workspace"].value_or(0)) ? (*t)["workspace"].value_or(0)
-                                                                  : 0,
-                     (*t)["workspace_active"].value_or(false), (*t)["group"].value_or(0)});
+            if (auto t = n.as_table(); t && container((*t)["container"].value_or(0)))
+                session.push_back({(*t)["url"].value_or(std::string("aura://newtab")),
+                                   (*t)["pinned"].value_or(false),
+                                   has_workspace((*t)["workspace"].value_or(0))
+                                       ? (*t)["workspace"].value_or(0)
+                                       : 0,
+                                   (*t)["workspace_active"].value_or(false),
+                                   (*t)["group"].value_or(0), (*t)["container"].value_or(0)});
     if (auto entries = table["windows"].as_array())
         for (const auto &node : *entries) {
             if (windows.size() >= 32)
@@ -285,6 +310,8 @@ void Profile::load() {
                         if (window.tabs.size() >= 500)
                             break;
                         if (auto item = tab.as_table()) {
+                            if (!container((*item)["container"].value_or(0)))
+                                continue;
                             auto url = (*item)["url"].value_or(std::string{});
                             try {
                                 if (!url.empty())
@@ -294,7 +321,8 @@ void Profile::load() {
                                              ? (*item)["workspace"].value_or(0)
                                              : 0,
                                          (*item)["workspace_active"].value_or(false),
-                                         (*item)["group"].value_or(0)});
+                                         (*item)["group"].value_or(0),
+                                         (*item)["container"].value_or(0)});
                             } catch (const std::exception &) {
                             }
                         }
@@ -327,7 +355,17 @@ void Profile::load() {
 }
 void Profile::save() const {
     toml::table root;
-    root.insert("schema", 8);
+    root.insert("schema", 9);
+    toml::array container_rows;
+    for (const auto &c : containers)
+        if (c.id)
+            container_rows.push_back(
+                toml::table{{"id", c.id}, {"name", c.name}, {"color", c.color}});
+    root.insert("containers", std::move(container_rows));
+    toml::array trash;
+    for (int id : container_trash)
+        trash.push_back(id);
+    root.insert("container_trash", std::move(trash));
     toml::array group_rows;
     for (const auto &g : groups)
         group_rows.push_back(toml::table{{"id", g.id},
@@ -362,7 +400,8 @@ void Profile::save() const {
                                    {"pinned", t.pinned},
                                    {"workspace", t.workspace},
                                    {"workspace_active", t.workspace_active},
-                                   {"group", t.group}});
+                                   {"group", t.group},
+                                   {"container", t.container}});
     root.insert("session", std::move(tabs));
     toml::array saved_windows;
     for (const auto &window : windows) {
@@ -372,7 +411,8 @@ void Profile::save() const {
                                              {"pinned", t.pinned},
                                              {"workspace", t.workspace},
                                              {"workspace_active", t.workspace_active},
-                                             {"group", t.group}});
+                                             {"group", t.group},
+                                             {"container", t.container}});
         saved_windows.push_back(toml::table{{"active", window.active},
                                             {"workspace", window.workspace},
                                             {"split_left", window.split_left},
@@ -601,5 +641,124 @@ std::vector<Visit> Profile::suggest(const std::string &query, std::size_t limit)
         }
     }
     return result;
+}
+} // namespace aura
+
+namespace aura {
+const SiteContainer *Profile::container(int id) const {
+    for (const auto &c : containers)
+        if (c.id == id)
+            return &c;
+    return nullptr;
+}
+std::string Profile::container_label(int id) const {
+    const auto c = container(id);
+    return c ? (id ? c->name : translate(language, "Default container")) : std::string{};
+}
+int Profile::add_container(std::string name, int color) {
+    name = trim(name);
+    if (containers.size() >= 32 || name.empty() || name.size() > 120 ||
+        name.find_first_of("\r\n\t") != std::string::npos)
+        return -1;
+    const auto key = lower(name);
+    if (key == lower(translate("ru", "Default container")) || key == "default" ||
+        key == "default container" ||
+        std::any_of(containers.begin(), containers.end(),
+                    [&](const auto &c) { return lower(c.name) == key; }))
+        return -1;
+    int id = 1;
+    for (const auto &c : containers)
+        id = std::max(id, c.id + 1);
+    for (int removed : container_trash)
+        id = std::max(id, removed + 1);
+    if (id > 1000000)
+        return -1;
+    containers.push_back({id, std::move(name), std::clamp(color, 0, 5)});
+    return id;
+}
+bool Profile::rename_container(int id, std::string name, int color) {
+    if (!id || !container(id))
+        return false;
+    name = trim(name);
+    const auto key = lower(name);
+    if (name.empty() || name.size() > 120 || name.find_first_of("\r\n\t") != std::string::npos ||
+        key == lower(translate("ru", "Default container")) || key == "default" ||
+        key == "default container" ||
+        std::any_of(containers.begin(), containers.end(),
+                    [&](const auto &c) { return c.id != id && lower(c.name) == key; }))
+        return false;
+    for (auto &c : containers)
+        if (c.id == id) {
+            c.name = std::move(name);
+            c.color = std::clamp(color, 0, 5);
+        }
+    return true;
+}
+void remove_container_tabs(SavedWindow &window, int id) {
+    int before = 0;
+    for (int i = 0; i < int(window.tabs.size()) && i < window.active; i++)
+        if (window.tabs[i].container == id)
+            ++before;
+    const auto old = window.tabs.size();
+    std::erase_if(window.tabs, [&](const auto &t) { return t.container == id; });
+    if (old != window.tabs.size()) {
+        window.active =
+            std::clamp(window.active - before, 0, std::max(0, int(window.tabs.size()) - 1));
+        window.split_left = window.split_right = -1;
+    }
+}
+bool Profile::remove_container(int id) {
+    if (!id || !container(id))
+        return false;
+    std::erase_if(containers, [&](const auto &c) { return c.id == id; });
+    container_trash.push_back(id);
+    for (auto &w : windows)
+        remove_container_tabs(w, id);
+    std::erase_if(windows, [](const auto &w) { return w.tabs.empty(); });
+    SavedWindow legacy{session, active};
+    remove_container_tabs(legacy, id);
+    session = std::move(legacy.tabs);
+    active = legacy.active;
+    return true;
+}
+bool Profile::cleanup_container_data() {
+    if (container_trash.empty())
+        return true;
+    const auto root = directory / "cache";
+    std::error_code error;
+    for (const auto &path : {root}) {
+        if (std::filesystem::is_symlink(std::filesystem::symlink_status(path, error)))
+            return false;
+        error.clear();
+    }
+    std::vector<int> remaining;
+    for (int id : container_trash) {
+        if (id <= 0 || id > 1000000 || container(id)) {
+            remaining.push_back(id);
+            continue;
+        }
+        const auto path = container_data_directory(id);
+        error.clear();
+        if (std::filesystem::is_symlink(std::filesystem::symlink_status(path, error))) {
+            remaining.push_back(id);
+            continue;
+        }
+        error.clear();
+        std::filesystem::remove_all(path, error);
+        if (error)
+            remaining.push_back(id);
+    }
+    container_trash = std::move(remaining);
+    save();
+    return container_trash.empty();
+}
+} // namespace aura
+
+namespace aura {
+std::filesystem::path Profile::container_data_directory(int id) const {
+    if (id <= 0 || id > 1000000)
+        throw std::invalid_argument("Invalid container id");
+    // Chrome runtime only accepts profile directories directly below root_cache_path.
+    return directory / "cache" / ("AuraContainer-" + std::to_string(id));
 }
 } // namespace aura

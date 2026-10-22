@@ -1,0 +1,13 @@
+<!doctype html><meta charset="utf-8"><title>Container fixture</title>
+<style>body{font:18px sans-serif;padding:20px}a,button{position:absolute;left:20px;width:230px;height:36px}a{top:100px}button{top:150px}</style>
+<h1>Container storage</h1><a id="child" target="_blank">Open child tab</a><button onclick="window.open('?name=Popup','aura_container_popup')">Open popup</button>
+<script>
+const args=new URLSearchParams(location.search);const name=args.get('name');
+document.querySelector('a').href='?name=Child';
+if(args.has('set')){document.cookie='aura_container='+args.get('set')+'; path=/; SameSite=Lax';localStorage.setItem('aura_container',args.get('set'));}
+let idb='pending';const open=indexedDB.open('aura-container',1);
+open.onupgradeneeded=()=>open.result.createObjectStore('identity');
+open.onsuccess=()=>{const db=open.result;const tx=db.transaction('identity','readwrite');const store=tx.objectStore('identity');if(args.has('set'))store.put(args.get('set'),'identity');const read=store.get('identity');read.onsuccess=()=>{idb=read.result??null;report()};tx.oncomplete=()=>db.close()};
+function report(){document.title=JSON.stringify({name,cookie:document.cookie,storage:localStorage.getItem('aura_container'),idb});}
+report();setInterval(report,200);
+</script>

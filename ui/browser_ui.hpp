@@ -21,7 +21,8 @@ class BrowserUi {
         Passwords,
         Filters,
         Workspaces,
-        Groups
+        Groups,
+        Containers
     };
     BrowserUi(BrowserController &owner, const std::filesystem::path &font);
     ~BrowserUi();
@@ -54,6 +55,8 @@ class BrowserUi {
     void open_workspaces(int move_tab = -1);
     void open_groups(int tab_id = -1);
     std::string groups_report() const;
+    void open_containers(int tab_id = -1);
+    std::string containers_report() const;
     std::string sidebar_report() const;
     void passwords_locked() {
         clear_password_fields();
@@ -73,6 +76,13 @@ class BrowserUi {
   private:
     BrowserController &app_;
     bool split_drag_ = false;
+    TextEditor container_input_;
+    bool container_input_focus_ = false;
+    int container_edit_ = -1, container_target_ = -1, container_color_ = 0, container_scroll_ = 0;
+    std::string container_error_;
+    void save_container();
+    void draw_containers(SkCanvas &, Rect);
+    void containers_pointer(Rect, int, int);
     void draw_page(SkCanvas &, const Tab &, Rect);
     void draw_split(SkCanvas &);
     std::vector<int> sidebar_rows() const;

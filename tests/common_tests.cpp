@@ -727,3 +727,95 @@ TEST(Profile, SplitSessionRoundTripsAndRejectsInvalidPaneIndices) {
     EXPECT_EQ(p.windows[0].split_left, -1);
     EXPECT_EQ(p.windows[0].split_right, -1);
 }
+
+TEST(Profile, ContainersPersistAndRemovalNeverReassignsSavedIdentity) {
+    TemporaryProfile temporary;
+    int work = 0;
+    {
+        Profile p(temporary.path);
+        work = p.add_container("Work", 2);
+        ASSERT_GT(work, 0);
+        EXPECT_LT(p.add_container("work"), 0);
+        EXPECT_LT(p.add_container("По умолчанию"), 0);
+        EXPECT_LT(p.add_container("Bad\nName"), 0);
+        EXPECT_FALSE(p.remove_container(0));
+        EXPECT_TRUE(p.rename_container(work, "Работа", 4));
+        p.windows = {{{{"https://personal.test/", false, 0, false, 0, 0},
+                       {"https://work.test/", false, 0, false, 0, work},
+                       {"https://other.test/", false, 0, false, 0, 0}},
+                      2,
+                      0,
+                      0,
+                      2}};
+        p.session = p.windows.front().tabs;
+        p.active = 2;
+        p.save();
+    }
+    {
+        Profile p(temporary.path);
+        ASSERT_NE(p.container(work), nullptr);
+        EXPECT_EQ(p.container(work)->name, "Работа");
+        EXPECT_EQ(p.container(work)->color, 4);
+        ASSERT_EQ(p.windows.size(), 1u);
+        ASSERT_EQ(p.windows[0].tabs.size(), 3u);
+        EXPECT_EQ(p.windows[0].tabs[1].container, work);
+        EXPECT_TRUE(p.remove_container(work));
+        ASSERT_EQ(p.windows[0].tabs.size(), 2u);
+        EXPECT_EQ(p.windows[0].active, 1);
+        EXPECT_EQ(p.windows[0].tabs[1].url, "https://other.test/");
+        EXPECT_EQ(p.windows[0].split_left, -1);
+        EXPECT_EQ(p.session.size(), 2u);
+        EXPECT_GT(p.add_container("Replacement"), work);
+        p.save();
+    }
+    Profile p(temporary.path);
+    EXPECT_EQ(p.container(work), nullptr);
+    ASSERT_EQ(p.container_trash.size(), 1u);
+    EXPECT_EQ(p.container_trash[0], work);
+    EXPECT_EQ(p.windows[0].tabs.size(), 2u);
+}
+TEST(Profile, ContainerCleanupIsDeferredAndDoesNotFollowDirectorySymlinks) {
+    TemporaryProfile temporary;
+    Profile p(temporary.path);
+    const int id = p.add_container("Work");
+    const auto data = p.container_data_directory(id);
+    std::filesystem::create_directories(data);
+    {
+        std::ofstream file(data / "fixture");
+        file << "private site data";
+    }
+    ASSERT_TRUE(p.remove_container(id));
+    p.save();
+    EXPECT_TRUE(std::filesystem::exists(data / "fixture"));
+    EXPECT_TRUE(p.cleanup_container_data());
+    EXPECT_FALSE(std::filesystem::exists(data));
+    EXPECT_TRUE(p.container_trash.empty());
+#ifndef _WIN32
+    const int next = p.add_container("Next");
+    const auto outside = temporary.path / "outside";
+    std::filesystem::create_directories(outside);
+    {
+        std::ofstream file(outside / "keep");
+        file << "unrelated data";
+    }
+    std::filesystem::create_directory_symlink(outside, p.container_data_directory(next));
+    ASSERT_TRUE(p.remove_container(next));
+    EXPECT_FALSE(p.cleanup_container_data());
+    EXPECT_TRUE(std::filesystem::exists(outside / "keep"));
+    ASSERT_EQ(p.container_trash.size(), 1u);
+#endif
+}
+TEST(Profile, MissingContainerCatalogDoesNotRestoreTabsInDefaultIdentity) {
+    TemporaryProfile temporary;
+    std::ofstream file(temporary.path / "profile.toml");
+    file << "[[session]]\nurl='https://isolated.test/"
+            "'\ncontainer=7\n[[windows]]\nactive=0\n[[windows.tabs]]\nurl='https://isolated.test/"
+            "'\ncontainer=7\n[[windows.tabs]]\nurl='https://normal.test/'\n";
+    file.close();
+    Profile p(temporary.path);
+    EXPECT_TRUE(p.session.empty());
+    ASSERT_EQ(p.windows.size(), 1u);
+    ASSERT_EQ(p.windows[0].tabs.size(), 1u);
+    EXPECT_EQ(p.windows[0].tabs[0].url, "https://normal.test/");
+    EXPECT_EQ(p.windows[0].tabs[0].container, 0);
+}

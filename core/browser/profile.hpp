@@ -23,6 +23,7 @@ struct SavedTab {
     int workspace = 0;
     bool workspace_active = false;
     int group = 0;
+    int container = 0;
 };
 struct SavedWindow {
     std::vector<SavedTab> tabs;
@@ -40,6 +41,12 @@ struct TabGroup {
     int color = 0;
     bool collapsed = false;
 };
+struct SiteContainer {
+    int id = 0;
+    std::string name;
+    int color = 0;
+};
+void remove_container_tabs(SavedWindow &window, int container);
 class Profile : public BrowserPreferences {
   public:
     explicit Profile(std::filesystem::path directory);
@@ -53,6 +60,15 @@ class Profile : public BrowserPreferences {
     int add_workspace(std::string name);
     bool rename_workspace(int id, std::string name);
     bool remove_workspace(int id);
+    std::vector<SiteContainer> containers{{0, "Default"}};
+    std::vector<int> container_trash;
+    const SiteContainer *container(int id) const;
+    std::string container_label(int id) const;
+    int add_container(std::string name, int color = 0);
+    bool rename_container(int id, std::string name, int color);
+    bool remove_container(int id);
+    bool cleanup_container_data();
+    std::filesystem::path container_data_directory(int id) const;
     std::vector<TabGroup> groups;
     TabGroup *group(int id);
     const TabGroup *group(int id) const;

@@ -232,7 +232,7 @@ void BrowserController::extension_page(size_t index, bool options) {
         return;
     }
     ui->panel(BrowserUi::None);
-    new_tab("chrome-extension://" + e.id + "/" + path);
+    new_tab("chrome-extension://" + e.id + "/" + path, false, true, false, -1, 0, 0);
 }
 } // namespace aura
 

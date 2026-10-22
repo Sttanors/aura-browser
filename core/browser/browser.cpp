@@ -27,6 +27,10 @@ extern char **environ;
 #include <spdlog/spdlog.h>
 namespace aura {
 namespace {
+std::string restorable_url(const Tab &tab) {
+    const auto &url = tab.pending_url.empty() ? tab.page.url : tab.pending_url;
+    return url == "about:blank#aura-newtab" ? "aura://newtab" : url;
+}
 std::string tabs_json(const std::vector<std::unique_ptr<Tab>> &tabs) {
     std::ostringstream out;
     out << '[';
@@ -42,10 +46,11 @@ std::string tabs_json(const std::vector<std::unique_ptr<Tab>> &tabs) {
             << "\",\"private\":" << (t->private_tab ? "true" : "false")
             << ",\"pinned\":" << (t->pinned ? "true" : "false")
             << ",\"sleeping\":" << (t->sleeping ? "true" : "false")
+            << ",\"creation_pending\":" << (t->creation_pending ? "true" : "false")
             << ",\"sleep_pending\":" << (t->sleep_pending ? "true" : "false")
             << ",\"buffer_bytes\":" << t->page.view.bytes().size() + t->page.popup.bytes().size()
-            << ",\"workspace\":" << t->workspace << ",\"group\":" << t->group
-            << ",\"loaded\":" << (t->page.loaded ? "true" : "false")
+            << ",\"container\":" << t->container << ",\"workspace\":" << t->workspace
+            << ",\"group\":" << t->group << ",\"loaded\":" << (t->page.loaded ? "true" : "false")
             << ",\"failed\":" << (t->page.failed ? "true" : "false")
             << ",\"http_status\":" << t->page.http_status << ",\"frame_rate\":"
             << (t->browser ? t->browser->GetHost()->GetWindowlessFrameRate() : 0)
@@ -234,7 +239,7 @@ void BrowserController::apply_settings(bool update_zoom, bool propagate) {
         if (t->sleeping && site_exception(t->page.url, profile.tab_sleep_exceptions))
             wake_tab(t->id);
         update_site_tools(*t);
-        if (t->private_tab && t->browser)
+        if (t->browser && (t->private_tab || t->container))
             configure_font_preferences(t->browser->GetHost()->GetRequestContext());
         if (t->browser &&
             (t->page.url.starts_with("http://") || t->page.url.starts_with("https://")))
@@ -420,6 +425,22 @@ void BrowserController::tick() {
             if (can_sleep(*t) && now >= t->sleep_retry_after &&
                 now - t->inactive_since >= std::chrono::minutes(profile.tab_sleep_minutes))
                 sleep_tab(t->id, false);
+    if (!quitting)
+        for (auto &t : tabs)
+            if (t->creation_pending && !t->closing) {
+                if (state_->container_contexts_ready.contains(t->container)) {
+                    t->creation_pending = false;
+                    const auto initial = t->pending_url;
+                    ensure_browser(*t, initial);
+                } else if (now - t->context_wait_since > std::chrono::seconds(30)) {
+                    t->creation_pending = false;
+                    t->loading = false;
+                    t->client = nullptr;
+                    t->page.failed = true;
+                    t->page.error = tr("Could not open this container's storage.");
+                    changed();
+                }
+            }
     if (background_updates_ && profile.check_updates && updates.due())
         updates.check();
     auto &filters = filter_lists();
@@ -484,10 +505,11 @@ void BrowserController::tick() {
     const auto old_position =
         int(std::find(old_order.begin(), old_order.end(), active) - old_order.begin());
     for (int i = static_cast<int>(tabs.size()) - 1; i >= 0; --i)
-        if (tabs[i]->page.closed && !tabs[i]->popup_pending) {
+        if (tabs[i]->page.closed && !tabs[i]->popup_pending && !tabs[i]->creation_pending) {
             if (tabs[i]->remember_on_close && !tabs[i]->private_tab && !quitting) {
-                recently_closed_.push_back({tabs[i]->page.url, tabs[i]->pinned, tabs[i]->workspace,
-                                            false, tabs[i]->group});
+                recently_closed_.push_back({restorable_url(*tabs[i]), tabs[i]->pinned,
+                                            tabs[i]->workspace, false, tabs[i]->group,
+                                            tabs[i]->container});
                 if (recently_closed_.size() > 30)
                     recently_closed_.erase(recently_closed_.begin());
             }
@@ -558,6 +580,10 @@ void BrowserController::ensure_browser(Tab &t, const std::string &url) {
         t.browser->GetMainFrame()->LoadURL(url);
         return;
     }
+    if (t.creation_pending || t.popup_pending) {
+        t.pending_url = url;
+        return;
+    }
     t.page.invalidate = [this, id = t.id] {
         if (tab_visible(id))
             changed();
@@ -594,14 +620,19 @@ void BrowserController::ensure_browser(Tab &t, const std::string &url) {
     settings.text_area_resize = profile.resize_textareas ? STATE_ENABLED : STATE_DISABLED;
     settings.tab_to_links = profile.tab_to_links ? STATE_ENABLED : STATE_DISABLED;
     settings.image_shrink_standalone_to_fit = profile.image_fit ? STATE_ENABLED : STATE_DISABLED;
-    CefRefPtr<CefRequestContext> context;
-    if (t.private_tab) {
-        if (!private_context_) {
-            CefRequestContextSettings settings;
-            CefString(&settings.accept_language_list) = profile.site_language;
-            private_context_ = CefRequestContext::CreateContext(settings, nullptr);
-        }
-        context = private_context_;
+    const auto context = request_context(t.container, t.private_tab);
+    if (!context) {
+        t.page.failed = true;
+        t.loading = false;
+        t.page.error = tr("Could not open this container's storage.");
+        t.client = nullptr;
+        ui->toast(t.page.error);
+        return;
+    }
+    if (t.container && !state_->container_contexts_ready.contains(t.container)) {
+        t.creation_pending = true;
+        t.context_wait_since = std::chrono::steady_clock::now();
+        return;
     }
     t.browser = CefBrowserHost::CreateBrowserSync(info, t.client, "about:blank", settings, nullptr,
                                                   context);
@@ -618,7 +649,7 @@ void BrowserController::ensure_browser(Tab &t, const std::string &url) {
     }
 }
 void BrowserController::new_tab(std::string input, bool private_tab, bool foreground, bool pinned,
-                                int space, int group_id) {
+                                int space, int group_id, int container_id) {
     if (quitting)
         return;
     private_tab = private_tab || private_window;
@@ -636,6 +667,13 @@ void BrowserController::new_tab(std::string input, bool private_tab, bool foregr
         group_id = current()->group;
     const auto group = profile.group(group_id);
     t->group = !private_window && group && group->workspace == t->workspace ? group_id : 0;
+    if (container_id < 0)
+        container_id = current() && current()->workspace == t->workspace ? current()->container : 0;
+    if (!private_tab && !profile.container(container_id)) {
+        ui->toast(tr("Container no longer exists."));
+        return;
+    }
+    t->container = private_tab ? 0 : container_id;
     t->page.scale = scale;
     t->private_tab = private_tab;
     t->pinned = pinned;
@@ -709,11 +747,12 @@ void BrowserController::close_tab(int index) {
     t.remember_on_close = !t.private_tab;
     close_menu();
     t.closing = true;
+    t.creation_pending = false;
     if (t.browser) {
         wake_tab(t.id);
         t.browser->GetHost()->CloseDevTools();
         t.browser->GetHost()->CloseBrowser(false);
-    } else if (!t.popup_pending)
+    } else if (!t.popup_pending && !t.creation_pending)
         t.page.closed = true;
     ++audit["tabs_closed_by_user"];
     changed(true);
@@ -724,7 +763,7 @@ void BrowserController::reopen() {
     auto t = recently_closed_.back();
     recently_closed_.pop_back();
     new_tab(t.url, false, true, t.pinned, profile.has_workspace(t.workspace) ? t.workspace : 0,
-            t.group);
+            t.group, t.container);
     ++audit["tabs_reopened"];
 }
 void BrowserController::move_tab(int from, int to) {
@@ -755,6 +794,8 @@ void BrowserController::navigate(std::string input) {
                 // beforeunload. Commit the native start page only on address change.
                 t->browser->GetMainFrame()->LoadURL("about:blank#aura-newtab");
             } else {
+                if (t->creation_pending || t->popup_pending)
+                    t->pending_url = "about:blank#aura-newtab";
                 t->ntp = true;
                 t->page.url = url;
                 t->page.title = tr(t->private_tab ? "Private tab" : "New tab");
@@ -967,11 +1008,12 @@ void BrowserController::request_quit(bool force) {
     quitting = true;
     for (auto &t : tabs) {
         t->closing = true;
+        t->creation_pending = false;
         if (t->browser) {
             wake_tab(t->id);
             t->browser->GetHost()->CloseDevTools();
             t->browser->GetHost()->CloseBrowser(force);
-        } else if (!t->popup_pending)
+        } else if (!t->popup_pending && !t->creation_pending)
             t->page.closed = true;
     }
 }
@@ -1018,6 +1060,8 @@ void BrowserController::prepare_shutdown() {
     filter_lists().shutdown();
     detach_window();
     private_context_ = nullptr;
+    state_->container_contexts.clear();
+    state_->container_contexts_ready.clear();
 }
 void BrowserController::detach_window() {
     ui->passwords_locked();
@@ -1042,7 +1086,7 @@ void BrowserController::restore_window(const SavedWindow &saved) {
     workspace = saved.workspace;
     restoring_ = true;
     for (const auto &t : saved.tabs) {
-        new_tab(t.url, false, false, t.pinned, t.workspace, t.group);
+        new_tab(t.url, false, false, t.pinned, t.workspace, t.group, t.container);
         if (t.workspace_active && !tabs.empty())
             workspace_selection_[t.workspace] = tabs.back()->id;
     }
@@ -1125,8 +1169,8 @@ void BrowserController::save_session() {
                         window.split_left = int(window.tabs.size());
                     if (t->id == other->split_tabs[1])
                         window.split_right = int(window.tabs.size());
-                    window.tabs.push_back({t->pending_url.empty() ? t->page.url : t->pending_url,
-                                           t->pinned, t->workspace, selected, t->group});
+                    window.tabs.push_back({restorable_url(*t), t->pinned, t->workspace, selected,
+                                           t->group, t->container});
                 }
             if (window.split_left < 0 || window.split_right < 0 ||
                 (window.active != window.split_left && window.active != window.split_right))
@@ -1181,7 +1225,9 @@ std::string BrowserController::report() const {
         << ",\"status\":" << json_quote(updates.status)
         << ",\"installation\":" << json_quote(updates.installation_kind())
         << ",\"ready\":" << (!updates.ready_file.empty() ? "true" : "false") << "}"
-        << ",\"dialog_count\":" << dialogs.size() << ",\"split_view\":" << ui->split_report()
+        << ",\"dialog_count\":" << dialogs.size()
+        << ",\"containers_ui\":" << ui->containers_report()
+        << ",\"split_view\":" << ui->split_report()
         << ",\"tabs\":" << (quit_snapshot_.empty() ? tabs_json(tabs) : quit_snapshot_)
         << ",\"settings\":{";
     bool first_setting = true;
@@ -1233,7 +1279,7 @@ void BrowserController::browser_created(int id, CefRefPtr<CefBrowser> browser) {
             browser->GetHost()->WasHidden(!tab_visible(t->id));
             browser->GetHost()->SetFocus(t == current());
         }
-        if (t->private_tab)
+        if (t->private_tab || t->container)
             configure_font_preferences(browser->GetHost()->GetRequestContext());
 
         t->devtools = new DevToolsSession(browser);
@@ -1243,7 +1289,7 @@ void BrowserController::browser_created(int id, CefRefPtr<CefBrowser> browser) {
                 t->site_tools_ready = true;
                 auto initial = std::move(t->pending_url);
                 t->pending_url.clear();
-                if (!t->ntp && !initial.empty())
+                if (!initial.empty() && (!t->ntp || initial == "about:blank#aura-newtab"))
                     t->browser->GetMainFrame()->LoadURL(initial);
             }
         });
@@ -1279,10 +1325,10 @@ void BrowserController::open_from_page(int source, std::string url, bool foregro
     if (!t)
         return;
     const bool private_tab = t->private_tab;
-    const int space = t->workspace, group = t->group;
-    defer([this, url = std::move(url), private_tab, foreground, space, group] {
+    const int space = t->workspace, group = t->group, container = t->container;
+    defer([this, url = std::move(url), private_tab, foreground, space, group, container] {
         new_tab(url, private_tab, foreground && profile.foreground_links && space == workspace,
-                false, space, group);
+                false, space, group, container);
     });
     ++audit["page_opened_tabs"];
 }
@@ -1293,9 +1339,10 @@ Tab *BrowserController::prepare_popup(int source, int popup_id, const std::strin
         return nullptr;
     const bool private_tab = opener->private_tab;
     const int id = next_id_;
-    const int space = opener->workspace, group = opener->group;
+    const int space = opener->workspace, group = opener->group, container = opener->container;
     new_tab("aura://newtab", private_tab,
-            foreground && profile.foreground_links && space == workspace, false, space, group);
+            foreground && profile.foreground_links && space == workspace, false, space, group,
+            container);
     auto target = tab(id);
     if (!target)
         return nullptr;
@@ -1486,6 +1533,12 @@ void BrowserController::clear_data(const std::string &kind) {
         return;
     }
     std::vector<CefRefPtr<CefRequestContext>> contexts{CefRequestContext::GetGlobalContext()};
+    for (const auto &c : profile.containers)
+        if (c.id)
+            request_context(c.id);
+    for (const auto &[id, context] : state_->container_contexts)
+        if (context)
+            contexts.push_back(context);
     if (private_context_)
         contexts.push_back(private_context_);
     for (auto &context : contexts) {

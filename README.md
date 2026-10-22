@@ -223,6 +223,7 @@ See [windows and sessions](docs/windows-and-sessions.md).
 | Ctrl Shift E / Ctrl Alt G | Workspaces / tab groups (source additions) |
 | Ctrl Alt S | Put current tab to sleep (source addition) |
 | Ctrl Alt V | Two websites side by side / exit split (source addition) |
+| Ctrl Alt C | Site containers (source addition) |
 | Alt ← / Alt → | Back / forward |
 | Ctrl R or F5 / Ctrl Shift R | Reload/stop / reload without cache |
 | Ctrl + / Ctrl − / Ctrl 0 | Site zoom, or independent start-page zoom |

@@ -17,6 +17,7 @@
 #include <atomic>
 #include <deque>
 #include <map>
+#include <set>
 namespace aura {
 std::string password_origin(const std::string &url);
 class BrowserUi;
@@ -24,6 +25,7 @@ struct Tab {
     int id = 0;
     int workspace = 0;
     int group = 0;
+    int container = 0;
     uint64_t navigation_serial = 0;
     bool sleeping = false, sleep_pending = false, media_capture = false;
     std::map<std::string, bool> audio_contexts;
@@ -38,7 +40,8 @@ struct Tab {
     double progress = 0, zoom = 0;
     std::string icon_url, pending_url;
     bool site_tools_ready = false;
-    bool popup_pending = false;
+    bool popup_pending = false, creation_pending = false;
+    std::chrono::steady_clock::time_point context_wait_since{};
     bool remember_on_close = false;
     CefRefPtr<DevToolsSession> devtools;
     std::map<int, std::string> protection_contexts;
@@ -99,6 +102,8 @@ struct BrowserState {
         std::chrono::steady_clock::now() + std::chrono::seconds(30);
     std::shared_ptr<RequestPolicy> policy = std::make_shared<RequestPolicy>();
     CefRefPtr<CefRequestContext> private_context;
+    std::map<int, CefRefPtr<CefRequestContext>> container_contexts;
+    std::set<int> container_contexts_ready;
     std::vector<BrowserController *> windows;
     std::deque<WindowRequest> pending_windows;
     std::vector<SavedWindow> previous_windows;
@@ -151,6 +156,9 @@ class BrowserController {
     void move_tab_to_workspace(int tab_id, int workspace_id);
     void set_tab_group(int tab_id, int group_id);
     void remove_group(int group_id);
+    CefRefPtr<CefRequestContext> request_context(int container, bool private_tab = false);
+    bool container_in_use(int id) const;
+    void remove_container(int id);
     double scale = 1, ui_scale = 1;
     bool quitting = false;
     int find_matches = 0, find_active = 0, tools_open = 0;
@@ -175,7 +183,8 @@ class BrowserController {
     void tick();
     void changed(bool persistent = false);
     void new_tab(std::string url = "aura://newtab", bool private_tab = false,
-                 bool foreground = true, bool pinned = false, int workspace = -1, int group = -1);
+                 bool foreground = true, bool pinned = false, int workspace = -1, int group = -1,
+                 int container = -1);
     void activate(int index, bool reveal_group = true);
     void close_tab(int index);
     void reopen();
