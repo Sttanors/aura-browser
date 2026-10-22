@@ -65,6 +65,12 @@ def main():
                         key_at(w,'c',4)
                         copied=subprocess.run(['xclip','-selection','clipboard','-o'],capture_output=True,text=True,timeout=5)
                         assert copied.returncode==0 and 'This article' in copied.stdout,copied.stdout
+                        click_at(w,252+text[0]+80,88+text[1]+16,button=3)
+                        wait_until(lambda:state().get('menu_ui') is not None,'Reader context menu missing')
+                        copy=next(item['bounds'] for item in state()['menu_ui'] if item['label']=='Copy')
+                        click(copy);wait_until(lambda:state()['audit'].get('reader_context_copies',0)>0,'Reader native Copy did not run')
+                        copied=subprocess.run(['xclip','-selection','clipboard','-o'],capture_output=True,text=True,timeout=5)
+                        assert copied.returncode==0 and 'This article' in copied.stdout,'Reader context Copy failed'
                         # Focus text and page down: the overlay scrolls, original document does not.
                         body=current()['reader_ui']['body'];click_at(w,252+body[0]+80,88+min(420,body[1]+150));key_at(w,'Next')
                         wait_until(lambda:current()['reader_ui']['scroll']>0,'Reader body did not scroll')

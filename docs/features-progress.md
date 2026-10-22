@@ -14,7 +14,7 @@
 | 6 | Полноценные профили | Реализовано, Linux проверки PASS |
 | 7 | Палитра команд | Реализовано, Linux проверки PASS |
 | 8 | Режим чтения | Реализовано, Linux проверки PASS |
-| 9 | Перевод страниц и выделения | Онлайн, только по явной команде, провайдер выбирается пользователем |
+| 9 | Перевод страниц и выделения | Реализовано, Linux/offline/live проверки PASS |
 | 10 | Центр разрешений сайта | В очереди |
 | 11 | Панель данных сайтов | В очереди |
 | 12 | Менеджер закладок | В очереди |
@@ -395,5 +395,75 @@ OnTextSelectionChanged, хранится только в памяти и очи�
 Слишком большие статьи отклоняются с отдельным сообщением, без скрытого обрезания
 текста (2000 блоков). Это также проверено настоящей статьёй из 2100 абзацев.
 Логи /tmp/aura-reader-{build-final,ctest-final,gui-final,commands-regression,
-clipboard-regression,sleep-regression}.log. Checkpoint 8 завершён; Windows CI для
-reader ещё не выполнен. Установочные пакеты не обновлялись.
+clipboard-regression,sleep-regression}.log. Checkpoint 8 завершён; Windows CI 39832550104 на d401ad8 (включая UI wiring): SUCCESS,
+compile/tests и Windows installer integration. Установочные пакеты не обновлялись.
+
+## 9. План перевода по явной команде
+
+Выбор владельца: онлайн, только вручную, с выбором провайдера. Native panel:
+провайдер Google Translate / Microsoft Translator (текст), целевой язык, выбранный текст / адрес
+публичной страницы, preview и одна кнопка Open translation. Панель не отправляет
+ничего при открытии или смене options; провайдер открывается новой вкладкой после
+нажатия кнопки. Для публичных страниц используется Google Translate Website;
+Microsoft Translator здесь поддерживает текст, page mode недоступен без скрытой смены провайдера.
+Подписанные/authenticated страницы могут не открываться через внешний URL translator.
+Приватность и container исходной вкладки наследуются новой вкладкой.
+
+Палитра команд, Ctrl+Alt+T, меню Aura, контекстное меню выделения. Для текста
+используется actual CEF selection (включая reader/frames), snapshot перед показом
+panel; перед отправкой проверяется исходная navigation serial. Язык/провайдер
+сохраняются в profile, текст не помещается в preferences. Внешняя вкладка следует
+обычной политике history/session этого профиля; private tabs исключаются как ранее.
+
+Дизайн gui-genius: прежние palette tokens/Inter, 900 px overlay, отступы 8/16/24;
+provider → language → content → preview → disclosure/send. RU/EN, keyboard focus,
+empty selection, unsupported provider/mode, stale page и oversize error. Без
+декоративных карточек и автоматических запросов. Исходная страница остаётся открыта.
+Источник Google Websites: https://support.google.com/translate/answer/2534559
+Microsoft Translator: https://www.bing.com/translator
+
+## 9. Перевод — реализация перед завершающей проверкой
+
+Native selector Google/Microsoft Translator, восемь вариантов языка (включая Same as Aura), page
+URL / selection, preview, Cancel/Open translation; выбранные options отмечаются
+галочкой. Нет запросов на открытие панели/изменение options; новая вкладка только
+после Send. Google website route / Google text / Microsoft Translator text — HTTPS, UTF-8 query
+encoded, target/provider из allowlist. Поддержка text-only у Microsoft Translator
+явная: page mode не меняет провайдера автоматически. Selected text ограничен
+5000 UTF-8 bytes: длинное выделение отклоняется, без усечения. Page URL максимум
+16384 bytes, только HTTP(S), без userinfo. Source tab/navigation serial проверяются.
+
+Ctrl+Alt+T, меню Aura, палитра (page/selection), CEF context menu; context action
+привязан к исходному tab id. Новая вкладка наследует private/workspace/group/
+container; исходный документ не заменяется. Настройки провайдера/языка сохраняются
+общим settings catalog. Snapshot очищается при закрытии/смене panel/address.
+Provider URL далее подчиняется обычной history/session policy (private исключён).
+
+Первый native GUI PASS при блокировке внешних запросов: нет sends до команды и
+после Cancel, правильные URI для Google/Microsoft Translator и Unicode, context selection,
+empty/oversize/stale ошибки, source DOM сохранён, private state наследуется,
+preferences restart/RU 900×620. CTest 100/100 PASS, включая query injection,
+неподдерживаемые scheme/provider/target, userinfo и границы размера.
+
+Обнаружен и исправлен общий navigation bug: при failed initial navigation UI
+показывал about:blank, а Reload повторял пустую страницу. OnLoadError сохраняет
+failed URL, Retry загружает этот адрес; lock не показывается до успешной загрузки.
+Повтор отказавшей provider navigation проверен через заблокированный proxy.
+Reader context-menu Copy теперь тоже использует native clipboard для plain text.
+Final offline GUI PASS: наследование настоящего container context, private state,
+URI routing, no-send/cancel, stale/empty/long, context menu, RU/EN и restart.
+Live provider GUI PASS через саму кнопку Aura: Google и Microsoft вернули Привет
+для синтетического Hello; Google website route перевёл публичный example.com в
+русскую страницу. Только тестовые данные и пустой profile; CDP доступен на loopback
+только в opt-in QA. В общую offline suite сетевой тест не добавлен.
+Reader regression с Ctrl+C и настоящим context-menu Copy — PASS. Базовый browser
+regression — PASS. Build и 100/100 CTest PASS. RU/EN скриншоты просмотрены; выбранные
+варианты имеют check mark, Same as Aura помещается на малом экране. README RU/EN
+теперь явно отличает функции main от последней packaged preview.
+
+Логи /tmp/aura-translation-{build-final,ctest-final,gui-final,online-final,
+reader-regression,browser-regression}.log. Checkpoint 9 завершён. Windows CI для
+этого checkpoint ещё не выполнен; установщики не обновлялись.
+
+Microsoft Chinese target сопоставлен с zh-Hans по официальному language support:
+https://learn.microsoft.com/en-us/azure/ai-services/translator/language-support

@@ -858,6 +858,8 @@ void BrowserController::reload(bool ignore) {
     if (auto t = current(); t && t->browser && !t->ntp) {
         if (t->loading)
             t->browser->StopLoad();
+        else if (t->page.failed && !t->page.url.empty())
+            t->browser->GetMainFrame()->LoadURL(t->page.url);
         else if (ignore)
             t->browser->ReloadIgnoreCache();
         else
@@ -1257,7 +1259,8 @@ std::string BrowserController::report() const {
         << ",\"tabs\":" << (quit_snapshot_.empty() ? tabs_json(tabs) : quit_snapshot_)
         << ",\"profile_name\":" << json_quote(profile_name())
         << ",\"profile_directory\":" << json_quote(utf8_path(profile.directory))
-        << ",\"commands_ui\":" << ui->commands_report()
+        << ",\"translation_ui\":" << ui->translation_report()
+        << ",\"menu_ui\":" << ui->menu_report() << ",\"commands_ui\":" << ui->commands_report()
         << ",\"profiles_ui\":" << ui->profiles_report() << ",\"settings\":{";
     bool first_setting = true;
     for (const auto &setting : settings_catalog()) {

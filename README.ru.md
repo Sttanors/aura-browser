@@ -12,6 +12,10 @@ Aura разрабатывается с существенной помощью �
 вкладки, адресную строку, навигацию и собственную новую вкладку. Весь интерфейс нарисован Skia;
 HTML используется только для посещаемых страниц.
 
+**Статус разработки:** ветка `main` опережает готовую preview-сборку. Новые функции
+и результаты проверок записываются в [журнале 15 функций](docs/features-progress.md).
+Установщики обновляются отдельными релизами.
+
 Windows-порт использует то же приложение и интерфейс, что и Linux: **Win32 + Skia raster + CEF OSR**.
 Статус его сборки и проверок виден в [GitHub Actions](https://github.com/Sttanors/aura-browser/actions).
 Готовые portable-сборки Windows и Linux доступны в [GitHub Releases](https://github.com/Sttanors/aura-browser/releases/tag/v0.3.0-preview.1).

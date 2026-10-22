@@ -24,7 +24,8 @@ class BrowserUi {
         Groups,
         Containers,
         Profiles,
-        Commands
+        Commands,
+        Translation
     };
     BrowserUi(BrowserController &owner, const std::filesystem::path &font);
     ~BrowserUi();
@@ -63,6 +64,9 @@ class BrowserUi {
     std::string profiles_report() const;
     void open_commands();
     std::string commands_report() const;
+    void open_translation(bool selection = false, int source_tab = 0);
+    std::string translation_report() const;
+    std::string menu_report() const;
     std::string sidebar_report() const;
     void passwords_locked() {
         clear_password_fields();
@@ -81,6 +85,14 @@ class BrowserUi {
 
   private:
     BrowserController &app_;
+    int translation_tab_ = 0;
+    uint64_t translation_serial_ = 0;
+    bool translation_selection_ = false;
+    std::string translation_text_, translation_source_;
+    void draw_translation(SkCanvas &, Rect);
+    void translation_pointer(Rect, int, int);
+    void send_translation();
+    std::string translation_problem() const;
     struct CommandResult {
         std::string kind, id, title, detail, shortcut;
         int tab = 0, score = 0;

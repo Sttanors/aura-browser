@@ -12,6 +12,10 @@ Linux uses X11/XWayland; Windows uses Win32. Both versions share the browser and
 documentation and automated checks. The project owner directs the product and makes product decisions.
 AI assistance does not imply that the software is error-free. Aura is currently a preview.
 
+**Development status:** `main` is ahead of the packaged preview. New features and their checks
+are tracked in the [15-feature progress journal](docs/features-progress.md) (Russian).
+Installers are updated in separate releases.
+
 ## Download and install
 
 Get the files from [GitHub Releases](https://github.com/Sttanors/aura-browser/releases/tag/v0.3.0-preview.1).

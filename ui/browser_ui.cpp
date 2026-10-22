@@ -4,6 +4,7 @@
 #include "common/config.hpp"
 #include "common/platform.hpp"
 #include "common/update_key.hpp"
+#include "core/browser/translation.hpp"
 #include "include/cef_frame.h"
 #include "include/core/SkBitmap.h"
 #include "include/core/SkBlurTypes.h"
@@ -356,17 +357,18 @@ Rect BrowserUi::address_bounds() const {
 }
 Rect BrowserUi::panel_bounds() const {
     const auto r = web_bounds();
-    const int w = std::min(panel_ == Settings     ? 1000
-                           : panel_ == Extensions ? 900
-                           : panel_ == Shortcuts  ? 900
-                           : panel_ == Passwords  ? 900
-                           : panel_ == Import     ? 900
-                           : panel_ == Groups     ? 900
-                           : panel_ == Containers ? 900
-                           : panel_ == Commands   ? 900
-                           : panel_ == Profiles   ? 900
-                           : panel_ == Filters    ? 900
-                                                  : 660,
+    const int w = std::min(panel_ == Settings      ? 1000
+                           : panel_ == Extensions  ? 900
+                           : panel_ == Shortcuts   ? 900
+                           : panel_ == Passwords   ? 900
+                           : panel_ == Import      ? 900
+                           : panel_ == Groups      ? 900
+                           : panel_ == Containers  ? 900
+                           : panel_ == Commands    ? 900
+                           : panel_ == Translation ? 900
+                           : panel_ == Profiles    ? 900
+                           : panel_ == Filters     ? 900
+                                                   : 660,
                            r.width - 24);
     const int h = std::min(
         panel_ == Settings     ? 760
@@ -377,7 +379,8 @@ Rect BrowserUi::panel_bounds() const {
         : panel_ == Commands
             ? std::clamp(180 + int(std::min<std::size_t>(8, command_results().size())) * 52, 284,
                          596)
-        : panel_ == Profiles ? std::clamp(236 + int(listed_profiles().size()) * 84, 340, 700)
+        : panel_ == Translation ? 520
+        : panel_ == Profiles    ? std::clamp(236 + int(listed_profiles().size()) * 84, 340, 700)
         : panel_ == Containers
             ? std::clamp(260 + int(app_.profile.containers.size()) * 88, 440, 700)
         : panel_ == Groups
@@ -668,9 +671,11 @@ void BrowserUi::draw(SkCanvas &c) {
     fill(c, addr, 12, SkColorSetA(t.surface, light ? 230 : 185));
     border(c, addr, 12, SkColorSetA(muted, 190));
     icon(c,
-         current && current->private_tab                        ? "private"
-         : current && current->page.url.starts_with("https://") ? "lock"
-                                                                : "search",
+         current && current->private_tab ? "private"
+         : current && current->page.loaded && !current->page.failed &&
+                 current->page.url.starts_with("https://")
+             ? "lock"
+             : "search",
          addr.x + 12, addr.y + 10, 17, muted);
     label(c, regular_,
           current && !current->ntp ? current->page.url : app_.tr("Search or enter an address"),
@@ -777,7 +782,8 @@ void BrowserUi::draw(SkCanvas &c) {
                                       app_.tr("Tab groups"),
                                       app_.tr("Site containers"),
                                       app_.tr("Profiles"),
-                                      app_.tr("Command palette")};
+                                      app_.tr("Command palette"),
+                                      app_.tr("Translate")};
         label(c, medium_, titles[panel_], r.x + 28, r.y + 47, 23, ink);
         icon(c, "close", r.x + r.width - 43, r.y + 26, 19, muted);
         if (panel_ == History || panel_ == Bookmarks) {
@@ -883,6 +889,8 @@ void BrowserUi::draw(SkCanvas &c) {
             draw_profiles(c, r);
         if (panel_ == Commands)
             draw_commands(c, r);
+        if (panel_ == Translation)
+            draw_translation(c, r);
     }
 
     if (editing) {
@@ -2387,6 +2395,9 @@ void BrowserUi::focus_address(bool select) {
     app_.close_extension_popup();
     editing = true;
     panel_ = None;
+    translation_text_.clear();
+    translation_source_.clear();
+    translation_tab_ = 0;
     address.set(app_.current() && !app_.current()->ntp ? app_.current()->page.url : "", select);
     suggestion_ = -1;
     app_.close_menu();
@@ -2407,6 +2418,11 @@ void BrowserUi::panel(Panel value) {
     clear_password_fields();
     password_mode_ = 0;
     panel_ = value;
+    if (value != Translation) {
+        translation_text_.clear();
+        translation_source_.clear();
+        translation_tab_ = 0;
+    }
     if (value != Workspaces)
         workspace_input_focus_ = false;
     if (value != Groups)
@@ -2442,6 +2458,9 @@ void BrowserUi::dismiss() {
     clear_password_fields();
     editing = false;
     panel_ = None;
+    translation_text_.clear();
+    translation_source_.clear();
+    translation_tab_ = 0;
     workspace_input_focus_ = group_input_focus_ = container_input_focus_ = profile_input_focus_ =
         false;
     app_.close_menu();
@@ -2663,6 +2682,10 @@ bool BrowserUi::key(const CefKeyEvent &key) {
         }
     }
     if (down) {
+        if (ctrl && alt && code == 'T' && app_.dialogs.empty() && !editing) {
+            open_translation(app_.current() && !app_.current()->selected_text.empty());
+            return true;
+        }
         if (ctrl && alt && code == 'R' && app_.dialogs.empty() && panel_ == None && !editing) {
             app_.toggle_reader();
             return true;
@@ -3585,6 +3608,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                 profiles_pointer(r, x, y);
             else if (panel_ == Commands)
                 commands_pointer(r, x, y);
+            else if (panel_ == Translation)
+                translation_pointer(r, x, y);
         }
         return;
     }
@@ -3622,7 +3647,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                 {10, app_.tr("Profiles"), true, "Ctrl+Alt+P"},
                 {11, app_.tr("Command palette"), true, "Ctrl+K"},
                 {12, app_.tr(t && t->reader_active ? "Exit reader" : "Reader mode"),
-                 t && t->browser && !t->ntp, "Ctrl+Alt+R"}};
+                 t && t->browser && !t->ntp, "Ctrl+Alt+R"},
+                {13, app_.tr("Translate"), t && t->browser && !t->ntp, "Ctrl+Alt+T"}};
             app_.menu_width = 320;
             app_.menu_x = 16;
             app_.menu_y = 76;
@@ -3647,6 +3673,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                     open_commands();
                 else if (command == 12)
                     app_.toggle_reader();
+                else if (command == 13)
+                    open_translation(app_.current() && !app_.current()->selected_text.empty());
                 else
                     app_.request_exit();
             };
@@ -5791,6 +5819,8 @@ std::vector<BrowserUi::CommandResult> BrowserUi::command_results() const {
         {"sleep", "Sleep tab", "Ctrl+Alt+S", page && !private_mode && !current->pinned},
         {"reader", current && current->reader_active ? "Exit reader" : "Reader mode", "Ctrl+Alt+R",
          page},
+        {"translate_page", "Translate page", "Ctrl+Alt+T", page},
+        {"translate_selection", "Translate selection", "", page && !current->selected_text.empty()},
         {"devtools", "Developer tools", "F12", page},
     };
     for (const auto &action : actions)
@@ -5943,6 +5973,10 @@ void BrowserUi::run_command(int index) {
             app_.sleep_tab(tab->id);
     } else if (id == "reader")
         app_.toggle_reader();
+    else if (id == "translate_page")
+        open_translation(false);
+    else if (id == "translate_selection")
+        open_translation(true);
     else if (id == "devtools")
         app_.devtools();
     app_.changed();
@@ -5968,5 +6002,189 @@ std::string BrowserUi::commands_report() const {
                std::to_string(r.width - 40) + ",48]}";
     }
     return out + "]}";
+}
+
+namespace {
+Rect translation_choice(Rect r, int group, int index) {
+    const int columns = group == 1 ? 4 : 2;
+    const int width = (r.width - 56 - (columns - 1) * 8) / columns;
+    const int top = group == 0 ? 108 : group == 1 ? 174 : 280;
+    return {r.x + 28 + (index % columns) * (width + 8), r.y + top + (index / columns) * 38, width,
+            32};
+}
+} // namespace
+void BrowserUi::open_translation(bool selection, int source_tab) {
+    auto t = source_tab ? app_.tab(source_tab) : app_.current();
+    if (!t || t->ntp || !t->browser) {
+        toast(app_.tr("Translation is available for HTTP and HTTPS pages."));
+        return;
+    }
+    translation_tab_ = t->id;
+    translation_serial_ = t->navigation_serial;
+    translation_text_ = t->selected_text;
+    translation_source_ = t->page.url;
+    translation_selection_ = selection;
+    app_.close_menu();
+    panel(Translation);
+    t->browser->GetHost()->SetFocus(false);
+    app_.changed();
+}
+std::string BrowserUi::translation_problem() const {
+    auto t = app_.tab(translation_tab_);
+    if (!t || t->closing || t->navigation_serial != translation_serial_)
+        return app_.tr("The source page changed. Reopen translation.");
+    try {
+        translation_url(
+            app_.profile.translation_provider,
+            translation_target(app_.profile.translation_language, app_.profile.language),
+            !translation_selection_,
+            translation_selection_ ? translation_text_ : translation_source_);
+    } catch (const std::exception &e) {
+        return app_.tr(e.what());
+    }
+    return {};
+}
+void BrowserUi::send_translation() {
+    if (!translation_problem().empty()) {
+        app_.changed();
+        return;
+    }
+    auto t = app_.tab(translation_tab_);
+    if (!t)
+        return;
+    const bool private_tab = t->private_tab;
+    const int workspace = t->workspace, group = t->group, container = t->container;
+    const auto url = translation_url(
+        app_.profile.translation_provider,
+        translation_target(app_.profile.translation_language, app_.profile.language),
+        !translation_selection_, translation_selection_ ? translation_text_ : translation_source_);
+    dismiss();
+    ++app_.audit["translation_requests"];
+    app_.new_tab(url, private_tab, true, false, workspace, group, container);
+}
+void BrowserUi::draw_translation(SkCanvas &c, Rect r) {
+    const auto &t = interface_theme(app_.profile);
+    label(c, regular_, app_.tr("Nothing is sent until you choose Open translation."), r.x + 28,
+          r.y + 73, 11, t.muted, r.width - 56);
+    auto choice = [&](Rect b, const std::string &title, bool selected, bool enabled = true,
+                      bool mark = true) {
+        if (enabled)
+            focus_target(b);
+        fill(c, b, 8,
+             SkColorSetA(t.accent, selected                        ? 30
+                                   : inside(b, hover_x_, hover_y_) ? 18
+                                                                   : 6));
+        border(c, b, 8, SkColorSetA(selected ? t.accent : t.muted, enabled ? 190 : 65));
+        if (selected && mark)
+            icon(c, "check", b.x + 7, b.y + 10, 12, t.accent);
+        centered_label(c, medium_, app_.tr(title),
+                       {b.x + (mark ? 18 : 0), b.y, b.width - (mark ? 18 : 0), b.height}, 12,
+                       enabled ? t.text : t.muted, 6, 6);
+    };
+    const auto &p = app_.profile;
+    label(c, regular_, app_.tr("Translation provider"), r.x + 28, r.y + 99, 11, t.muted);
+    for (int i = 0; i < 2; i++) {
+        const auto &option = find_setting("translation_provider")->choices[i];
+        choice(translation_choice(r, 0, i), option.label, p.translation_provider == option.value);
+    }
+    label(c, regular_, app_.tr("Target language"), r.x + 28, r.y + 164, 11, t.muted);
+    const auto &languages = find_setting("translation_language")->choices;
+    for (int i = 0; i < int(languages.size()); i++)
+        choice(translation_choice(r, 1, i), languages[i].label,
+               p.translation_language == languages[i].value);
+    label(c, regular_, app_.tr("Content to send"), r.x + 28, r.y + 270, 11, t.muted);
+    choice(translation_choice(r, 2, 0), "Public page (URL)", !translation_selection_,
+           p.translation_provider == "google");
+    choice(translation_choice(r, 2, 1), "Selected text", translation_selection_);
+    const auto problem = translation_problem();
+    label(c, medium_, app_.tr(translation_selection_ ? "Selected text" : "Page address"), r.x + 28,
+          r.y + 340, 11, t.muted);
+    const auto preview = problem.empty()
+                             ? (translation_selection_ ? translation_text_ : translation_source_)
+                             : problem;
+    const auto lines = wrap_text(font(regular_, 12), preview, r.width - 56, 2);
+    for (int i = 0; i < int(lines.size()); i++)
+        label(c, regular_, lines[i], r.x + 28, r.y + 360 + i * 18, 12, t.text, r.width - 56);
+    const auto disclosure =
+        app_.tr(translation_selection_
+                    ? "Sends the selected text to the chosen provider in a new tab."
+                    : "Sends this address to Google Translate. Signed-in pages may not translate.");
+    const auto info = wrap_text(font(regular_, 10), disclosure, r.width - 56, 2);
+    for (int i = 0; i < int(info.size()); i++)
+        label(c, regular_, info[i], r.x + 28, r.y + r.height - 88 + i * 14, 10, t.muted,
+              r.width - 56);
+    choice({r.x + 28, r.y + r.height - 52, 132, 34}, "Cancel", false, true, false);
+    choice({r.x + r.width - 228, r.y + r.height - 52, 200, 34}, "Open translation", true,
+           problem.empty(), false);
+}
+void BrowserUi::translation_pointer(Rect r, int x, int y) {
+    if (inside({r.x + 28, r.y + r.height - 52, 132, 34}, x, y)) {
+        dismiss();
+        return;
+    }
+    if (inside({r.x + r.width - 228, r.y + r.height - 52, 200, 34}, x, y)) {
+        send_translation();
+        return;
+    }
+    for (int group = 0; group < 3; group++) {
+        const auto spec =
+            find_setting(group == 0 ? "translation_provider" : "translation_language");
+        const int count = group == 2 ? 2 : int(spec->choices.size());
+        for (int i = 0; i < count; i++)
+            if (inside(translation_choice(r, group, i), x, y)) {
+                if (group == 2) {
+                    if (i == 1 || app_.profile.translation_provider == "google")
+                        translation_selection_ = i == 1;
+                } else
+                    set_setting(app_.profile, *spec, spec->choices[i].value);
+                app_.changed(group != 2);
+                return;
+            }
+    }
+}
+std::string BrowserUi::translation_report() const {
+    if (panel_ != Translation)
+        return "null";
+    const auto r = panel_bounds();
+    auto rect = [](Rect b) {
+        return "[" + std::to_string(b.x) + "," + std::to_string(b.y) + "," +
+               std::to_string(b.width) + "," + std::to_string(b.height) + "]";
+    };
+    std::string out = "{\"selection\":" + std::string(translation_selection_ ? "true" : "false") +
+                      ",\"text_bytes\":" + std::to_string(translation_text_.size()) +
+                      ",\"problem\":" + json_quote(translation_problem()) +
+                      ",\"send\":" + rect({r.x + r.width - 228, r.y + r.height - 52, 200, 34}) +
+                      ",\"cancel\":" + rect({r.x + 28, r.y + r.height - 52, 132, 34}) +
+                      ",\"options\":[";
+    bool first = true;
+    for (int group = 0; group < 3; group++) {
+        const auto spec =
+            find_setting(group == 0 ? "translation_provider" : "translation_language");
+        const int count = group == 2 ? 2 : int(spec->choices.size());
+        for (int i = 0; i < count; i++) {
+            if (!first)
+                out += ",";
+            first = false;
+            out += "{\"group\":" + std::to_string(group) + ",\"value\":" +
+                   json_quote(group == 2 ? (i == 0 ? "page" : "text") : spec->choices[i].value) +
+                   ",\"bounds\":" + rect(translation_choice(r, group, i)) + "}";
+        }
+    }
+    return out + "]}";
+}
+std::string BrowserUi::menu_report() const {
+    if (app_.menu.empty())
+        return "null";
+    std::string out = "[";
+    for (int i = 0; i < int(app_.menu.size()); i++) {
+        if (i)
+            out += ",";
+        const auto &item = app_.menu[i];
+        out += "{\"id\":" + std::to_string(item.id) + ",\"label\":" + json_quote(item.label) +
+               ",\"enabled\":" + (item.enabled ? "true" : "false") + ",\"bounds\":[" +
+               std::to_string(app_.menu_x + 5) + "," + std::to_string(app_.menu_y + 6 + i * 32) +
+               "," + std::to_string(app_.menu_width - 10) + ",31]}";
+    }
+    return out + "]";
 }
 } // namespace aura

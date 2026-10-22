@@ -323,8 +323,10 @@ void BrowserClient::OnLoadError(CefRefPtr<CefBrowser> b, CefRefPtr<CefFrame> f, 
                                 const CefString &text, const CefString &url) {
     DiagnosticClient::OnLoadError(b, f, code, text, url);
     if (f->IsMain() && code != ERR_ABORTED) {
+        if (auto tab = owner_.tab(id_); tab && !url.empty())
+            tab->page.url = url.ToString();
         ++owner_.audit["load_errors"];
-        owner_.changed();
+        owner_.page_changed(id_);
     }
 }
 void BrowserClient::OnTitleChange(CefRefPtr<CefBrowser> b, const CefString &title) {
@@ -412,6 +414,9 @@ void BrowserClient::OnBeforeContextMenu(CefRefPtr<CefBrowser> b, CefRefPtr<CefFr
     }
     model->AddItem(MENU_ID_COPY, owner_.tr("Copy"));
     model->AddItem(MENU_ID_SELECT_ALL, owner_.tr("Select all"));
+    model->AddItem(MENU_ID_USER_FIRST + 3, owner_.tr("Translate selection"));
+    model->SetEnabled(MENU_ID_USER_FIRST + 3, !p->GetSelectionText().empty());
+    model->AddItem(MENU_ID_USER_FIRST + 4, owner_.tr("Translate page"));
     model->AddSeparator();
     model->AddItem(MENU_ID_USER_FIRST + 2, owner_.tr("Developer tools"));
 }
@@ -439,6 +444,16 @@ bool BrowserClient::RunContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
 bool BrowserClient::OnContextMenuCommand(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
                                          CefRefPtr<CefContextMenuParams> p, int command,
                                          EventFlags) {
+    if (command == MENU_ID_COPY) {
+        if (auto tab = owner_.tab(id_); tab && tab->reader_active) {
+            const auto text = p->GetSelectionText().ToString();
+            if (!text.empty()) {
+                owner_.window->copy(text);
+                ++owner_.audit["reader_context_copies"];
+            }
+            return true;
+        }
+    }
     if (command == MENU_ID_USER_FIRST) {
         owner_.open_from_page(id_, p->GetLinkUrl(), true);
         return true;
@@ -449,6 +464,13 @@ bool BrowserClient::OnContextMenuCommand(CefRefPtr<CefBrowser>, CefRefPtr<CefFra
     }
     if (command == MENU_ID_USER_FIRST + 2) {
         owner_.devtools();
+        return true;
+    }
+    if (command == MENU_ID_USER_FIRST + 3 || command == MENU_ID_USER_FIRST + 4) {
+        if (auto tab = owner_.tab(id_)) {
+            tab->selected_text = p->GetSelectionText().ToString();
+            owner_.ui->open_translation(command == MENU_ID_USER_FIRST + 3, id_);
+        }
         return true;
     }
     return false;

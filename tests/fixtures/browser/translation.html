@@ -1,0 +1,11 @@
+<!doctype html><meta charset="utf-8"><title>Manual translation fixture</title>
+<style>body{font:18px sans-serif}#text{position:absolute;left:20px;top:100px;width:700px;line-height:32px;margin:0}</style>
+<h1>Manual translation fixture</h1><p id="text">Hello &amp; привет / world #? This phrase is translated only after an explicit command.</p>
+<script>
+const args=new URLSearchParams(location.search),text=document.getElementById('text'),token=Math.random().toString(36);
+if(args.has('online'))text.textContent='Hello';
+if(args.has('long'))text.textContent='A long selection for the translation limit. '.repeat(200);
+if(args.has('private'))text.textContent='PRIVATE_TRANSLATION_SENTINEL Hello from a private tab.';
+function report(){const r=text.getBoundingClientRect();document.title=JSON.stringify({token,text:[r.x,r.y,r.width,r.height].map(Math.round),selected:window.getSelection().toString().length});}
+report();setInterval(report,150);
+</script>

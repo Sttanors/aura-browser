@@ -6,6 +6,7 @@
 #include "common/platform.hpp"
 #include "common/pump_schedule.hpp"
 #include "core/browser/profiles.hpp"
+#include "core/browser/translation.hpp"
 #include <climits>
 #include <fstream>
 #include <gtest/gtest.h>
@@ -923,4 +924,32 @@ TEST(Profiles, CatalogRecoveryPreservesCorruptionAndRefusesUnrelatedRoots) {
     EXPECT_FALSE(broken.error.empty());
     EXPECT_THROW(broken.create("No overwrite", "en"), std::runtime_error);
     EXPECT_EQ(read_file(catalog.root / "catalog.toml"), "broken = [");
+}
+
+TEST(Translation, EncodesTextAndPageAsDataAndRejectsUnsupportedModes) {
+    EXPECT_EQ(translation_target("interface", "ru"), "ru");
+    EXPECT_EQ(translation_target("interface", "en"), "en");
+    EXPECT_THROW(translation_target("auto", "en"), std::invalid_argument);
+    EXPECT_EQ(translation_url("google", "ru", false, "Hello & world#?\nПривет"),
+              "https://translate.google.com/"
+              "?sl=auto&tl=ru&text=Hello%20%26%20world%23%3F%0A%D0%9F%D1%80%D0%B8%D0%B2%D0%B5%D1%"
+              "82&op=translate");
+    EXPECT_EQ(translation_url("bing", "en", false, "a/b #"),
+              "https://www.bing.com/translator?from=auto&to=en&text=a%2Fb%20%23");
+    EXPECT_EQ(translation_url("google", "de", true, "https://example.com/a?x=1&tl=ja#text"),
+              "https://translate.google.com/"
+              "translate?sl=auto&tl=de&u=https%3A%2F%2Fexample.com%2Fa%3Fx%3D1%26tl%3Dja%23text");
+    for (const auto &url : {"file:///secret", "chrome-extension://abcdefgh/", "javascript:alert(1)",
+                            "https://user:password@example.com/", "https:///bad"})
+        EXPECT_THROW(translation_url("google", "en", true, url), std::invalid_argument);
+    EXPECT_EQ(translation_url("bing", "zh", false, "Hello"),
+              "https://www.bing.com/translator?from=auto&to=zh-Hans&text=Hello");
+    EXPECT_THROW(translation_url("bing", "en", true, "https://example.com/"),
+                 std::invalid_argument);
+    EXPECT_THROW(translation_url("unknown", "en", false, "Hello"), std::invalid_argument);
+    EXPECT_THROW(translation_url("google", "ru&u=secret", false, "Hello"), std::invalid_argument);
+    EXPECT_THROW(translation_url("google", "en", false, " \n\t"), std::invalid_argument);
+    EXPECT_THROW(translation_url("google", "en", false, std::string(5001, 'a')),
+                 std::invalid_argument);
+    EXPECT_NO_THROW(translation_url("google", "en", false, std::string(5000, 'a')));
 }
