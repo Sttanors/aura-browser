@@ -40,7 +40,7 @@ std::string tabs_json(const std::vector<std::unique_ptr<Tab>> &tabs) {
         out << "{\"url\":\"" << json_escape(t->page.url) << "\",\"title\":\""
             << json_escape(t->page.title)
             << "\",\"private\":" << (t->private_tab ? "true" : "false")
-            << ",\"workspace\":" << t->workspace
+            << ",\"workspace\":" << t->workspace << ",\"group\":" << t->group
             << ",\"loaded\":" << (t->page.loaded ? "true" : "false")
             << ",\"failed\":" << (t->page.failed ? "true" : "false")
             << ",\"http_status\":" << t->page.http_status << ",\"frame_rate\":"
@@ -269,11 +269,21 @@ void BrowserController::open_new_tab(bool private_tab) {
                                                             : "about:blank",
             private_tab);
 }
-std::vector<int> BrowserController::visible_tabs() const {
-    std::vector<int> result;
+std::vector<int> BrowserController::visible_tabs(bool include_closed) const {
+    std::vector<int> source, result;
     for (size_t i = 0; i < tabs.size(); ++i)
-        if (!tabs[i]->page.closed && tabs[i]->workspace == workspace)
-            result.push_back(int(i));
+        if ((include_closed || !tabs[i]->page.closed) && tabs[i]->workspace == workspace)
+            source.push_back(int(i));
+    for (const auto &g : profile.groups)
+        if (g.workspace == workspace)
+            for (int i : source)
+                if (tabs[i]->group == g.id)
+                    result.push_back(i);
+    for (int i : source) {
+        const auto g = profile.group(tabs[i]->group);
+        if (!g || g->workspace != workspace)
+            result.push_back(i);
+    }
     return result;
 }
 void BrowserController::cycle_tab(int direction) {
@@ -295,7 +305,7 @@ std::string BrowserController::workspace_name() const {
         return tr("Private window");
     for (const auto &w : profile.workspaces)
         if (w.id == workspace)
-            return tr(w.name);
+            return profile.workspace_label(w.id);
     return tr("Personal space");
 }
 void BrowserController::switch_workspace(int id) {
@@ -456,11 +466,14 @@ void BrowserController::tick() {
         action();
     const int old_active_id = current() ? current()->id : 0;
     const bool active_closed = current() && current()->page.closed;
+    const auto old_order = visible_tabs(true);
+    const auto old_position =
+        int(std::find(old_order.begin(), old_order.end(), active) - old_order.begin());
     for (int i = static_cast<int>(tabs.size()) - 1; i >= 0; --i)
         if (tabs[i]->page.closed && !tabs[i]->popup_pending) {
             if (tabs[i]->remember_on_close && !tabs[i]->private_tab && !quitting) {
-                recently_closed_.push_back(
-                    {tabs[i]->page.url, tabs[i]->pinned, tabs[i]->workspace});
+                recently_closed_.push_back({tabs[i]->page.url, tabs[i]->pinned, tabs[i]->workspace,
+                                            false, tabs[i]->group});
                 if (recently_closed_.size() > 30)
                     recently_closed_.erase(recently_closed_.begin());
             }
@@ -483,13 +496,10 @@ void BrowserController::tick() {
         if (visible.empty())
             open_new_tab();
         else
-            activate(visible[std::min(
-                int(visible.size()) - 1,
-                profile.close_selection == "last" ? int(visible.size()) - 1
-                : profile.close_selection == "first"
-                    ? 0
-                    : int(std::lower_bound(visible.begin(), visible.end(), active) -
-                          visible.begin()))]);
+            activate(visible[std::min(int(visible.size()) - 1,
+                                      profile.close_selection == "last"    ? int(visible.size()) - 1
+                                      : profile.close_selection == "first" ? 0
+                                                                           : old_position)]);
     } else if (!quitting && current() && current()->id != old_active_id)
         activate(active);
     if (private_context_) {
@@ -594,7 +604,7 @@ void BrowserController::ensure_browser(Tab &t, const std::string &url) {
     }
 }
 void BrowserController::new_tab(std::string input, bool private_tab, bool foreground, bool pinned,
-                                int space) {
+                                int space, int group_id) {
     if (quitting)
         return;
     private_tab = private_tab || private_window;
@@ -608,6 +618,10 @@ void BrowserController::new_tab(std::string input, bool private_tab, bool foregr
     auto t = std::make_unique<Tab>();
     t->id = next_id_++;
     t->workspace = private_window ? 0 : profile.has_workspace(space) ? space : workspace;
+    if (group_id < 0 && current() && current()->workspace == t->workspace)
+        group_id = current()->group;
+    const auto group = profile.group(group_id);
+    t->group = !private_window && group && group->workspace == t->workspace ? group_id : 0;
     t->page.scale = scale;
     t->private_tab = private_tab;
     t->pinned = pinned;
@@ -627,7 +641,7 @@ void BrowserController::new_tab(std::string input, bool private_tab, bool foregr
     ++audit[private_tab ? "private_tabs" : "new_tabs"];
     changed(true);
 }
-void BrowserController::activate(int index) {
+void BrowserController::activate(int index, bool reveal_group) {
     close_extension_popup(false);
     if (index < 0 || index >= static_cast<int>(tabs.size()) || tabs[index]->closing)
         return;
@@ -635,6 +649,9 @@ void BrowserController::activate(int index) {
         workspace_selection_[old->workspace] = old->id;
     active = index;
     workspace = tabs[index]->workspace;
+    if (reveal_group)
+        if (auto g = profile.group(tabs[index]->group))
+            g->collapsed = false;
     ui->editing = false;
     ui->find_open = false;
     ui->status.clear();
@@ -676,7 +693,8 @@ void BrowserController::reopen() {
         return;
     auto t = recently_closed_.back();
     recently_closed_.pop_back();
-    new_tab(t.url, false, true, t.pinned, profile.has_workspace(t.workspace) ? t.workspace : 0);
+    new_tab(t.url, false, true, t.pinned, profile.has_workspace(t.workspace) ? t.workspace : 0,
+            t.group);
     ++audit["tabs_reopened"];
 }
 void BrowserController::move_tab(int from, int to) {
@@ -993,14 +1011,14 @@ void BrowserController::restore_window(const SavedWindow &saved) {
     workspace = saved.workspace;
     restoring_ = true;
     for (const auto &t : saved.tabs) {
-        new_tab(t.url, false, false, t.pinned, t.workspace);
+        new_tab(t.url, false, false, t.pinned, t.workspace, t.group);
         if (t.workspace_active && !tabs.empty())
             workspace_selection_[t.workspace] = tabs.back()->id;
     }
     restoring_ = false;
     if (tabs.empty())
         open_new_tab();
-    activate(std::clamp(saved.active, 0, int(tabs.size()) - 1));
+    activate(std::clamp(saved.active, 0, int(tabs.size()) - 1), false);
 }
 void BrowserController::restore_previous_session() {
     if (state_->previous_restored || state_->previous_windows.empty())
@@ -1064,7 +1082,7 @@ void BrowserController::save_session() {
                     if (selected && t->workspace == window.workspace)
                         window.active = int(window.tabs.size());
                     window.tabs.push_back({t->pending_url.empty() ? t->page.url : t->pending_url,
-                                           t->pinned, t->workspace, selected});
+                                           t->pinned, t->workspace, selected, t->group});
                 }
             if (!window.tabs.empty())
                 saved.push_back(std::move(window));
@@ -1101,6 +1119,7 @@ std::string BrowserController::report() const {
         << ",\"adblock_ready\":" << (request_policy->protection->ready() ? "true" : "false")
         << ",\"extensions\":" << extensions.report() << ",\"filters_ui\":" << ui->filters_report()
         << ",\"workspaces_ui\":" << ui->workspaces_report()
+        << ",\"groups_ui\":" << ui->groups_report() << ",\"sidebar\":" << ui->sidebar_report()
         << ",\"filter_lists\":" << state_->filters->report()
         << ",\"extensions_ui\":" << ui->extensions_report()
         << ",\"extension_popup\":" << ui->extension_popup_report()
@@ -1213,10 +1232,10 @@ void BrowserController::open_from_page(int source, std::string url, bool foregro
     if (!t)
         return;
     const bool private_tab = t->private_tab;
-    const int space = t->workspace;
-    defer([this, url = std::move(url), private_tab, foreground, space] {
+    const int space = t->workspace, group = t->group;
+    defer([this, url = std::move(url), private_tab, foreground, space, group] {
         new_tab(url, private_tab, foreground && profile.foreground_links && space == workspace,
-                false, space);
+                false, space, group);
     });
     ++audit["page_opened_tabs"];
 }
@@ -1227,9 +1246,9 @@ Tab *BrowserController::prepare_popup(int source, int popup_id, const std::strin
         return nullptr;
     const bool private_tab = opener->private_tab;
     const int id = next_id_;
-    const int space = opener->workspace;
+    const int space = opener->workspace, group = opener->group;
     new_tab("aura://newtab", private_tab,
-            foreground && profile.foreground_links && space == workspace, false, space);
+            foreground && profile.foreground_links && space == workspace, false, space, group);
     auto target = tab(id);
     if (!target)
         return nullptr;
@@ -1465,5 +1484,49 @@ void BrowserController::open_directory(const std::filesystem::path &directory) {
     else
         ui->toast(tr("Could not open the folder"));
 #endif
+}
+} // namespace aura
+
+namespace aura {
+void BrowserController::move_tab_to_workspace(int tab_id, int workspace_id) {
+    if (!profile.has_workspace(workspace_id) || private_window)
+        return;
+    if (auto t = tab(tab_id)) {
+        t->workspace = workspace_id;
+        const auto g = profile.group(t->group);
+        if (!g || g->workspace != workspace_id)
+            t->group = 0;
+        changed(true);
+    }
+}
+void BrowserController::set_tab_group(int tab_id, int group_id) {
+    if (private_window)
+        return;
+    if (auto t = tab(tab_id)) {
+        auto g = profile.group(group_id);
+        if (group_id && (!g || g->workspace != t->workspace))
+            return;
+        t->group = group_id;
+        if (g)
+            g->collapsed = false;
+        changed(true);
+    }
+}
+void BrowserController::remove_group(int group_id) {
+    if (!profile.remove_group(group_id))
+        return;
+    for (auto *other : state_->windows) {
+        for (auto &t : other->tabs)
+            if (t->group == group_id)
+                t->group = 0;
+        for (auto &t : other->recently_closed_)
+            if (t.group == group_id)
+                t.group = 0;
+    }
+    for (auto &w : state_->previous_windows)
+        for (auto &t : w.tabs)
+            if (t.group == group_id)
+                t.group = 0;
+    changed(true);
 }
 } // namespace aura

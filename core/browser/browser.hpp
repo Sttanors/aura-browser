@@ -23,6 +23,7 @@ class BrowserUi;
 struct Tab {
     int id = 0;
     int workspace = 0;
+    int group = 0;
     uint64_t navigation_serial = 0;
     DiagnosticState page;
     CefRefPtr<DiagnosticClient> client;
@@ -129,12 +130,15 @@ class BrowserController {
     int menu_x = 0, menu_y = 0, menu_width = 240;
     int active = 0, width = 1360, height = 900;
     int workspace = 0;
-    std::vector<int> visible_tabs() const;
+    std::vector<int> visible_tabs(bool include_closed = false) const;
     void cycle_tab(int direction);
     void select_visible_tab(int number);
     std::string workspace_name() const;
     void switch_workspace(int id);
     void remove_workspace(int id);
+    void move_tab_to_workspace(int tab_id, int workspace_id);
+    void set_tab_group(int tab_id, int group_id);
+    void remove_group(int group_id);
     double scale = 1, ui_scale = 1;
     bool quitting = false;
     int find_matches = 0, find_active = 0, tools_open = 0;
@@ -159,8 +163,8 @@ class BrowserController {
     void tick();
     void changed(bool persistent = false);
     void new_tab(std::string url = "aura://newtab", bool private_tab = false,
-                 bool foreground = true, bool pinned = false, int workspace = -1);
-    void activate(int index);
+                 bool foreground = true, bool pinned = false, int workspace = -1, int group = -1);
+    void activate(int index, bool reveal_group = true);
     void close_tab(int index);
     void reopen();
     void move_tab(int from, int to);

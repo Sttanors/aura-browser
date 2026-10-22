@@ -642,3 +642,39 @@ TEST(Profile, WorkspacesPersistTabsAndRemovalMovesDataToDefault) {
     EXPECT_EQ(Profile(root).workspaces.size(), 1);
     std::filesystem::remove_all(root);
 }
+
+TEST(Profile, GroupsPersistNamesColorsCollapseAndReleaseTabsOnRemoval) {
+    const auto root = std::filesystem::temp_directory_path() /
+                      ("aura-groups-" +
+                       std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    {
+        Profile p(root);
+        const int work = p.add_workspace("Work");
+        const int group = p.add_group(work, "Исследование", 3);
+        ASSERT_GT(group, 0);
+        EXPECT_EQ(p.add_group(work, "Исследование"), -1);
+        EXPECT_EQ(p.add_group(999, "Invalid"), -1);
+        p.group(group)->collapsed = true;
+        EXPECT_TRUE(p.rename_group(group, "Источники"));
+        p.windows = {{{{"https://example.test/", false, work, true, group}}, 0, work}};
+        p.save();
+    }
+    {
+        Profile p(root);
+        ASSERT_EQ(p.groups.size(), 1);
+        const auto group = p.groups[0];
+        EXPECT_EQ(group.name, "Источники");
+        EXPECT_EQ(group.color, 3);
+        EXPECT_TRUE(group.collapsed);
+        ASSERT_EQ(p.windows[0].tabs[0].group, group.id);
+        EXPECT_TRUE(p.remove_workspace(group.workspace));
+        EXPECT_EQ(p.groups[0].workspace, 0);
+        EXPECT_EQ(p.windows[0].tabs[0].workspace, 0);
+        EXPECT_TRUE(p.remove_group(group.id));
+        EXPECT_EQ(p.windows[0].tabs[0].group, 0);
+        EXPECT_EQ(p.windows[0].tabs[0].url, "https://example.test/");
+        p.save();
+    }
+    EXPECT_TRUE(Profile(root).groups.empty());
+    std::filesystem::remove_all(root);
+}

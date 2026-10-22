@@ -1,13 +1,14 @@
 #include "core/browser/profile.hpp"
 #include "common/config.hpp"
 #include "common/platform.hpp"
+#include "core/browser/i18n.hpp"
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <chrono>
 #include <fstream>
-#include <stdexcept>
-#include <charconv>
 #include <openssl/x509v3.h>
+#include <stdexcept>
 #include <toml++/toml.hpp>
 namespace aura {
 namespace {
@@ -224,6 +225,22 @@ void Profile::load() {
                     workspaces.push_back({id, std::move(name)});
             }
         }
+    groups.clear();
+    if (auto entries = table["groups"].as_array())
+        for (const auto &entry : *entries) {
+            if (groups.size() >= 128)
+                break;
+            if (auto row = entry.as_table()) {
+                int id = (*row)["id"].value_or(0), space = (*row)["workspace"].value_or(0);
+                auto name = trim((*row)["name"].value_or(std::string{}));
+                if (id <= 0 || id > 1000000 || group(id) || !has_workspace(space) || name.empty() ||
+                    name.size() > 120 || name.find_first_of("\r\n\t") != std::string::npos)
+                    continue;
+                groups.push_back({id, space, std::move(name),
+                                  std::clamp((*row)["color"].value_or(0), 0, 5),
+                                  (*row)["collapsed"].value_or(false)});
+            }
+        }
     session_clean = table["session_clean"].value_or(true);
     history.clear();
     bookmarks.clear();
@@ -245,12 +262,12 @@ void Profile::load() {
     if (auto a = table["session"].as_array())
         for (auto &n : *a)
             if (auto t = n.as_table())
-                session.push_back({(*t)["url"].value_or(std::string("aura://newtab")),
-                                   (*t)["pinned"].value_or(false),
-                                   has_workspace((*t)["workspace"].value_or(0))
-                                       ? (*t)["workspace"].value_or(0)
-                                       : 0,
-                                   (*t)["workspace_active"].value_or(false)});
+                session.push_back(
+                    {(*t)["url"].value_or(std::string("aura://newtab")),
+                     (*t)["pinned"].value_or(false),
+                     has_workspace((*t)["workspace"].value_or(0)) ? (*t)["workspace"].value_or(0)
+                                                                  : 0,
+                     (*t)["workspace_active"].value_or(false), (*t)["group"].value_or(0)});
     if (auto entries = table["windows"].as_array())
         for (const auto &node : *entries) {
             if (windows.size() >= 32)
@@ -274,7 +291,8 @@ void Profile::load() {
                                          has_workspace((*item)["workspace"].value_or(0))
                                              ? (*item)["workspace"].value_or(0)
                                              : 0,
-                                         (*item)["workspace_active"].value_or(false)});
+                                         (*item)["workspace_active"].value_or(false),
+                                         (*item)["group"].value_or(0)});
                             } catch (const std::exception &) {
                             }
                         }
@@ -285,10 +303,28 @@ void Profile::load() {
                 }
             }
         }
+    auto validate_group = [this](SavedTab &t) {
+        const auto g = group(t.group);
+        if (!g || g->workspace != t.workspace)
+            t.group = 0;
+    };
+    for (auto &t : session)
+        validate_group(t);
+    for (auto &w : windows)
+        for (auto &t : w.tabs)
+            validate_group(t);
 }
 void Profile::save() const {
     toml::table root;
-    root.insert("schema", 6);
+    root.insert("schema", 7);
+    toml::array group_rows;
+    for (const auto &g : groups)
+        group_rows.push_back(toml::table{{"id", g.id},
+                                         {"workspace", g.workspace},
+                                         {"name", g.name},
+                                         {"color", g.color},
+                                         {"collapsed", g.collapsed}});
+    root.insert("groups", std::move(group_rows));
     toml::array spaces;
     for (const auto &space : workspaces)
         spaces.push_back(toml::table{{"id", space.id}, {"name", space.name}});
@@ -314,7 +350,8 @@ void Profile::save() const {
         tabs.push_back(toml::table{{"url", t.url},
                                    {"pinned", t.pinned},
                                    {"workspace", t.workspace},
-                                   {"workspace_active", t.workspace_active}});
+                                   {"workspace_active", t.workspace_active},
+                                   {"group", t.group}});
     root.insert("session", std::move(tabs));
     toml::array saved_windows;
     for (const auto &window : windows) {
@@ -323,7 +360,8 @@ void Profile::save() const {
             saved_tabs.push_back(toml::table{{"url", t.url},
                                              {"pinned", t.pinned},
                                              {"workspace", t.workspace},
-                                             {"workspace_active", t.workspace_active}});
+                                             {"workspace_active", t.workspace_active},
+                                             {"group", t.group}});
         saved_windows.push_back(toml::table{{"active", window.active},
                                             {"workspace", window.workspace},
                                             {"tabs", std::move(saved_tabs)}});
@@ -362,12 +400,20 @@ bool Profile::has_workspace(int id) const {
     return std::any_of(workspaces.begin(), workspaces.end(),
                        [id](const auto &w) { return w.id == id; });
 }
+std::string Profile::workspace_label(int id) const {
+    for (const auto &w : workspaces)
+        if (w.id == id)
+            return id == 0 && w.name == "Personal space" ? translate(language, w.name) : w.name;
+    return translate(language, "Personal space");
+}
 int Profile::add_workspace(std::string name) {
     name = trim(std::move(name));
     if (workspaces.size() >= 32 || name.empty() || name.size() > 120 ||
         name.find_first_of("\r\n\t") != std::string::npos ||
-        std::any_of(workspaces.begin(), workspaces.end(),
-                    [&](const auto &w) { return lower(w.name) == lower(name); }))
+        std::any_of(workspaces.begin(), workspaces.end(), [&](const auto &w) {
+            return lower(w.name) == lower(name) || (w.id == 0 && w.name == "Personal space" &&
+                                                    lower(translate("ru", w.name)) == lower(name));
+        }))
         return -1;
     int id = 1;
     for (const auto &w : workspaces)
@@ -380,8 +426,11 @@ int Profile::add_workspace(std::string name) {
 bool Profile::rename_workspace(int id, std::string name) {
     name = trim(std::move(name));
     if (name.empty() || name.size() > 120 || name.find_first_of("\r\n\t") != std::string::npos ||
-        std::any_of(workspaces.begin(), workspaces.end(),
-                    [&](const auto &w) { return w.id != id && lower(w.name) == lower(name); }))
+        std::any_of(workspaces.begin(), workspaces.end(), [&](const auto &w) {
+            return w.id != id && (lower(w.name) == lower(name) ||
+                                  (w.id == 0 && w.name == "Personal space" &&
+                                   lower(translate("ru", w.name)) == lower(name)));
+        }))
         return false;
     for (auto &w : workspaces)
         if (w.id == id) {
@@ -394,6 +443,9 @@ bool Profile::remove_workspace(int id) {
     if (id == 0 || !has_workspace(id))
         return false;
     std::erase_if(workspaces, [id](const auto &w) { return w.id == id; });
+    for (auto &g : groups)
+        if (g.workspace == id)
+            g.workspace = 0;
     for (auto &window : windows) {
         if (window.workspace == id)
             window.workspace = 0;
@@ -404,6 +456,59 @@ bool Profile::remove_workspace(int id) {
     for (auto &t : session)
         if (t.workspace == id)
             t.workspace = 0;
+    return true;
+}
+TabGroup *Profile::group(int id) {
+    for (auto &g : groups)
+        if (g.id == id)
+            return &g;
+    return nullptr;
+}
+const TabGroup *Profile::group(int id) const {
+    for (const auto &g : groups)
+        if (g.id == id)
+            return &g;
+    return nullptr;
+}
+int Profile::add_group(int workspace, std::string name, int color) {
+    name = trim(std::move(name));
+    if (!has_workspace(workspace) || groups.size() >= 128 || name.empty() || name.size() > 120 ||
+        name.find_first_of("\r\n\t") != std::string::npos ||
+        std::any_of(groups.begin(), groups.end(), [&](const auto &g) {
+            return g.workspace == workspace && lower(g.name) == lower(name);
+        }))
+        return -1;
+    int id = 1;
+    for (const auto &g : groups)
+        id = std::max(id, g.id + 1);
+    if (id > 1000000)
+        return -1;
+    groups.push_back({id, workspace, std::move(name), std::clamp(color, 0, 5), false});
+    return id;
+}
+bool Profile::rename_group(int id, std::string name) {
+    auto target = group(id);
+    name = trim(std::move(name));
+    if (!target || name.empty() || name.size() > 120 ||
+        name.find_first_of("\r\n\t") != std::string::npos ||
+        std::any_of(groups.begin(), groups.end(), [&](const auto &g) {
+            return g.id != id && g.workspace == target->workspace && lower(g.name) == lower(name);
+        }))
+        return false;
+    target->name = std::move(name);
+    return true;
+}
+bool Profile::remove_group(int id) {
+    if (!group(id))
+        return false;
+    std::erase_if(groups, [id](const auto &g) { return g.id == id; });
+    for (auto &w : windows)
+        for (auto &t : w.tabs)
+            if (t.group == id)
+                t.group = 0;
+    for (auto &t : session)
+        if (t.group == id)
+            t.group = 0;
     return true;
 }
 bool Profile::add_shortcut(std::string title, std::string url) {

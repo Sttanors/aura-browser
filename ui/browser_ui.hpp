@@ -20,7 +20,8 @@ class BrowserUi {
         Import,
         Passwords,
         Filters,
-        Workspaces
+        Workspaces,
+        Groups
     };
     BrowserUi(BrowserController &owner, const std::filesystem::path &font);
     ~BrowserUi();
@@ -47,6 +48,9 @@ class BrowserUi {
     std::string filters_report() const;
     std::string workspaces_report() const;
     void open_workspaces(int move_tab = -1);
+    void open_groups(int tab_id = -1);
+    std::string groups_report() const;
+    std::string sidebar_report() const;
     void passwords_locked() {
         clear_password_fields();
         password_mode_ = 0;
@@ -64,6 +68,14 @@ class BrowserUi {
 
   private:
     BrowserController &app_;
+    std::vector<int> sidebar_rows() const;
+    TextEditor group_input_;
+    bool group_input_focus_ = false;
+    int group_edit_ = -1, group_target_ = -1, group_color_ = 0, group_scroll_ = 0;
+    std::string group_error_;
+    void save_group();
+    void draw_groups(SkCanvas &, Rect);
+    void groups_pointer(Rect, int, int);
     TextEditor workspace_input_;
     bool workspace_input_focus_ = false;
     int workspace_edit_ = -1, workspace_move_tab_ = -1, workspace_scroll_ = 0;
@@ -78,7 +90,7 @@ class BrowserUi {
         panel_scroll_ = 0, tab_scroll_ = 0, drag_tab_ = -1, drag_y_ = 0;
     std::vector<Rect> focus_targets_;
     int keyboard_focus_ = -1, focus_scope_ = -1, visible_active_id_ = -1,
-        visible_active_index_ = -1;
+        visible_active_index_ = -1, visible_active_row_ = -1;
     void focus_target(Rect rect);
     int settings_section_ = 0, settings_scroll_ = 0;
     TextEditor settings_search_, settings_text_, extension_input_;
