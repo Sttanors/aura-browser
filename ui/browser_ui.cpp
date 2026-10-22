@@ -2663,6 +2663,10 @@ bool BrowserUi::key(const CefKeyEvent &key) {
         }
     }
     if (down) {
+        if (ctrl && alt && code == 'R' && app_.dialogs.empty() && panel_ == None && !editing) {
+            app_.toggle_reader();
+            return true;
+        }
         if (ctrl && alt && code == 'P' && app_.dialogs.empty()) {
             open_profiles();
             return true;
@@ -2994,6 +2998,13 @@ bool BrowserUi::key(const CefKeyEvent &key) {
                 app_.zoom(code == 0xBD || code == 0x6D ? -1 : 1, code == '0');
             return true;
         }
+        if (ctrl && code == 'C' && panel_ == None && !editing && !find_open) {
+            if (auto tab = app_.current();
+                tab && tab->reader_active && !tab->selected_text.empty()) {
+                app_.window->copy(tab->selected_text);
+                return true;
+            }
+        }
         if (ctrl && code == 'D') {
             app_.bookmark();
             return true;
@@ -3043,6 +3054,11 @@ bool BrowserUi::key(const CefKeyEvent &key) {
             return true;
         }
         if (code == 0x1B) {
+            if (panel_ == None && !editing && !find_open && app_.current() &&
+                app_.current()->reader_active) {
+                app_.toggle_reader();
+                return true;
+            }
             if (keyboard_focus_ >= 0 && panel_ == None && !editing && !find_open) {
                 keyboard_focus_ = -1;
                 if (auto tab = app_.current(); tab && tab->browser)
@@ -3604,7 +3620,9 @@ void BrowserUi::pointer(const PointerInput &input) {
                  true, "Ctrl+Alt+V"},
                 {9, app_.tr("Site containers"), !app_.private_window, "Ctrl+Alt+C"},
                 {10, app_.tr("Profiles"), true, "Ctrl+Alt+P"},
-                {11, app_.tr("Command palette"), true, "Ctrl+K"}};
+                {11, app_.tr("Command palette"), true, "Ctrl+K"},
+                {12, app_.tr(t && t->reader_active ? "Exit reader" : "Reader mode"),
+                 t && t->browser && !t->ntp, "Ctrl+Alt+R"}};
             app_.menu_width = 320;
             app_.menu_x = 16;
             app_.menu_y = 76;
@@ -3627,6 +3645,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                     open_profiles();
                 else if (command == 11)
                     open_commands();
+                else if (command == 12)
+                    app_.toggle_reader();
                 else
                     app_.request_exit();
             };
@@ -5769,6 +5789,8 @@ std::vector<BrowserUi::CommandResult> BrowserUi::command_results() const {
         {"split", app_.split_enabled() ? "Exit split view" : "Two pages side by side", "Ctrl+Alt+V",
          page},
         {"sleep", "Sleep tab", "Ctrl+Alt+S", page && !private_mode && !current->pinned},
+        {"reader", current && current->reader_active ? "Exit reader" : "Reader mode", "Ctrl+Alt+R",
+         page},
         {"devtools", "Developer tools", "F12", page},
     };
     for (const auto &action : actions)
@@ -5919,7 +5941,9 @@ void BrowserUi::run_command(int index) {
     else if (id == "sleep") {
         if (auto tab = app_.current())
             app_.sleep_tab(tab->id);
-    } else if (id == "devtools")
+    } else if (id == "reader")
+        app_.toggle_reader();
+    else if (id == "devtools")
         app_.devtools();
     app_.changed();
 }
