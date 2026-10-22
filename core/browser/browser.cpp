@@ -42,8 +42,8 @@ std::string tabs_json(const std::vector<std::unique_ptr<Tab>> &tabs) {
         if (!first)
             out << ',';
         first = false;
-        out << "{\"url\":\"" << json_escape(t->page.url) << "\",\"title\":\""
-            << json_escape(t->page.title)
+        out << "{\"id\":" << t->id << ",\"ntp\":" << (t->ntp ? "true" : "false") << ",\"url\":\""
+            << json_escape(t->page.url) << "\",\"title\":\"" << json_escape(t->page.title)
             << "\",\"private\":" << (t->private_tab ? "true" : "false")
             << ",\"pinned\":" << (t->pinned ? "true" : "false")
             << ",\"sleeping\":" << (t->sleeping ? "true" : "false")
@@ -1242,6 +1242,7 @@ std::string BrowserController::report() const {
         << ",\"tabs\":" << (quit_snapshot_.empty() ? tabs_json(tabs) : quit_snapshot_)
         << ",\"profile_name\":" << json_quote(profile_name())
         << ",\"profile_directory\":" << json_quote(utf8_path(profile.directory))
+        << ",\"commands_ui\":" << ui->commands_report()
         << ",\"profiles_ui\":" << ui->profiles_report() << ",\"settings\":{";
     bool first_setting = true;
     for (const auto &setting : settings_catalog()) {

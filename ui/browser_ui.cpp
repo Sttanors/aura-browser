@@ -363,6 +363,7 @@ Rect BrowserUi::panel_bounds() const {
                            : panel_ == Import     ? 900
                            : panel_ == Groups     ? 900
                            : panel_ == Containers ? 900
+                           : panel_ == Commands   ? 900
                            : panel_ == Profiles   ? 900
                            : panel_ == Filters    ? 900
                                                   : 660,
@@ -373,7 +374,10 @@ Rect BrowserUi::panel_bounds() const {
         : panel_ == Shortcuts  ? 700
         : panel_ == Passwords  ? 700
         : panel_ == Import     ? 700
-        : panel_ == Profiles   ? std::clamp(236 + int(listed_profiles().size()) * 84, 340, 700)
+        : panel_ == Commands
+            ? std::clamp(180 + int(std::min<std::size_t>(8, command_results().size())) * 52, 284,
+                         596)
+        : panel_ == Profiles ? std::clamp(236 + int(listed_profiles().size()) * 84, 340, 700)
         : panel_ == Containers
             ? std::clamp(260 + int(app_.profile.containers.size()) * 88, 440, 700)
         : panel_ == Groups
@@ -389,7 +393,10 @@ Rect BrowserUi::panel_bounds() const {
             ? std::clamp(218 + int(app_.profile.workspaces.size()) * 52, 380, 700)
             : 580,
         height_ - 124);
-    return {r.x + (r.width - w) / 2, std::max(100, (height_ - h) / 2), w, h};
+    return {r.x + (r.width - w) / 2,
+            panel_ == Commands ? std::clamp((height_ - 500) / 4, 100, 140)
+                               : std::max(100, (height_ - h) / 2),
+            w, h};
 }
 Rect BrowserUi::dialog_bounds() const {
     return {std::max(260, (width_ - 490) / 2), std::max(110, (height_ - 230) / 2), 490, 230};
@@ -769,7 +776,8 @@ void BrowserUi::draw(SkCanvas &c) {
                                       app_.tr("Workspaces"),
                                       app_.tr("Tab groups"),
                                       app_.tr("Site containers"),
-                                      app_.tr("Profiles")};
+                                      app_.tr("Profiles"),
+                                      app_.tr("Command palette")};
         label(c, medium_, titles[panel_], r.x + 28, r.y + 47, 23, ink);
         icon(c, "close", r.x + r.width - 43, r.y + 26, 19, muted);
         if (panel_ == History || panel_ == Bookmarks) {
@@ -873,6 +881,8 @@ void BrowserUi::draw(SkCanvas &c) {
             draw_containers(c, r);
         if (panel_ == Profiles)
             draw_profiles(c, r);
+        if (panel_ == Commands)
+            draw_commands(c, r);
     }
 
     if (editing) {
@@ -2478,6 +2488,8 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
                 live = &filter_input_;
             else if (panel_ == Workspaces && target == &workspace_input_ && workspace_input_focus_)
                 live = &workspace_input_;
+            else if (panel_ == Commands && target == &command_query_)
+                live = &command_query_;
             else if (panel_ == Profiles && target == &profile_input_ && profile_input_focus_)
                 live = &profile_input_;
             else if (panel_ == Containers && target == &container_input_ && container_input_focus_)
@@ -2500,8 +2512,11 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
                 (live != &workspace_input_ || live->value.size() + text.size() <= 120) &&
                 (live != &group_input_ || live->value.size() + text.size() <= 120) &&
                 (live != &container_input_ || live->value.size() + text.size() <= 120) &&
+                (live != &command_query_ || live->value.size() + text.size() <= 512) &&
                 (live != &profile_input_ || live->value.size() + text.size() <= 120))
                 live->insert(text);
+            if (live == &command_query_)
+                command_selected_ = command_scroll_ = 0;
             if (live == &find)
                 app_.find_text(find.value);
             if (live == &settings_search_)
@@ -2544,6 +2559,38 @@ bool BrowserUi::key(const CefKeyEvent &key) {
     }
     if (down)
         last_key_ = key;
+    if (down && ctrl && !alt && code == 'K' && app_.dialogs.empty()) {
+        open_commands();
+        return true;
+    }
+    if (panel_ == Commands && app_.dialogs.empty() && !app_.menu_action && !app_.menu_callback) {
+        if (!down)
+            return true;
+        if (code == 0x1B) {
+            dismiss();
+            command_query_.set("");
+            return true;
+        }
+        if (code == 0x0D) {
+            run_command(command_selected_);
+            return true;
+        }
+        if (code == 0x26 || code == 0x28 || code == 0x09 || code == 0x21 || code == 0x22) {
+            const int direction = code == 0x26 || code == 0x21 || (code == 0x09 && shift) ? -1 : 1;
+            move_command(direction * (code == 0x21 || code == 0x22
+                                          ? std::max(1, (panel_bounds().height - 190) / 52)
+                                          : 1));
+            return true;
+        }
+        if (ctrl && (code == 'L' || code == 'T' || code == 'W' || code == 'Q'))
+            dismiss();
+        else {
+            editor_key(command_query_, key);
+            command_selected_ = command_scroll_ = 0;
+            app_.changed();
+            return code < 0x20 || ctrl || (code >= 0x21 && code <= 0x2E);
+        }
+    }
     const bool native_focus = panel_ != None || !app_.dialogs.empty() || app_.menu_action ||
                               app_.menu_callback || keyboard_focus_ >= 0 ||
                               (app_.current() && app_.current()->ntp);
@@ -3147,6 +3194,10 @@ void BrowserUi::text(const std::string &value) {
     if (!app_.dialogs.empty()) {
         if (app_.dialogs.front().prompt)
             app_.dialogs.front().input.insert(clean);
+    } else if (panel_ == Commands) {
+        if (command_query_.value.size() + clean.size() <= 512)
+            command_query_.insert(clean);
+        command_selected_ = command_scroll_ = 0;
     } else if (panel_ == Shortcuts) {
         if (shortcut_focus_ >= 0)
             (shortcut_focus_ == 0 ? shortcut_title_ : shortcut_url_).insert(clean);
@@ -3289,6 +3340,10 @@ void BrowserUi::pointer(const PointerInput &input) {
         else
             start_scroll_ = std::clamp(start_scroll_ + (input.dy < 0 ? 64 : -64), 0,
                                        start_page_layout().maximum);
+        return;
+    }
+    if (input.kind == PointerInput::Wheel && panel_ == Commands) {
+        move_command(input.dy < 0 ? 1 : -1);
         return;
     }
     if (input.kind == PointerInput::Wheel && panel_ == Filters) {
@@ -3512,6 +3567,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                 containers_pointer(r, x, y);
             else if (panel_ == Profiles)
                 profiles_pointer(r, x, y);
+            else if (panel_ == Commands)
+                commands_pointer(r, x, y);
         }
         return;
     }
@@ -3546,7 +3603,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                 {8, app_.tr(app_.split_enabled() ? "Exit split view" : "Two pages side by side"),
                  true, "Ctrl+Alt+V"},
                 {9, app_.tr("Site containers"), !app_.private_window, "Ctrl+Alt+C"},
-                {10, app_.tr("Profiles"), true, "Ctrl+Alt+P"}};
+                {10, app_.tr("Profiles"), true, "Ctrl+Alt+P"},
+                {11, app_.tr("Command palette"), true, "Ctrl+K"}};
             app_.menu_width = 320;
             app_.menu_x = 16;
             app_.menu_y = 76;
@@ -3567,6 +3625,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                     open_containers();
                 else if (command == 10)
                     open_profiles();
+                else if (command == 11)
+                    open_commands();
                 else
                     app_.request_exit();
             };
@@ -5624,6 +5684,264 @@ std::string BrowserUi::profiles_report() const {
                ",\"open\":" + rect({r.x + 28, y + 34, 104, 32}) +
                ",\"rename\":" + rect({r.x + 140, y + 34, 112, 32}) +
                ",\"archive\":" + rect({r.x + 260, y + 34, 108, 32}) + "}";
+    }
+    return out + "]}";
+}
+
+void BrowserUi::open_commands() {
+    app_.close_menu();
+    panel(Commands);
+    command_query_.set("");
+    command_selected_ = command_scroll_ = 0;
+    if (auto tab = app_.current(); tab && tab->browser)
+        tab->browser->GetHost()->SetFocus(false);
+    app_.changed();
+}
+std::vector<BrowserUi::CommandResult> BrowserUi::command_results() const {
+    std::vector<CommandResult> results;
+    const auto query = fold_settings(command_query_.value);
+    auto add = [&](CommandResult result, const std::string &english) {
+        const auto title = fold_settings(result.title), alternate = fold_settings(english);
+        const auto haystack =
+            title + " " + alternate + " " + fold_settings(result.detail + " " + result.id);
+        std::size_t begin = 0;
+        while (begin < query.size()) {
+            begin = query.find_first_not_of(" \t", begin);
+            if (begin == std::string::npos)
+                break;
+            const auto end = query.find_first_of(" \t", begin);
+            const auto word = query.substr(begin, end == std::string::npos ? end : end - begin);
+            if (haystack.find(word) == std::string::npos)
+                return;
+            begin = end;
+        }
+        result.score =
+            query.empty()                                                ? 0
+            : title == query || alternate == query || result.id == query ? 0
+            : title.starts_with(query) || alternate.starts_with(query)   ? 1
+            : title.find(query) != std::string::npos || alternate.find(query) != std::string::npos
+                ? 2
+                : 3;
+        results.push_back(std::move(result));
+    };
+    const auto current = app_.current();
+    const bool private_mode = current && current->private_tab;
+    for (const auto &tab : app_.tabs) {
+        if (tab->closing || tab->private_tab != private_mode)
+            continue;
+        std::string detail = app_.tr("Tab") + " · " + app_.profile.workspace_label(tab->workspace);
+        if (tab->container)
+            detail += " · " + app_.profile.container_label(tab->container);
+        if (!tab->ntp)
+            detail += " · " + tab->page.url;
+        add({"tab", std::to_string(tab->id), tab->ntp ? app_.tr("New tab") : tab->page.title,
+             detail, "", tab->id},
+            tab->ntp ? "New tab" : tab->page.title);
+    }
+    const bool page = current && current->browser && !current->ntp;
+    const struct {
+        const char *id, *title, *shortcut;
+        bool enabled;
+    } actions[] = {
+        {"new_tab", "New tab", "Ctrl+T", true},
+        {"private_tab", "Private tab", "Ctrl+Alt+N", true},
+        {"new_window", "New window", "Ctrl+N", true},
+        {"private_window", "New private window", "Ctrl+Shift+N", true},
+        {"back", "Back", "Alt+Left", current && current->back},
+        {"forward", "Forward", "Alt+Right", current && current->forward},
+        {"reload", "Reload", "Ctrl+R", page},
+        {"bookmark", "Save bookmark", "Ctrl+D", page},
+        {"find", "Find in page", "Ctrl+F", page},
+        {"bookmarks", "Bookmarks", "Ctrl+B", true},
+        {"history", "History", "Ctrl+H", true},
+        {"downloads", "Downloads", "Ctrl+J", true},
+        {"settings", "Settings", "", true},
+        {"workspaces", "Workspaces", "Ctrl+Shift+E", !app_.private_window},
+        {"groups", "Tab groups", "Ctrl+Alt+G", !app_.private_window},
+        {"containers", "Site containers", "Ctrl+Alt+C", !private_mode},
+        {"profiles", "Profiles", "Ctrl+Alt+P", true},
+        {"extensions", "Manage extensions", "", true},
+        {"passwords", "Passwords", "Ctrl+Shift+Y", true},
+        {"filters", "Filter lists", "", true},
+        {"import", "Import browser data", "", true},
+        {"updates", "About Aura and updates", "", true},
+        {"quick_links", "Manage quick links", "", current && current->ntp},
+        {"split", app_.split_enabled() ? "Exit split view" : "Two pages side by side", "Ctrl+Alt+V",
+         page},
+        {"sleep", "Sleep tab", "Ctrl+Alt+S", page && !private_mode && !current->pinned},
+        {"devtools", "Developer tools", "F12", page},
+    };
+    for (const auto &action : actions)
+        add({"action", action.id, app_.tr(action.title), app_.tr("Action"), action.shortcut, 0, 0,
+             action.enabled},
+            action.title);
+    for (const auto &spec : settings_catalog())
+        add({"setting", spec.id, app_.tr(spec.title),
+             app_.tr("Setting") + " · " + app_.tr(spec.section) + " · " +
+                 app_.tr(spec.description)},
+            spec.title + " " + spec.description);
+    std::stable_sort(results.begin(), results.end(),
+                     [](const auto &a, const auto &b) { return a.score < b.score; });
+    if (results.size() > 256)
+        results.resize(256);
+    return results;
+}
+void BrowserUi::move_command(int delta) {
+    const int count = int(command_results().size());
+    command_selected_ = std::clamp(command_selected_ + delta, 0, std::max(0, count - 1));
+    keyboard_focus_ = -1;
+    app_.changed();
+}
+void BrowserUi::draw_commands(SkCanvas &c, Rect r) {
+    const auto &t = interface_theme(app_.profile);
+    label(c, regular_, app_.tr("Search tabs in this window, settings and actions"), r.x + 28,
+          r.y + 74, 11, t.muted, r.width - 56);
+    const Rect input{r.x + 28, r.y + 86, r.width - 56, 38};
+    fill(c, input, 8, t.background);
+    border(c, input, 8, t.accent);
+    draw_editor(c, command_query_, {input.x + 12, input.y + 3, input.width - 24, 32}, 13, true);
+    const auto results = command_results();
+    const int capacity = std::max(1, (r.height - 180) / 52);
+    command_selected_ = std::clamp(command_selected_, 0, std::max(0, int(results.size()) - 1));
+    command_scroll_ = std::clamp(command_scroll_, std::max(0, command_selected_ - capacity + 1),
+                                 command_selected_);
+    if (results.empty())
+        label(c, regular_, app_.tr("No matches. Try a tab title, setting or action."), r.x + 28,
+              r.y + 165, 13, t.muted, r.width - 56);
+    for (int i = command_scroll_; i < int(results.size()) && i < command_scroll_ + capacity; i++) {
+        const auto &result = results[i];
+        Rect row{r.x + 20, r.y + 136 + (i - command_scroll_) * 52, r.width - 40, 48};
+        if (i == command_selected_) {
+            fill(c, row, 8, SkColorSetA(t.accent, 25));
+            border(c, row, 8, SkColorSetA(t.accent, 140));
+        } else if (inside(row, hover_x_, hover_y_))
+            fill(c, row, 8, SkColorSetA(t.accent, 10));
+        const int shortcut_width = result.shortcut.empty() ? 0 : 120;
+        label(c, medium_, result.title, row.x + 12, row.y + 19, 13,
+              result.enabled ? t.text : t.muted, row.width - 24 - shortcut_width);
+        label(c, regular_, result.detail, row.x + 12, row.y + 38, 10, t.muted, row.width - 24);
+        if (!result.shortcut.empty())
+            label(c, regular_, result.shortcut, row.x + row.width - 116, row.y + 19, 10, t.muted,
+                  104);
+    }
+    label(c, regular_, app_.tr("Arrows / Tab: select    Enter: run    Esc: close"), r.x + 28,
+          r.y + r.height - 18, 10, t.muted, r.width - 56);
+}
+void BrowserUi::commands_pointer(Rect r, int x, int y) {
+    const Rect input{r.x + 28, r.y + 86, r.width - 56, 38};
+    if (inside(input, x, y)) {
+        command_query_.select_all();
+        app_.changed();
+        return;
+    }
+    const int index = command_scroll_ + (y - r.y - 136) / 52,
+              capacity = std::max(1, (r.height - 180) / 52);
+    if (y >= r.y + 136 && y < r.y + 136 + capacity * 52 && x >= r.x + 20 &&
+        x < r.x + r.width - 20) {
+        command_selected_ = index;
+        run_command(index);
+    }
+}
+void BrowserUi::run_command(int index) {
+    const auto results = command_results();
+    if (index < 0 || index >= int(results.size()) || !results[index].enabled)
+        return;
+    const auto result = results[index];
+    dismiss();
+    command_query_.set("");
+    if (result.kind == "tab") {
+        for (int i = 0; i < int(app_.tabs.size()); i++)
+            if (app_.tabs[i]->id == result.tab) {
+                app_.activate(i);
+                return;
+            }
+        return;
+    }
+    if (result.kind == "setting") {
+        panel(Settings);
+        settings_search_.set(result.id);
+        settings_scroll_ = 0;
+        settings_search_focus_ = false;
+        return;
+    }
+    const auto &id = result.id;
+    if (id == "new_tab")
+        app_.open_new_tab(app_.current() && app_.current()->private_tab);
+    else if (id == "private_tab")
+        app_.open_new_tab(true);
+    else if (id == "new_window")
+        app_.new_window();
+    else if (id == "private_window")
+        app_.new_window(true);
+    else if (id == "back")
+        app_.back();
+    else if (id == "forward")
+        app_.forward();
+    else if (id == "reload")
+        app_.reload(false);
+    else if (id == "bookmark")
+        app_.bookmark();
+    else if (id == "find") {
+        find_open = true;
+        find.select_all();
+    } else if (id == "bookmarks")
+        panel(Bookmarks);
+    else if (id == "history")
+        panel(History);
+    else if (id == "downloads")
+        panel(Downloads);
+    else if (id == "settings") {
+        panel(Settings);
+        settings_search_.set("");
+        settings_scroll_ = 0;
+    } else if (id == "workspaces")
+        open_workspaces();
+    else if (id == "groups")
+        open_groups();
+    else if (id == "containers")
+        open_containers();
+    else if (id == "profiles")
+        open_profiles();
+    else if (id == "extensions")
+        panel(Extensions);
+    else if (id == "passwords")
+        panel(Passwords);
+    else if (id == "filters")
+        panel(Filters);
+    else if (id == "import")
+        panel(Import);
+    else if (id == "updates")
+        panel(Updates);
+    else if (id == "quick_links")
+        panel(Shortcuts);
+    else if (id == "split")
+        app_.toggle_split();
+    else if (id == "sleep") {
+        if (auto tab = app_.current())
+            app_.sleep_tab(tab->id);
+    } else if (id == "devtools")
+        app_.devtools();
+    app_.changed();
+}
+std::string BrowserUi::commands_report() const {
+    if (panel_ != Commands)
+        return "null";
+    const auto r = panel_bounds();
+    const auto results = command_results();
+    std::string out = "{\"query\":" + json_quote(command_query_.value) +
+                      ",\"selected\":" + std::to_string(command_selected_) +
+                      ",\"count\":" + std::to_string(results.size()) + ",\"items\":[";
+    const int capacity = std::max(1, (r.height - 180) / 52);
+    for (int i = command_scroll_; i < int(results.size()) && i < command_scroll_ + capacity; i++) {
+        if (i != command_scroll_)
+            out += ",";
+        const auto &result = results[i];
+        out += "{\"kind\":" + json_quote(result.kind) + ",\"id\":" + json_quote(result.id) +
+               ",\"title\":" + json_quote(result.title) +
+               ",\"enabled\":" + (result.enabled ? "true" : "false") + ",\"bounds\":[" +
+               std::to_string(r.x + 20) + "," +
+               std::to_string(r.y + 136 + (i - command_scroll_) * 52) + "," +
+               std::to_string(r.width - 40) + ",48]}";
     }
     return out + "]}";
 }

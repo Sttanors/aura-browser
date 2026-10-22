@@ -945,6 +945,19 @@ constexpr Translation catalog[] = {
     {"Install Aura update", "Установка обновления Aura"},
     {"Your profile is kept. Installation starts after Aura closes.",
      "Профиль сохраняется. Установка начнётся после закрытия Aura."},
+    {"Command palette", "Палитра команд"},
+    {"Search tabs in this window, settings and actions",
+     "Поиск вкладок в этом окне, настроек и действий"},
+    {"No matches. Try a tab title, setting or action.",
+     "Ничего не найдено. Введите название вкладки, настройки или действия."},
+    {"Arrows / Tab: select    Enter: run    Esc: close",
+     "Стрелки / Tab: выбор    Enter: выполнить    Esc: закрыть"},
+    {"Action", "Действие"},
+    {"Setting", "Настройка"},
+    {"Tab", "Вкладка"},
+    {"Save bookmark", "Сохранить закладку"},
+    {"Find in page", "Найти на странице"},
+
 };
 } // namespace
 std::span<const Translation> translations() {
