@@ -39,6 +39,12 @@ class BrowserClient final : public DiagnosticClient,
                                 CefRefPtr<CefPermissionPromptCallback>) override;
     void OnDismissPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t,
                                    cef_permission_request_result_t) override;
+    void OnPaint(CefRefPtr<CefBrowser>, PaintElementType, const RectList &, const void *, int,
+                 int) override;
+#ifdef _WIN32
+    void OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType, const RectList &,
+                            const CefAcceleratedPaintInfo &) override;
+#endif
     void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
     void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
     void OnRenderProcessTerminated(CefRefPtr<CefBrowser>, TerminationStatus, int,

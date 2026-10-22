@@ -8,7 +8,7 @@
 |---|---|---|
 | 1 | Рабочие пространства | Реализовано, Linux проверки PASS |
 | 2 | Группы вкладок | Реализовано, Linux проверки PASS |
-| 3 | Спящие вкладки | В очереди |
+| 3 | Спящие вкладки | Реализовано, Linux проверки PASS |
 | 4 | Две страницы рядом | В очереди |
 | 5 | Контейнеры сайтов | В очереди |
 | 6 | Полноценные профили | В очереди |
@@ -118,3 +118,48 @@ rename, duplicate rejection, цвет, collapse/reveal живых beforeunload-�
 панели, расширены кнопка создания и подписи цветов на русском.
 Логи: /tmp/aura-groups-{build,ctest-final,gui-final}.log.
 Windows CI пока не выполнялся для этих изменений.
+
+Checkpoint 2: повторный GUI groups и регрессия workspaces — PASS после исправления
+ширины русских кнопок. Локальный commit 5631cb7.
+
+## 3. План спящих вкладок
+
+Фоновая страница переводится в Chromium lifecycle frozen; DOM, формы и история
+остаются в памяти. Освобождаются native OSR bitmap buffers; это не полная выгрузка
+renderer. При выборе вкладка автоматически просыпается. Меню вкладки и Ctrl+Alt+S
+позволяют усыпить текущую вкладку, предварительно выбрав другую.
+Автоматический сон по таймауту выключен по умолчанию. Исключения по доменам,
+pinned/private/медиа/capture/загрузка/DevTools/dialog защищают от остановки работы.
+Статус «Спит» виден в строке вкладки. Дизайн использует действующие tokens и Inter.
+
+## 3. Спящие вкладки — реализация и первая проверка
+
+Ctrl+Alt+S / «Усыпить вкладку» в контекстном меню переводят страницу в frozen
+через Chromium DevTools lifecycle. Выбор вкладки пробуждает её без reload.
+Native view/popup buffers освобождаются, поздние paint events игнорируются до
+пробуждения. DOM сохраняется в renderer: это экономия фоновой работы и памяти
+изображения, а не полная выгрузка Chromium. Настройки Tabs: Off / 5 / 15 / 30 / 60
+минут и домены-исключения. Новые настройки сохраняются через общий каталог.
+
+Защищены active, pinned, private, loading/error, capture-granted, WebAudio running,
+playing audio/video/PiP, вкладки с dialog, окна с DevTools и активные downloads.
+Проверка media выполняется в isolated world; inaccessible frames консервативно
+сохраняют страницу активной. Исключения включают поддомены. В sidebar — «Спит» / z.
+
+Первая проверка: Linux build, 90/90 CTest, GUI PASS с реальным пятиминутным
+таймаутом (без ускорения часов). Проверено: остановка JS timer, нулевой размер
+native bitmap, прежний token документа и несохранённая форма после wake,
+pinned/private/WebAudio/domain exclusions, отсутствие private URL в profile/bak.
+Лог /tmp/aura-sleep-gui.log. Дополнительная проверка отмены выхода из frozen формы
+и итоговой версии кода ещё выполняется; checkpoint 3 пока открыт.
+
+Официальный протокол lifecycle:
+https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/pdl/domains/Page.pdl
+
+Checkpoint 3: итоговый Linux build; 91/91 CTest; повторный GUI manual/exceptions —
+PASS, включая Ctrl+Q на frozen beforeunload форме → Escape → сохранение данных и
+продолжение работы. Pin проверен по реальному state, WebAudio — по running context.
+Обычный browser regression suite — PASS. RU sidebar просмотрен; статус сокращён
+до «Спит», чтобы он не обрезался. Логи /tmp/aura-sleep-{build-final,ctest-final,
+gui-final,regression}.log. Таймаут 5 минут проверен отдельным полным прогоном выше.
+Спящие вкладки завершены в описанном объёме. Windows CI пока не запускался.

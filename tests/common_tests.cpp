@@ -678,3 +678,20 @@ TEST(Profile, GroupsPersistNamesColorsCollapseAndReleaseTabsOnRemoval) {
     EXPECT_TRUE(Profile(root).groups.empty());
     std::filesystem::remove_all(root);
 }
+
+TEST(Profile, LocalizedDefaultWorkspaceIsReservedButCustomNamesStayLiteral) {
+    TemporaryProfile temporary;
+    Profile p(temporary.path);
+    p.language = "ru";
+    EXPECT_EQ(p.workspace_label(0), "Личное пространство");
+    EXPECT_EQ(p.add_workspace("Личное пространство"), -1);
+    const int id = p.add_workspace("History");
+    ASSERT_GT(id, 0);
+    EXPECT_EQ(p.workspace_label(id), "History");
+    EXPECT_TRUE(p.rename_workspace(0, "Моё"));
+    EXPECT_GT(p.add_workspace("Личное пространство"), 0);
+    p.save();
+    Profile restored(temporary.path);
+    EXPECT_EQ(restored.workspace_label(0), "Моё");
+    EXPECT_EQ(restored.workspace_label(id), "History");
+}

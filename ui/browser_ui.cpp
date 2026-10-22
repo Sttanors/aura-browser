@@ -588,7 +588,9 @@ void BrowserUi::draw(SkCanvas &c) {
                  SkColorSetA(t.accent, static_cast<U8CPU>(130 + 100 * (app_.profile.reduce_motion
                                                                            ? 0.0
                                                                            : std::sin(time * 4)))));
-        } else if (tab.private_tab)
+        } else if (tab.sleeping)
+            label(c, medium_, "z", 30, y + 29, 17, muted);
+        else if (tab.private_tab)
             icon(c, "private", 26, y + 14, 19, t.accent);
         else if (app_.profile.show_favicons && tab.favicon.generation())
             image(c, tab.favicon, {27, y + 15, 17, 17});
@@ -599,9 +601,10 @@ void BrowserUi::draw(SkCanvas &c) {
               y + (app_.profile.show_tab_host ? 21 : 28), 12.5f, ink, 138);
         if (app_.profile.show_tab_host)
             label(c, regular_,
-                  tab.private_tab ? app_.tr("Private browsing")
-                  : tab.ntp       ? app_.tr("A fresh perspective")
-                                  : url_host(tab.page.url),
+                  tab.sleeping      ? app_.tr("Sleeping")
+                  : tab.private_tab ? app_.tr("Private browsing")
+                  : tab.ntp         ? app_.tr("A fresh perspective")
+                                    : url_host(tab.page.url),
                   57, y + 36, 10, muted, 139);
         if (hover || selected)
             icon(c, tab.pinned ? "pin" : "close", 202, y + 16, 14, muted);
@@ -2603,6 +2606,11 @@ bool BrowserUi::key(const CefKeyEvent &key) {
         }
     }
     if (down) {
+        if (ctrl && alt && code == 'S' && app_.dialogs.empty() && panel_ == None && !editing) {
+            if (auto t = app_.current())
+                app_.sleep_tab(t->id);
+            return true;
+        }
         if (ctrl && alt && code == 'G' && app_.dialogs.empty()) {
             open_groups();
             return true;
@@ -3496,7 +3504,10 @@ void BrowserUi::pointer(const PointerInput &input) {
                                      {4, app_.tr("Close tab")},
                                      {5, app_.tr("Reopen closed tab")},
                                      {6, app_.tr("Move to workspace"), !app_.private_window},
-                                     {7, app_.tr("Tab groups"), !app_.private_window}};
+                                     {7, app_.tr("Tab groups"), !app_.private_window},
+                                     {8, app_.tr("Sleep tab"),
+                                      !app_.tabs[index]->pinned && !app_.tabs[index]->private_tab &&
+                                          !app_.tabs[index]->ntp}};
                         app_.menu_x = std::clamp(x + 8, 8, width_ - 250);
                         app_.menu_y = std::clamp(
                             y, 32, std::max(32, height_ - int(app_.menu.size()) * 32 - 20));
@@ -3521,6 +3532,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                                 open_workspaces(id);
                             else if (command == 7)
                                 open_groups(id);
+                            else if (command == 8)
+                                app_.sleep_tab(id);
                             else
                                 app_.reopen();
                         };

@@ -76,7 +76,13 @@ void BrowserController::setup_site_tools(int id, std::function<void()> ready) {
         if (!value || value->GetType() != VTYPE_DICTIONARY)
             return;
         auto p = value->GetDictionary();
-        if (method == "Runtime.executionContextCreated") {
+        if (method == "WebAudio.contextCreated" || method == "WebAudio.contextChanged") {
+            if (auto context = p->GetDictionary("context"))
+                t->audio_contexts[context->GetString("contextId").ToString()] =
+                    context->GetString("contextState") == "running";
+        } else if (method == "WebAudio.contextWillBeDestroyed")
+            t->audio_contexts.erase(p->GetString("contextId").ToString());
+        else if (method == "Runtime.executionContextCreated") {
             ++audit["protection_context_events"];
             auto c = p->GetDictionary("context");
             if (c && extensions.observe_origin(c->GetString("origin")))
@@ -122,6 +128,7 @@ void BrowserController::setup_site_tools(int id, std::function<void()> ready) {
             });
         }
     };
+    t->devtools->call("WebAudio.enable");
     t->devtools->call("Runtime.enable");
     t->devtools->call("Page.enable");
     t->devtools->call(

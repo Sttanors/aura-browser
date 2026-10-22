@@ -1,0 +1,13 @@
+<!doctype html><meta charset="utf-8"><title>Sleep fixture</title>
+<style>body{font:20px sans-serif;padding:20px}input,button{display:block;margin:16px 0;height:36px;width:260px}</style>
+<h1>Lifecycle fixture</h1><input id="value" placeholder="Unsaved form">
+<button id="protect" onclick="onbeforeunload=()=>true;protectedPage=true;report()">Protect form</button>
+<button id="audio" onclick="audio=new AudioContext();audio.resume();report()">Start Web Audio</button>
+<script>
+let ticks=0,freezes=0,resumes=0,protectedPage=false,audio=null;
+const token=Math.random().toString(36).slice(2);
+function report(){document.title=JSON.stringify({token,ticks,freezes,resumes,value:document.querySelector('input').value,protected:protectedPage,audio:audio?.state});}
+document.addEventListener('freeze',()=>{freezes++;report()});
+document.addEventListener('resume',()=>{resumes++;report()});
+setInterval(()=>{ticks++;report()},100);report();
+</script>

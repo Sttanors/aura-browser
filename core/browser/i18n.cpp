@@ -3,6 +3,18 @@
 namespace aura {
 namespace {
 constexpr Translation catalog[] = {
+    {"Put inactive tabs to sleep", "Усыплять неактивные вкладки"},
+    {"Pause background pages and release their image buffers. Forms stay in memory.",
+     "Останавливать фоновые страницы и освобождать буферы изображения. Формы сохраняются в "
+     "памяти."},
+    {"Never sleep these sites", "Не усыплять эти сайты"},
+    {"After 5 minutes", "Через 5 минут"},
+    {"After 15 minutes", "Через 15 минут"},
+    {"After 30 minutes", "Через 30 минут"},
+    {"After 60 minutes", "Через 60 минут"},
+    {"Sleep tab", "Усыпить вкладку"},
+    {"Sleeping", "Спит"},
+    {"This tab is protected from sleep.", "Эта вкладка защищена от усыпления."},
     {"Selected tab: ", "Выбранная вкладка: "},
     {"Ungroup tab", "Без группы"},
     {"Add tab", "Добавить"},

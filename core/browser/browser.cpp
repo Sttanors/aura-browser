@@ -40,6 +40,10 @@ std::string tabs_json(const std::vector<std::unique_ptr<Tab>> &tabs) {
         out << "{\"url\":\"" << json_escape(t->page.url) << "\",\"title\":\""
             << json_escape(t->page.title)
             << "\",\"private\":" << (t->private_tab ? "true" : "false")
+            << ",\"pinned\":" << (t->pinned ? "true" : "false")
+            << ",\"sleeping\":" << (t->sleeping ? "true" : "false")
+            << ",\"sleep_pending\":" << (t->sleep_pending ? "true" : "false")
+            << ",\"buffer_bytes\":" << t->page.view.bytes().size() + t->page.popup.bytes().size()
             << ",\"workspace\":" << t->workspace << ",\"group\":" << t->group
             << ",\"loaded\":" << (t->page.loaded ? "true" : "false")
             << ",\"failed\":" << (t->page.failed ? "true" : "false")
@@ -235,6 +239,8 @@ void BrowserController::apply_settings(bool update_zoom, bool propagate) {
     configure_permissions(CefRequestContext::GetGlobalContext());
     configure_font_preferences(CefRequestContext::GetGlobalContext());
     for (auto &t : tabs) {
+        if (t->sleeping && site_exception(t->page.url, profile.tab_sleep_exceptions))
+            wake_tab(t->id);
         update_site_tools(*t);
         if (t->private_tab && t->browser)
             configure_font_preferences(t->browser->GetHost()->GetRequestContext());
@@ -413,6 +419,12 @@ void BrowserController::defer(std::function<void()> action) {
     pending_.push_back(std::move(action));
 }
 void BrowserController::tick() {
+    const auto now = std::chrono::steady_clock::now();
+    if (profile.tab_sleep_minutes > 0 && !quitting)
+        for (auto &t : tabs)
+            if (can_sleep(*t) && now >= t->sleep_retry_after &&
+                now - t->inactive_since >= std::chrono::minutes(profile.tab_sleep_minutes))
+                sleep_tab(t->id, false);
     if (background_updates_ && profile.check_updates && updates.due())
         updates.check();
     auto &filters = filter_lists();
@@ -645,9 +657,13 @@ void BrowserController::activate(int index, bool reveal_group) {
     close_extension_popup(false);
     if (index < 0 || index >= static_cast<int>(tabs.size()) || tabs[index]->closing)
         return;
-    if (auto old = current())
+    if (auto old = current()) {
         workspace_selection_[old->workspace] = old->id;
+        if (index != active)
+            old->inactive_since = std::chrono::steady_clock::now();
+    }
     active = index;
+    wake_tab(tabs[index]->id);
     workspace = tabs[index]->workspace;
     if (reveal_group)
         if (auto g = profile.group(tabs[index]->group))
@@ -681,6 +697,7 @@ void BrowserController::close_tab(int index) {
     close_menu();
     t.closing = true;
     if (t.browser) {
+        wake_tab(t.id);
         t.browser->GetHost()->CloseDevTools();
         t.browser->GetHost()->CloseBrowser(false);
     } else if (!t.popup_pending)
@@ -938,6 +955,7 @@ void BrowserController::request_quit(bool force) {
     for (auto &t : tabs) {
         t->closing = true;
         if (t->browser) {
+            wake_tab(t->id);
             t->browser->GetHost()->CloseDevTools();
             t->browser->GetHost()->CloseBrowser(force);
         } else if (!t->popup_pending)

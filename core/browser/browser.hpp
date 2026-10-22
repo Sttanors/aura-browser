@@ -25,6 +25,10 @@ struct Tab {
     int workspace = 0;
     int group = 0;
     uint64_t navigation_serial = 0;
+    bool sleeping = false, sleep_pending = false, media_capture = false;
+    std::map<std::string, bool> audio_contexts;
+    std::chrono::steady_clock::time_point inactive_since = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point sleep_retry_after{};
     DiagnosticState page;
     CefRefPtr<DiagnosticClient> client;
     CefRefPtr<CefBrowser> browser;
@@ -176,6 +180,9 @@ class BrowserController {
     void bookmark();
     void pin();
     void mute();
+    bool can_sleep(const Tab &tab) const;
+    void sleep_tab(int id, bool manual = true);
+    void wake_tab(int id);
     void devtools();
     void find_text(const std::string &text, bool next = false, bool backwards = false);
     void close_menu();

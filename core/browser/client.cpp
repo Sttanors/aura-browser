@@ -96,6 +96,20 @@ class NetworkPolicy final : public CefResourceRequestHandler {
     IMPLEMENT_REFCOUNTING(NetworkPolicy);
 };
 } // namespace
+void BrowserClient::OnPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
+                            const RectList &dirty, const void *data, int width, int height) {
+    auto t = owner_.tab(id_);
+    if (t && !t->sleeping)
+        DiagnosticClient::OnPaint(browser, type, dirty, data, width, height);
+}
+#ifdef _WIN32
+void BrowserClient::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
+                                       const RectList &dirty, const CefAcceleratedPaintInfo &info) {
+    auto t = owner_.tab(id_);
+    if (t && !t->sleeping)
+        DiagnosticClient::OnAcceleratedPaint(browser, type, dirty, info);
+}
+#endif
 CefRefPtr<CefResourceRequestHandler>
 BrowserClient::GetResourceRequestHandler(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
                                          CefRefPtr<CefRequest>, bool, bool, const CefString &,
@@ -110,8 +124,12 @@ bool BrowserClient::OnBeforeBrowse(CefRefPtr<CefBrowser> browser, CefRefPtr<CefF
             browser->GetHost()->GetRequestContext(), url,
             frame->IsMain() ? url : browser->GetMainFrame()->GetURL().ToString());
     if (frame->IsMain()) {
-        if (auto t = owner_.tab(id_))
+        if (auto t = owner_.tab(id_)) {
             ++t->navigation_serial;
+            t->media_capture = false;
+            t->audio_contexts.clear();
+            owner_.wake_tab(id_);
+        }
         if (owner_.current() && owner_.current()->id == id_)
             owner_.close_extension_popup();
         owner_.cancel_permissions(id_);
@@ -140,10 +158,12 @@ bool BrowserClient::OnRequestMediaAccessPermission(CefRefPtr<CefBrowser>, CefRef
         owner_.tr("Allow access to: ") + owner_.tr(audio && video ? "Camera and microphone"
                                                    : audio        ? "Microphone"
                                                                   : "Camera");
-    dialog.action = [callback, permissions](bool allow, const std::string &) {
-        if (allow)
+    dialog.action = [this, callback, permissions](bool allow, const std::string &) {
+        if (allow) {
+            if (auto t = owner_.tab(id_))
+                t->media_capture = true;
             callback->Continue(permissions);
-        else
+        } else
             callback->Cancel();
     };
     owner_.dialogs.push_back(std::move(dialog));

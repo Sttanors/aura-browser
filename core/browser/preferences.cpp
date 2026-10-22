@@ -5,6 +5,20 @@
 namespace aura {
 std::span<const SettingSpec> settings_catalog() {
     static const std::vector<SettingSpec> catalog = {
+        {"tab_sleep_minutes",
+         "Tabs",
+         "Put inactive tabs to sleep",
+         "Pause background pages and release their image buffers. Forms stay in memory.",
+         &BrowserPreferences::tab_sleep_minutes,
+         SettingKind::Choice,
+         {{"0", "Off"},
+          {"5", "After 5 minutes"},
+          {"15", "After 15 minutes"},
+          {"30", "After 30 minutes"},
+          {"60", "After 60 minutes"}}},
+        {"tab_sleep_exceptions", "Tabs", "Never sleep these sites",
+         "Domains separated by commas. Includes their subdomains.",
+         &BrowserPreferences::tab_sleep_exceptions, SettingKind::Text},
         {"check_updates", "General", "Check for Aura updates",
          "Check the signed release channel once a day. Downloads require your approval.",
          &BrowserPreferences::check_updates},

@@ -68,6 +68,9 @@ Keep all runtime files together. Direct launches create `profile/` beside the ex
 
 ## Features
 
+Source additions after the current release: [workspaces and tab groups](docs/tab-organization.md).
+Their implementation and platform checks are tracked in [feature progress](docs/features-progress.md).
+
 - Independent Chromium tabs: create, close, restore, reorder, pin, duplicate and mute.
 - Unicode address bar, clipboard, history/bookmark suggestions and selectable search engines:
   DuckDuckGo, Google, Bing and Yandex.
@@ -217,6 +220,8 @@ See [windows and sessions](docs/windows-and-sessions.md).
 | Ctrl 1…8 / Ctrl 9 | Select tab / last tab |
 | Ctrl N / Ctrl Shift N | New window / private window |
 | Ctrl Alt N | New private tab |
+| Ctrl Shift E / Ctrl Alt G | Workspaces / tab groups (source additions) |
+| Ctrl Alt S | Put current tab to sleep (source addition) |
 | Alt ← / Alt → | Back / forward |
 | Ctrl R or F5 / Ctrl Shift R | Reload/stop / reload without cache |
 | Ctrl + / Ctrl − / Ctrl 0 | Site zoom, or independent start-page zoom |
