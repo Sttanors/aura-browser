@@ -1,9 +1,11 @@
 #include "aura/design_tokens.hpp"
 #include "common/config.hpp"
+#include "common/file_lock.hpp"
 #include "common/geometry.hpp"
 #include "common/paint_buffer.hpp"
 #include "common/platform.hpp"
 #include "common/pump_schedule.hpp"
+#include "core/browser/profiles.hpp"
 #include <climits>
 #include <fstream>
 #include <gtest/gtest.h>
@@ -818,4 +820,107 @@ TEST(Profile, MissingContainerCatalogDoesNotRestoreTabsInDefaultIdentity) {
     ASSERT_EQ(p.windows[0].tabs.size(), 1u);
     EXPECT_EQ(p.windows[0].tabs[0].url, "https://normal.test/");
     EXPECT_EQ(p.windows[0].tabs[0].container, 0);
+}
+
+TEST(Profiles, FreshProfilesShareOnlyLanguageAndCatalogMembership) {
+    TemporaryProfile temporary;
+    Profile parent(temporary.path);
+    parent.language = "ru";
+    parent.search_engine = "yandex";
+    parent.toggle_bookmark("https://parent.test/", "Parent");
+    parent.visit("https://parent.test/", "Parent", false);
+    parent.save();
+    std::ofstream(temporary.path / "passwords.aura") << "parent vault bytes";
+    std::filesystem::create_directories(temporary.path / "extensions" / "parent-extension");
+    ProfileCatalog catalog(temporary.path);
+    const int id = catalog.create(" Work ", "ru");
+    ASSERT_GT(id, 0);
+    const auto directory = catalog.data_directory(id);
+    Profile child(directory);
+    EXPECT_EQ(child.language, "ru");
+    EXPECT_EQ(child.search_engine, "duckduckgo");
+    EXPECT_TRUE(child.bookmarks.empty());
+    EXPECT_TRUE(child.history.empty());
+    EXPECT_FALSE(std::filesystem::exists(directory / "passwords.aura"));
+    EXPECT_FALSE(std::filesystem::exists(directory / "extensions"));
+    ProfileCatalog discovered(directory, child.profiles_root);
+    EXPECT_EQ(discovered.root, catalog.root);
+    EXPECT_EQ(discovered.current_id, id);
+    EXPECT_EQ(discovered.name(id, "en"), "Work");
+    child.search_engine = "bing";
+    child.save();
+    EXPECT_EQ(Profile(temporary.path).search_engine, "yandex");
+    EXPECT_EQ(Profile(directory).search_engine, "bing");
+    EXPECT_EQ(Profile(temporary.path).history.size(), 1);
+}
+
+TEST(Profiles, ConcurrentCatalogWritersReloadAndRespectExclusiveLock) {
+    TemporaryProfile temporary;
+    ProfileCatalog first(temporary.path), second(temporary.path);
+    const int one = first.create("One", "en");
+    const int two = second.create("Two", "en");
+    ASSERT_GT(one, 0);
+    ASSERT_GT(two, one);
+    first.reload();
+    EXPECT_EQ(first.items.size(), 3);
+    EXPECT_LT(first.create(" one ", "en"), 0);
+    EXPECT_LT(first.create("Основной профиль", "en"), 0);
+    EXPECT_FALSE(first.rename(two, "One"));
+    {
+        ExclusiveFileLock held(first.root / "catalog.lock");
+        ASSERT_TRUE(held.owns_lock());
+        EXPECT_THROW(second.create("Blocked", "en"), std::runtime_error);
+        EXPECT_THROW(second.rename(one, "Changed"), std::runtime_error);
+    }
+    EXPECT_TRUE(second.rename(one, "Renamed"));
+    first.reload();
+    EXPECT_EQ(first.name(one, "en"), "Renamed");
+    std::filesystem::create_directories(first.data_directory(two + 1));
+    EXPECT_EQ(first.create("Three", "en"), two + 2);
+}
+
+TEST(Profiles, ArchivingIsReversibleAndNeverDeletesProfileFiles) {
+    TemporaryProfile temporary;
+    ProfileCatalog catalog(temporary.path);
+    const int id = catalog.create("Work", "en");
+    const auto directory = catalog.data_directory(id);
+    std::ofstream(directory / "sentinel") << "keep";
+    EXPECT_FALSE(catalog.archive(0, true));
+    Profile child(directory);
+    ProfileCatalog own(directory, child.profiles_root);
+    EXPECT_FALSE(own.archive(id, true));
+    EXPECT_TRUE(catalog.archive(id, true));
+    own.reload();
+    EXPECT_TRUE(own.items.back().archived);
+    EXPECT_TRUE(std::filesystem::exists(directory / "sentinel"));
+    EXPECT_TRUE(own.archive(id, false));
+    catalog.reload();
+    EXPECT_FALSE(catalog.items.back().archived);
+    EXPECT_TRUE(std::filesystem::exists(directory / "profile.toml"));
+}
+
+TEST(Profiles, CatalogRecoveryPreservesCorruptionAndRefusesUnrelatedRoots) {
+    TemporaryProfile temporary;
+    auto read_file = [](const std::filesystem::path &path) {
+        std::ifstream input(path);
+        return std::string(std::istreambuf_iterator<char>(input), {});
+    };
+    ProfileCatalog catalog(temporary.path);
+    const int id = catalog.create("Work", "en");
+    ASSERT_TRUE(catalog.rename(id, "Team"));
+    std::ofstream(catalog.root / "catalog.toml", std::ios::trunc) << "broken = [";
+    ProfileCatalog recovered(temporary.path);
+    EXPECT_EQ(recovered.name(id, "en"), "Work");
+    EXPECT_TRUE(recovered.rename(id, "Recovered"));
+    EXPECT_EQ(read_file(catalog.root / "catalog.toml.corrupt"), "broken = [");
+    TemporaryProfile unrelated;
+    ProfileCatalog outside(unrelated.path, utf8_path(catalog.root));
+    EXPECT_EQ(outside.current_id, 0);
+    EXPECT_NE(outside.root, catalog.root);
+    std::ofstream(catalog.root / "catalog.toml", std::ios::trunc) << "broken = [";
+    std::ofstream(catalog.root / "catalog.toml.bak", std::ios::trunc) << "also broken = [";
+    ProfileCatalog broken(temporary.path);
+    EXPECT_FALSE(broken.error.empty());
+    EXPECT_THROW(broken.create("No overwrite", "en"), std::runtime_error);
+    EXPECT_EQ(read_file(catalog.root / "catalog.toml"), "broken = [");
 }

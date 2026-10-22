@@ -7,6 +7,7 @@
 #include "core/browser/imports.hpp"
 #include "core/browser/passwords.hpp"
 #include "core/browser/profile.hpp"
+#include "core/browser/profiles.hpp"
 #include "core/browser/protection.hpp"
 #include "core/browser/updates.hpp"
 #include "core/cef/diagnostic_client.hpp"
@@ -93,6 +94,7 @@ struct WindowRequest {
 struct BrowserState {
     explicit BrowserState(const std::filesystem::path &path);
     Profile profile;
+    ProfileCatalog profiles;
     ExtensionManager extensions;
     UpdateManager updates;
     BrowserImporter importer;
@@ -159,6 +161,9 @@ class BrowserController {
     CefRefPtr<CefRequestContext> request_context(int container, bool private_tab = false);
     bool container_in_use(int id) const;
     void remove_container(int id);
+    void open_profile(int id);
+    std::string profile_name() const;
+    void update_window_title();
     double scale = 1, ui_scale = 1;
     bool quitting = false;
     int find_matches = 0, find_active = 0, tools_open = 0;

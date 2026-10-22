@@ -363,30 +363,32 @@ Rect BrowserUi::panel_bounds() const {
                            : panel_ == Import     ? 900
                            : panel_ == Groups     ? 900
                            : panel_ == Containers ? 900
+                           : panel_ == Profiles   ? 900
                            : panel_ == Filters    ? 900
                                                   : 660,
                            r.width - 24);
-    const int h =
-        std::min(panel_ == Settings     ? 760
-                 : panel_ == Extensions ? 700
-                 : panel_ == Shortcuts  ? 700
-                 : panel_ == Passwords  ? 700
-                 : panel_ == Import     ? 700
-                 : panel_ == Containers
-                     ? std::clamp(260 + int(app_.profile.containers.size()) * 88, 440, 700)
-                 : panel_ == Groups
-                     ? std::clamp(260 + int(std::count_if(app_.profile.groups.begin(),
-                                                          app_.profile.groups.end(),
-                                                          [&](const auto &g) {
-                                                              return g.workspace == app_.workspace;
-                                                          })) *
-                                            88,
-                                  400, 700)
-                 : panel_ == Filters ? 700
-                 : panel_ == Workspaces
-                     ? std::clamp(218 + int(app_.profile.workspaces.size()) * 52, 380, 700)
-                     : 580,
-                 height_ - 124);
+    const int h = std::min(
+        panel_ == Settings     ? 760
+        : panel_ == Extensions ? 700
+        : panel_ == Shortcuts  ? 700
+        : panel_ == Passwords  ? 700
+        : panel_ == Import     ? 700
+        : panel_ == Profiles   ? std::clamp(236 + int(listed_profiles().size()) * 84, 340, 700)
+        : panel_ == Containers
+            ? std::clamp(260 + int(app_.profile.containers.size()) * 88, 440, 700)
+        : panel_ == Groups
+            ? std::clamp(
+                  260 + int(std::count_if(app_.profile.groups.begin(), app_.profile.groups.end(),
+                                          [&](const auto &g) {
+                                              return g.workspace == app_.workspace;
+                                          })) *
+                            88,
+                  400, 700)
+        : panel_ == Filters ? 700
+        : panel_ == Workspaces
+            ? std::clamp(218 + int(app_.profile.workspaces.size()) * 52, 380, 700)
+            : 580,
+        height_ - 124);
     return {r.x + (r.width - w) / 2, std::max(100, (height_ - h) / 2), w, h};
 }
 Rect BrowserUi::dialog_bounds() const {
@@ -630,12 +632,15 @@ void BrowserUi::draw(SkCanvas &c) {
         if (i == 2 && !app_.downloads.empty())
             label(c, medium_, std::to_string(app_.downloads.size()), 204, r.y + 20, 10, t.accent);
     }
+    focus_target({16, height_ - 60, 208, 54});
     fill(c, {20, height_ - 48, 28, 28}, 10, SkColorSetA(t.accent, 35));
     label(c, medium_, current && current->private_tab ? "P" : "A", 29, height_ - 29, 12, t.accent);
     label(c, medium_,
-          current && current->private_tab ? app_.tr("Private space") : app_.tr("Personal space"),
-          58, height_ - 31, 11, ink);
-    label(c, regular_, app_.tr("Local profile"), 58, height_ - 17, 9, muted);
+          current && current->private_tab ? app_.tr("Private space") : app_.profile_name(), 58,
+          height_ - 31, 11, ink, 162);
+    label(c, regular_,
+          current && current->private_tab ? app_.profile_name() : app_.tr("Local profile"), 58,
+          height_ - 17, 9, muted, 162);
     const std::string title = current ? current->page.title : "Aura";
     label(c, regular_, title, 265, 21, 10, muted, width_ - 435);
     label(c, regular_, current && current->private_tab ? app_.tr("PRIVATE") : "", width_ - 240, 21,
@@ -763,7 +768,8 @@ void BrowserUi::draw(SkCanvas &c) {
                                       app_.tr("Filter lists"),
                                       app_.tr("Workspaces"),
                                       app_.tr("Tab groups"),
-                                      app_.tr("Site containers")};
+                                      app_.tr("Site containers"),
+                                      app_.tr("Profiles")};
         label(c, medium_, titles[panel_], r.x + 28, r.y + 47, 23, ink);
         icon(c, "close", r.x + r.width - 43, r.y + 26, 19, muted);
         if (panel_ == History || panel_ == Bookmarks) {
@@ -865,6 +871,8 @@ void BrowserUi::draw(SkCanvas &c) {
             draw_groups(c, r);
         if (panel_ == Containers)
             draw_containers(c, r);
+        if (panel_ == Profiles)
+            draw_profiles(c, r);
     }
 
     if (editing) {
@@ -2395,6 +2403,8 @@ void BrowserUi::panel(Panel value) {
         group_input_focus_ = false;
     if (value != Containers)
         container_input_focus_ = false;
+    if (value != Profiles)
+        profile_input_focus_ = false;
     if (value == Extensions)
         app_.refresh_extension_state();
     shortcut_focus_ = -1;
@@ -2422,7 +2432,8 @@ void BrowserUi::dismiss() {
     clear_password_fields();
     editing = false;
     panel_ = None;
-    workspace_input_focus_ = group_input_focus_ = container_input_focus_ = false;
+    workspace_input_focus_ = group_input_focus_ = container_input_focus_ = profile_input_focus_ =
+        false;
     app_.close_menu();
     if (auto t = app_.current(); t && t->browser)
         t->browser->GetHost()->SetFocus(true);
@@ -2467,6 +2478,8 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
                 live = &filter_input_;
             else if (panel_ == Workspaces && target == &workspace_input_ && workspace_input_focus_)
                 live = &workspace_input_;
+            else if (panel_ == Profiles && target == &profile_input_ && profile_input_focus_)
+                live = &profile_input_;
             else if (panel_ == Containers && target == &container_input_ && container_input_focus_)
                 live = &container_input_;
             else if (panel_ == Groups && target == &group_input_ && group_input_focus_)
@@ -2486,7 +2499,8 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
                 (live != &filter_input_ || live->value.size() + text.size() <= 4096) &&
                 (live != &workspace_input_ || live->value.size() + text.size() <= 120) &&
                 (live != &group_input_ || live->value.size() + text.size() <= 120) &&
-                (live != &container_input_ || live->value.size() + text.size() <= 120))
+                (live != &container_input_ || live->value.size() + text.size() <= 120) &&
+                (live != &profile_input_ || live->value.size() + text.size() <= 120))
                 live->insert(text);
             if (live == &find)
                 app_.find_text(find.value);
@@ -2549,6 +2563,7 @@ bool BrowserUi::key(const CefKeyEvent &key) {
         workspace_input_focus_ = false;
         group_input_focus_ = false;
         container_input_focus_ = false;
+        profile_input_focus_ = false;
         if (auto tab = app_.current(); tab && tab->browser)
             tab->browser->GetHost()->SetFocus(false);
         if (!focus_targets_.empty()) {
@@ -2566,7 +2581,7 @@ bool BrowserUi::key(const CefKeyEvent &key) {
         !settings_search_focus_ && settings_edit_.empty() && !extension_input_focus_ &&
         !import_input_focus_ && !filter_input_focus_ && shortcut_focus_ < 0 &&
         password_focus_ < 0 && !workspace_input_focus_ && !group_input_focus_ &&
-        !container_input_focus_ && !editing) {
+        !container_input_focus_ && !profile_input_focus_ && !editing) {
         const auto r = focus_targets_[keyboard_focus_];
         const int previous = keyboard_focus_;
         const auto previous_panel = panel_;
@@ -2601,6 +2616,10 @@ bool BrowserUi::key(const CefKeyEvent &key) {
         }
     }
     if (down) {
+        if (ctrl && alt && code == 'P' && app_.dialogs.empty()) {
+            open_profiles();
+            return true;
+        }
         if (ctrl && alt && code == 'C' && app_.dialogs.empty()) {
             open_containers();
             return true;
@@ -2633,6 +2652,34 @@ bool BrowserUi::key(const CefKeyEvent &key) {
                 app_.changed();
                 return code < 0x20 || ctrl || (code >= 0x21 && code <= 0x2E);
             }
+            return true;
+        }
+        if (panel_ == Profiles && profile_input_focus_) {
+            if (code == 0x0D) {
+                save_profile();
+                return true;
+            }
+            if (code == 0x1B) {
+                profile_input_focus_ = false;
+                app_.changed();
+                return true;
+            }
+            if (!ctrl || (code != 'L' && code != 'T' && code != 'W' && code != 'Q')) {
+                editor_key(profile_input_, key);
+                app_.changed();
+                return code < 0x20 || ctrl || (code >= 0x21 && code <= 0x2E);
+            }
+        }
+        if (panel_ == Profiles && !profile_input_focus_ &&
+            (code == 0x21 || code == 0x22 || code == 0x24 || code == 0x23)) {
+            const int capacity = std::max(1, (panel_bounds().height - 236) / 84),
+                      maximum = std::max(0, int(listed_profiles().size()) - capacity);
+            profiles_scroll_ = std::clamp(
+                code == 0x24   ? 0
+                : code == 0x23 ? maximum
+                               : profiles_scroll_ + (code == 0x22 ? capacity : -capacity),
+                0, maximum);
+            app_.changed();
             return true;
         }
         if (panel_ == Containers && container_input_focus_) {
@@ -3110,6 +3157,9 @@ void BrowserUi::text(const std::string &value) {
             app_.passwords.touch();
         }
         erase_secret(clean);
+    } else if (panel_ == Profiles) {
+        if (profile_input_focus_ && profile_input_.value.size() + clean.size() <= 120)
+            profile_input_.insert(clean);
     } else if (panel_ == Containers) {
         if (container_input_focus_ && container_input_.value.size() + clean.size() <= 120)
             container_input_.insert(clean);
@@ -3244,6 +3294,12 @@ void BrowserUi::pointer(const PointerInput &input) {
     if (input.kind == PointerInput::Wheel && panel_ == Filters) {
         panel_scroll_ = std::clamp(panel_scroll_ + (input.dy < 0 ? 1 : -1), 0,
                                    std::max(0, int(filter_lines_.size()) - 1));
+        return;
+    }
+    if (input.kind == PointerInput::Wheel && panel_ == Profiles) {
+        const int capacity = std::max(1, (panel_bounds().height - 236) / 84);
+        profiles_scroll_ = std::clamp(profiles_scroll_ + (input.dy < 0 ? 1 : -1), 0,
+                                      std::max(0, int(listed_profiles().size()) - capacity));
         return;
     }
     if (input.kind == PointerInput::Wheel && panel_ == Containers) {
@@ -3454,6 +3510,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                 groups_pointer(r, x, y);
             else if (panel_ == Containers)
                 containers_pointer(r, x, y);
+            else if (panel_ == Profiles)
+                profiles_pointer(r, x, y);
         }
         return;
     }
@@ -3470,6 +3528,10 @@ void BrowserUi::pointer(const PointerInput &input) {
         return;
     }
     if (down && x < 240) {
+        if (inside({16, height_ - 60, 208, 54}, x, y)) {
+            open_profiles();
+            return;
+        }
         if (inside({16, 12, 208, 62}, x, y)) {
             app_.close_menu();
             app_.menu = {
@@ -3483,7 +3545,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                 {7, app_.tr("Tab groups"), !app_.private_window, "Ctrl+Alt+G"},
                 {8, app_.tr(app_.split_enabled() ? "Exit split view" : "Two pages side by side"),
                  true, "Ctrl+Alt+V"},
-                {9, app_.tr("Site containers"), !app_.private_window, "Ctrl+Alt+C"}};
+                {9, app_.tr("Site containers"), !app_.private_window, "Ctrl+Alt+C"},
+                {10, app_.tr("Profiles"), true, "Ctrl+Alt+P"}};
             app_.menu_width = 320;
             app_.menu_x = 16;
             app_.menu_y = 76;
@@ -3502,6 +3565,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                     app_.toggle_split();
                 else if (command == 9)
                     open_containers();
+                else if (command == 10)
+                    open_profiles();
                 else
                     app_.request_exit();
             };
@@ -5373,6 +5438,192 @@ std::string BrowserUi::containers_report() const {
                ",\"copy\":" + rect({r.x + 184, y + 36, 170, 34}) +
                ",\"rename\":" + rect({r.x + 362, y + 36, 112, 34}) +
                ",\"remove\":" + rect({r.x + 482, y + 36, 82, 34}) + "}";
+    }
+    return out + "]}";
+}
+} // namespace aura
+
+namespace aura {
+std::vector<int> BrowserUi::listed_profiles() const {
+    std::vector<int> ids;
+    const auto &catalog = app_.state()->profiles;
+    for (const auto &p : catalog.items)
+        if (profiles_archived_ ? p.archived : (!p.archived || p.id == catalog.current_id))
+            ids.push_back(p.id);
+    return ids;
+}
+void BrowserUi::open_profiles() {
+    profile_edit_ = -1;
+    profile_input_.set("");
+    profile_error_.clear();
+    profiles_scroll_ = 0;
+    profiles_archived_ = false;
+    try {
+        app_.state()->profiles.reload();
+    } catch (const std::exception &e) {
+        profile_error_ = app_.tr(e.what());
+    }
+    panel(Profiles);
+    profile_input_focus_ = false;
+}
+void BrowserUi::save_profile() {
+    auto &catalog = app_.state()->profiles;
+    try {
+        const bool edit = profile_edit_ >= 0;
+        const int id =
+            edit ? profile_edit_ : catalog.create(profile_input_.value, app_.profile.language);
+        if (id < 0 || (edit && !catalog.rename(id, profile_input_.value))) {
+            profile_error_ = app_.tr("Enter a short unique profile name. Up to 32 profiles.");
+            app_.changed();
+            return;
+        }
+        app_.profile.profiles_root = utf8_path(catalog.root);
+        profile_edit_ = -1;
+        profile_input_.set("");
+        profile_input_focus_ = false;
+        profile_error_.clear();
+        for (auto *window : app_.state()->windows)
+            window->update_window_title();
+        app_.changed(true);
+        if (!edit)
+            app_.open_profile(id);
+    } catch (const std::exception &e) {
+        profile_error_ = app_.tr(e.what());
+        app_.changed();
+    }
+}
+void BrowserUi::draw_profiles(SkCanvas &c, Rect r) {
+    const auto &t = interface_theme(app_.profile);
+    const auto &catalog = app_.state()->profiles;
+    label(c, regular_,
+          app_.tr("Separate settings, history, extensions and passwords. Opens a normal window."),
+          r.x + 28, r.y + 73, 12, t.muted, r.width - 56);
+    auto button = [&](Rect b, const std::string &text, bool enabled = true) {
+        if (enabled)
+            focus_target(b);
+        fill(c, b, 8, SkColorSetA(t.accent, enabled && inside(b, hover_x_, hover_y_) ? 35 : 16));
+        border(c, b, 8, SkColorSetA(t.accent, enabled ? 120 : 30));
+        centered_label(c, medium_, app_.tr(text), b, 12, enabled ? t.text : t.muted, 5, 5);
+    };
+    label(c, regular_, app_.tr("Profile name"), r.x + 28, r.y + 99, 11, t.muted);
+    const Rect input{r.x + 28, r.y + 108, r.width - 240, 36};
+    focus_target(input);
+    fill(c, input, 8, t.background);
+    border(c, input, 8, SkColorSetA(t.accent, profile_input_focus_ ? 220 : 85));
+    draw_editor(c, profile_input_, {input.x + 10, input.y + 2, input.width - 20, 32}, 13,
+                profile_input_focus_);
+    button({r.x + r.width - 200, r.y + 108, 172, 36},
+           profile_edit_ >= 0 ? "Save name" : "Create and open", catalog.error.empty());
+    const auto error = profile_error_.empty() ? app_.tr(catalog.error) : profile_error_;
+    label(c, regular_, error, r.x + 28, r.y + 172, 11, t.text, r.width - 56);
+    const auto ids = listed_profiles();
+    const int capacity = std::max(1, (r.height - 236) / 84);
+    profiles_scroll_ = std::clamp(profiles_scroll_, 0, std::max(0, int(ids.size()) - capacity));
+    if (ids.empty())
+        label(c, regular_, app_.tr("No archived profiles. Archiving keeps all files."), r.x + 28,
+              r.y + 210, 13, t.muted, r.width - 56);
+    for (int position = profiles_scroll_;
+         position < int(ids.size()) && position < profiles_scroll_ + capacity; position++) {
+        const int id = ids[position], y = r.y + 184 + (position - profiles_scroll_) * 84;
+        const auto item = std::find_if(catalog.items.begin(), catalog.items.end(),
+                                       [&](const auto &p) { return p.id == id; });
+        if (item == catalog.items.end())
+            continue;
+        label(c, medium_, catalog.name(id, app_.profile.language), r.x + 28, y + 19, 13, t.text,
+              r.width - 190);
+        if (id == catalog.current_id)
+            label(c, regular_, app_.tr("Current profile"), r.x + r.width - 158, y + 19, 10,
+                  t.accent, 130);
+        button({r.x + 28, y + 34, 104, 32}, "Open");
+        button({r.x + 140, y + 34, 112, 32}, "Rename", catalog.error.empty());
+        button({r.x + 260, y + 34, 108, 32}, item->archived ? "Restore profile" : "Archive",
+               id != 0 && (item->archived || id != catalog.current_id) && catalog.error.empty());
+        button({r.x + 376, y + 34, 92, 32}, "Files");
+    }
+    button({r.x + 28, r.y + r.height - 48, 180, 32},
+           profiles_archived_ ? "Show active profiles" : "Show archived profiles");
+    label(c, regular_, app_.tr("Archiving keeps all profile files."), r.x + 222,
+          r.y + r.height - 27, 10, t.muted, r.width - 250);
+}
+void BrowserUi::profiles_pointer(Rect r, int x, int y) {
+    auto &catalog = app_.state()->profiles;
+    if (inside({r.x + 28, r.y + 108, r.width - 240, 36}, x, y)) {
+        profile_input_focus_ = true;
+        keyboard_focus_ = -1;
+        return;
+    }
+    if (inside({r.x + r.width - 200, r.y + 108, 172, 36}, x, y)) {
+        save_profile();
+        return;
+    }
+    profile_input_focus_ = false;
+    if (inside({r.x + 28, r.y + r.height - 48, 180, 32}, x, y)) {
+        profiles_archived_ = !profiles_archived_;
+        profiles_scroll_ = 0;
+        app_.changed();
+        return;
+    }
+    const auto ids = listed_profiles();
+    const int position = (y - r.y - 184) / 84 + profiles_scroll_;
+    if (y < r.y + 184 || position < 0 || position >= int(ids.size()))
+        return;
+    const int id = ids[position], top = r.y + 184 + (position - profiles_scroll_) * 84;
+    const auto item = std::find_if(catalog.items.begin(), catalog.items.end(),
+                                   [&](const auto &p) { return p.id == id; });
+    if (item == catalog.items.end())
+        return;
+    if (inside({r.x + 28, top + 34, 104, 32}, x, y)) {
+        app_.open_profile(id);
+        return;
+    }
+    if (inside({r.x + 140, top + 34, 112, 32}, x, y)) {
+        profile_edit_ = id;
+        profile_input_.set(item->name, true);
+        profile_input_focus_ = true;
+        app_.changed();
+        return;
+    }
+    if (inside({r.x + 260, top + 34, 108, 32}, x, y)) {
+        try {
+            if (catalog.archive(id, !item->archived)) {
+                app_.profile.profiles_root = utf8_path(catalog.root);
+                app_.changed(true);
+            }
+        } catch (const std::exception &e) {
+            profile_error_ = app_.tr(e.what());
+            app_.changed();
+        }
+    } else if (inside({r.x + 376, top + 34, 92, 32}, x, y))
+        app_.open_directory(catalog.data_directory(id));
+}
+std::string BrowserUi::profiles_report() const {
+    if (panel_ != Profiles)
+        return "null";
+    const auto r = panel_bounds();
+    const auto &catalog = app_.state()->profiles;
+    auto rect = [](Rect b) {
+        return "[" + std::to_string(b.x) + "," + std::to_string(b.y) + "," +
+               std::to_string(b.width) + "," + std::to_string(b.height) + "]";
+    };
+    std::string out =
+        "{\"input\":" + rect({r.x + 28, r.y + 108, r.width - 240, 36}) +
+        ",\"save\":" + rect({r.x + r.width - 200, r.y + 108, 172, 36}) +
+        ",\"toggle\":" + rect({r.x + 28, r.y + r.height - 48, 180, 32}) +
+        ",\"input_length\":" + std::to_string(profile_input_.value.size()) +
+        ",\"error\":" + json_quote(profile_error_.empty() ? catalog.error : profile_error_) +
+        ",\"archived\":" + (profiles_archived_ ? "true" : "false") + ",\"items\":[";
+    const auto ids = listed_profiles();
+    const int capacity = std::max(1, (r.height - 236) / 84);
+    for (int i = profiles_scroll_; i < int(ids.size()) && i < profiles_scroll_ + capacity; i++) {
+        if (i != profiles_scroll_)
+            out += ",";
+        const int id = ids[i], y = r.y + 184 + (i - profiles_scroll_) * 84;
+        out += "{\"id\":" + std::to_string(id) +
+               ",\"name\":" + json_quote(catalog.name(id, app_.profile.language)) +
+               ",\"directory\":" + json_quote(utf8_path(catalog.data_directory(id))) +
+               ",\"open\":" + rect({r.x + 28, y + 34, 104, 32}) +
+               ",\"rename\":" + rect({r.x + 140, y + 34, 112, 32}) +
+               ",\"archive\":" + rect({r.x + 260, y + 34, 108, 32}) + "}";
     }
     return out + "]}";
 }

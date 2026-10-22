@@ -207,6 +207,9 @@ void Profile::load() {
             }
         }
     }
+    profiles_root = table["profiles_root"].value_or(std::string{});
+    if (profiles_root.size() > 4096 || profiles_root.find_first_of("\r\n\t") != std::string::npos)
+        profiles_root.clear();
     active = std::max(0, table["active"].value_or(0));
     workspaces = {{0, "Personal space"}};
     if (auto entries = table["workspaces"].as_array())
@@ -355,7 +358,9 @@ void Profile::load() {
 }
 void Profile::save() const {
     toml::table root;
-    root.insert("schema", 9);
+    root.insert("schema", 10);
+    if (!profiles_root.empty())
+        root.insert("profiles_root", profiles_root);
     toml::array container_rows;
     for (const auto &c : containers)
         if (c.id)

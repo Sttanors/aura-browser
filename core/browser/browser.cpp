@@ -4,6 +4,7 @@
 #include "common/platform.hpp"
 #include "common/update_key.hpp"
 #include "core/browser/client.hpp"
+#include "include/cef_command_line.h"
 #include "include/cef_cookie.h"
 #include "include/cef_frame.h"
 #include "include/cef_image.h"
@@ -137,7 +138,8 @@ class ToolsClient final : public CefClient, public CefLifeSpanHandler {
 };
 } // namespace
 BrowserState::BrowserState(const std::filesystem::path &path)
-    : profile(path), extensions(path), updates(path), passwords(path / "passwords.aura") {
+    : profile(path), profiles(path, profile.profiles_root), extensions(path), updates(path),
+      passwords(path / "passwords.aura") {
     previous_windows = profile.windows;
     if (previous_windows.empty() && !profile.session.empty())
         previous_windows.push_back({profile.session, profile.active});
@@ -179,6 +181,15 @@ BrowserController::BrowserController(std::filesystem::path path, std::filesystem
     hooks.key = [this](const CefKeyEvent &key) { return ui->key(key); };
     hooks.text = [this](const std::string &text) { ui->text(text); };
     hooks.focus = [this](bool focus) {
+        if (focus && window) {
+            try {
+                state_->profiles.reload();
+                update_window_title();
+                changed();
+            } catch (const std::exception &) {
+                // Keep the current profile usable if another process damaged the catalog.
+            }
+        }
         if (!focus)
             close_extension_popup(false);
         if (auto p = extension_popup; p && p->browser)
@@ -256,7 +267,7 @@ void BrowserController::apply_settings(bool update_zoom, bool propagate) {
     if (split_enabled())
         resize_pages();
     if (current())
-        window->title(current()->page.title + " — Aura");
+        update_window_title();
     changed(true);
 }
 Tab *BrowserController::current() {
@@ -728,7 +739,7 @@ void BrowserController::activate(int index, bool reveal_group) {
         }
     if (layout_changed)
         resize_pages();
-    window->title(current()->page.title + " — Aura");
+    update_window_title();
     ++audit["tab_switches"];
     changed(true);
 }
@@ -799,7 +810,7 @@ void BrowserController::navigate(std::string input) {
                 t->ntp = true;
                 t->page.url = url;
                 t->page.title = tr(t->private_tab ? "Private tab" : "New tab");
-                window->title(t->page.title + " — Aura");
+                update_window_title();
             }
         } else {
             if (t->browser)
@@ -1229,7 +1240,9 @@ std::string BrowserController::report() const {
         << ",\"containers_ui\":" << ui->containers_report()
         << ",\"split_view\":" << ui->split_report()
         << ",\"tabs\":" << (quit_snapshot_.empty() ? tabs_json(tabs) : quit_snapshot_)
-        << ",\"settings\":{";
+        << ",\"profile_name\":" << json_quote(profile_name())
+        << ",\"profile_directory\":" << json_quote(utf8_path(profile.directory))
+        << ",\"profiles_ui\":" << ui->profiles_report() << ",\"settings\":{";
     bool first_setting = true;
     for (const auto &setting : settings_catalog()) {
         if (!first_setting)
@@ -1312,7 +1325,7 @@ void BrowserController::browser_closed(int id) {
 void BrowserController::page_changed(int id, bool history) {
     if (auto t = tab(id)) {
         if (t == current())
-            window->title(t->page.title + " — Aura");
+            update_window_title();
         if (!t->ntp && t->page.loaded && !t->page.failed)
             profile.visit(t->page.url, t->page.title, t->private_tab);
         if (history)
@@ -1628,5 +1641,63 @@ void BrowserController::remove_group(int group_id) {
             if (t.group == group_id)
                 t.group = 0;
     changed(true);
+}
+} // namespace aura
+
+namespace aura {
+std::string BrowserController::profile_name() const {
+    return state_->profiles.name(state_->profiles.current_id, profile.language);
+}
+void BrowserController::update_window_title() {
+    if (auto t = current())
+        window->title(t->page.title + " — Aura · " + profile_name());
+}
+void BrowserController::open_profile(int id) {
+    try {
+        auto &catalog = state_->profiles;
+        catalog.reload();
+        auto entry = std::find_if(catalog.items.begin(), catalog.items.end(),
+                                  [&](const auto &p) { return p.id == id; });
+        if (entry == catalog.items.end()) {
+            ui->toast(tr("Profile no longer exists."));
+            return;
+        }
+        if (id == catalog.current_id) {
+            new_window();
+            return;
+        }
+        if (entry->archived)
+            catalog.archive(id, false);
+        const auto directory = catalog.data_directory(id);
+        if (!std::filesystem::exists(directory / "profile.toml")) {
+            ui->toast(tr("Profile files were not found."));
+            return;
+        }
+#ifdef _WIN32
+        const auto executable = executable_directory() / "aura_browser.exe";
+#else
+        const auto executable = executable_directory() / "aura_browser";
+#endif
+        std::vector<std::string> arguments{"--data-dir=" + utf8_path(directory)};
+        // Keep disposable integration reports and renderer options scoped to this profile.
+        if (const auto command = CefCommandLine::GetGlobalCommandLine()) {
+            for (const char *option : {"scale", "gpu", "software-rendering"})
+                if (command->HasSwitch(option)) {
+                    const auto value = command->GetSwitchValue(option).ToString();
+                    arguments.push_back(std::string("--") + option +
+                                        (value.empty() ? "" : "=" + value));
+                }
+            if (command->HasSwitch("report"))
+                arguments.push_back("--report=" + utf8_path(directory / "profile-window.json"));
+        }
+        if (!launch_process(executable, arguments))
+            ui->toast(tr("Could not open the profile."));
+        else {
+            ++audit["profiles_opened"];
+            ui->toast(tr("Profile opened in its own window."));
+        }
+    } catch (const std::exception &e) {
+        ui->toast(tr(e.what()));
+    }
 }
 } // namespace aura

@@ -4,7 +4,10 @@
 #ifdef _WIN32
 #include <windows.h>
 #else
+#include <cerrno>
 #include <spawn.h>
+#include <sys/wait.h>
+#include <thread>
 #include <unistd.h>
 extern char **environ;
 #endif
@@ -68,7 +71,15 @@ bool launch_process(const std::filesystem::path &executable,
         argv.push_back(arg.data());
     argv.push_back(nullptr);
     pid_t pid = 0;
-    return posix_spawn(&pid, executable.c_str(), nullptr, nullptr, argv.data(), environ) == 0;
+    if (posix_spawn(&pid, executable.c_str(), nullptr, nullptr, argv.data(), environ) != 0)
+        return false;
+    // Named profiles can outlive their parent window. Reap only this owned child.
+    std::thread([pid] {
+        int status = 0;
+        while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+        }
+    }).detach();
+    return true;
 #endif
 }
 std::tm local_time(std::time_t value) {

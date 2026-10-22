@@ -22,7 +22,8 @@ class BrowserUi {
         Filters,
         Workspaces,
         Groups,
-        Containers
+        Containers,
+        Profiles
     };
     BrowserUi(BrowserController &owner, const std::filesystem::path &font);
     ~BrowserUi();
@@ -57,6 +58,8 @@ class BrowserUi {
     std::string groups_report() const;
     void open_containers(int tab_id = -1);
     std::string containers_report() const;
+    void open_profiles();
+    std::string profiles_report() const;
     std::string sidebar_report() const;
     void passwords_locked() {
         clear_password_fields();
@@ -76,6 +79,14 @@ class BrowserUi {
   private:
     BrowserController &app_;
     bool split_drag_ = false;
+    TextEditor profile_input_;
+    bool profile_input_focus_ = false, profiles_archived_ = false;
+    int profile_edit_ = -1, profiles_scroll_ = 0;
+    std::string profile_error_;
+    void save_profile();
+    void draw_profiles(SkCanvas &, Rect);
+    void profiles_pointer(Rect, int, int);
+    std::vector<int> listed_profiles() const;
     TextEditor container_input_;
     bool container_input_focus_ = false;
     int container_edit_ = -1, container_target_ = -1, container_color_ = 0, container_scroll_ = 0;

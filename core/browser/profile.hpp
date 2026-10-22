@@ -51,6 +51,7 @@ class Profile : public BrowserPreferences {
   public:
     explicit Profile(std::filesystem::path directory);
     std::filesystem::path directory;
+    std::string profiles_root;
     std::vector<Visit> history, bookmarks;
     std::vector<SavedTab> session;
     std::vector<SavedWindow> windows;
