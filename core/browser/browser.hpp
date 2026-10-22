@@ -134,6 +134,14 @@ class BrowserController {
     int menu_x = 0, menu_y = 0, menu_width = 240;
     int active = 0, width = 1360, height = 900;
     int workspace = 0;
+    std::array<int, 2> split_tabs{};
+    bool split_enabled() const {
+        return split_tabs[0] && split_tabs[1];
+    }
+    bool tab_visible(int id) const;
+    void toggle_split();
+    void end_split();
+    void resize_pages();
     std::vector<int> visible_tabs(bool include_closed = false) const;
     void cycle_tab(int direction);
     void select_visible_tab(int number);

@@ -334,7 +334,7 @@ void BrowserClient::OnAddressChange(CefRefPtr<CefBrowser> b, CefRefPtr<CefFrame>
     if (f->IsMain()) {
         if (auto t = owner_.tab(id_)) {
             t->ntp = url == "about:blank#aura-newtab";
-            b->GetHost()->WasHidden(t != owner_.current() || t->ntp);
+            b->GetHost()->WasHidden(!owner_.tab_visible(t->id) || t->ntp);
             b->GetHost()->SetAudioMuted(t->muted);
             if (t->ntp) {
                 t->page.url = "aura://newtab";
@@ -422,7 +422,8 @@ bool BrowserClient::RunContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
             {model->GetCommandIdAt(i),
              model->GetTypeAt(i) == MENUITEMTYPE_SEPARATOR ? "" : model->GetLabelAt(i).ToString(),
              model->IsEnabledAt(i)});
-    auto bounds = owner_.ui->web_bounds();
+    auto target = owner_.tab(id_);
+    auto bounds = target ? owner_.ui->page_bounds(*target) : owner_.ui->web_bounds();
     owner_.menu_x =
         std::clamp(bounds.x + int(p->GetXCoord() / owner_.ui_scale), 8, owner_.width - 250);
     owner_.menu_y =

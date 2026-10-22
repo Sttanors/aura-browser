@@ -31,6 +31,13 @@ and domain exceptions. Pinned/private/media/capture/DevTools/download activity i
 protected. Inaccessible child frames conservatively keep a page awake. Sleep stops
 page timers and releases native image buffers; the DOM stays in renderer memory.
 
+**Two websites side by side — Ctrl+Alt+V.** Open two sites in the current workspace,
+then use the shortcut or Aura menu. Click a pane to make its navigation, find and
+keyboard focus active. Drag the divider to resize; each pane keeps at least 220
+logical pixels. The close control exits split while keeping the documents open.
+Normal pairs and the preferred width are restored with the session. Private pairs
+are excluded. Opening a start tab, switching workspaces or closing a pane ends split.
+
 ## Русский
 
 **Пространства — Ctrl+Shift+E.** Создавайте, переименовывайте и переключайте их в
@@ -57,3 +64,10 @@ Cookies сайтов общие: пространства предназначе
 Закреплённые, приватные, media/capture/DevTools/download вкладки защищены.
 Недоступные дочерние frame консервативно сохраняют страницу активной. Сон
 останавливает таймеры и освобождает native bitmap; DOM остаётся в памяти renderer.
+
+**Два сайта рядом — Ctrl+Alt+V.** Откройте два сайта в пространстве и используйте
+команду или меню Aura. Нажатие на сторону выбирает её для навигации, поиска и
+ввода. Разделитель меняет ширину; каждая сторона получает минимум 220 logical px.
+Крестик завершает разделение, сохраняя документы открытыми. Обычные пары и ширина
+восстанавливаются с сессией; пары с приватной вкладкой не записываются.
+Начальная вкладка, смена пространства или закрытие стороны завершают разделение.

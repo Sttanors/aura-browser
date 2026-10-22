@@ -276,6 +276,8 @@ void Profile::load() {
                 SavedWindow window;
                 window.active = std::max(0, (*row)["active"].value_or(0));
                 window.workspace = (*row)["workspace"].value_or(0);
+                window.split_left = (*row)["split_left"].value_or(-1);
+                window.split_right = (*row)["split_right"].value_or(-1);
                 if (!has_workspace(window.workspace))
                     window.workspace = 0;
                 if (auto tabs = (*row)["tabs"].as_array())
@@ -299,6 +301,15 @@ void Profile::load() {
                     }
                 if (!window.tabs.empty()) {
                     window.active = std::min(window.active, int(window.tabs.size()) - 1);
+                    const int left = window.split_left, right = window.split_right;
+                    if (left < 0 || right < 0 || left == right || left >= int(window.tabs.size()) ||
+                        right >= int(window.tabs.size()) ||
+                        (window.active != left && window.active != right) ||
+                        window.tabs[left].workspace != window.workspace ||
+                        window.tabs[right].workspace != window.workspace ||
+                        window.tabs[left].url == "aura://newtab" ||
+                        window.tabs[right].url == "aura://newtab")
+                        window.split_left = window.split_right = -1;
                     windows.push_back(std::move(window));
                 }
             }
@@ -316,7 +327,7 @@ void Profile::load() {
 }
 void Profile::save() const {
     toml::table root;
-    root.insert("schema", 7);
+    root.insert("schema", 8);
     toml::array group_rows;
     for (const auto &g : groups)
         group_rows.push_back(toml::table{{"id", g.id},
@@ -364,6 +375,8 @@ void Profile::save() const {
                                              {"group", t.group}});
         saved_windows.push_back(toml::table{{"active", window.active},
                                             {"workspace", window.workspace},
+                                            {"split_left", window.split_left},
+                                            {"split_right", window.split_right},
                                             {"tabs", std::move(saved_tabs)}});
     }
     root.insert("windows", std::move(saved_windows));

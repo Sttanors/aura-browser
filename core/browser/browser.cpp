@@ -49,6 +49,7 @@ std::string tabs_json(const std::vector<std::unique_ptr<Tab>> &tabs) {
             << ",\"failed\":" << (t->page.failed ? "true" : "false")
             << ",\"http_status\":" << t->page.http_status << ",\"frame_rate\":"
             << (t->browser ? t->browser->GetHost()->GetWindowlessFrameRate() : 0)
+            << ",\"popup_visible\":" << (t->page.popup_visible ? "true" : "false")
             << ",\"frames\":" << t->page.view.generation() << ",\"audio_muted\":"
             << (t->browser && t->browser->GetHost()->IsAudioMuted() ? "true" : "false")
             << ",\"zoom_percent\":"
@@ -163,16 +164,7 @@ BrowserController::BrowserController(std::filesystem::path path, std::filesystem
         height = h;
         ui->resize(w, h);
         resize_extension_popup();
-        auto r = ui->web_bounds();
-        for (auto &t : tabs) {
-            t->page.scale = scale;
-            t->page.view_width = std::max(1, int(std::lround(r.width * ui_scale)));
-            t->page.view_height = std::max(1, int(std::lround(r.height * ui_scale)));
-            if (t->browser) {
-                t->browser->GetHost()->WasResized();
-                t->browser->GetHost()->NotifyScreenInfoChanged();
-            }
-        }
+        resize_pages();
     };
     hooks.pointer = [this](const PointerInput &p) {
         if (p.kind == PointerInput::Down)
@@ -256,6 +248,8 @@ void BrowserController::apply_settings(bool update_zoom, bool propagate) {
                 t->browser->GetHost()->SetZoomLevel(t->zoom);
         }
     }
+    if (split_enabled())
+        resize_pages();
     if (current())
         window->title(current()->page.title + " — Aura");
     changed(true);
@@ -317,6 +311,7 @@ std::string BrowserController::workspace_name() const {
 void BrowserController::switch_workspace(int id) {
     if (private_window || quitting || !profile.has_workspace(id))
         return;
+    end_split();
     if (auto old = current())
         workspace_selection_[workspace] = old->id;
     workspace = id;
@@ -476,6 +471,13 @@ void BrowserController::tick() {
     pending_.clear();
     for (auto &action : work)
         action();
+    if (split_enabled()) {
+        auto left = tab(split_tabs[0]), right = tab(split_tabs[1]);
+        if (!left || !right || left->closing || right->closing || left->page.closed ||
+            right->page.closed || left->ntp || right->ntp || left->workspace != workspace ||
+            right->workspace != workspace)
+            end_split();
+    }
     const int old_active_id = current() ? current()->id : 0;
     const bool active_closed = current() && current()->page.closed;
     const auto old_order = visible_tabs(true);
@@ -534,7 +536,7 @@ void BrowserController::tick() {
     }
 }
 void BrowserController::ensure_browser(Tab &t, const std::string &url) {
-    auto r = ui->web_bounds();
+    auto r = ui->page_bounds(t);
     t.page.view_width = std::max(1, int(std::lround(r.width * ui_scale)));
     t.page.view_height = std::max(1, int(std::lround(r.height * ui_scale)));
     t.page.scale = scale;
@@ -552,21 +554,21 @@ void BrowserController::ensure_browser(Tab &t, const std::string &url) {
             t.pending_url = url;
             return;
         }
-        t.browser->GetHost()->WasHidden(&t != current());
+        t.browser->GetHost()->WasHidden(!tab_visible(t.id));
         t.browser->GetMainFrame()->LoadURL(url);
         return;
     }
     t.page.invalidate = [this, id = t.id] {
-        if (current() && current()->id == id)
+        if (tab_visible(id))
             changed();
     };
     t.page.repaint = [this, id = t.id] {
-        if (auto t = current(); t && t->id == id && !t->ntp)
+        if (auto t = tab(id); t && tab_visible(id) && !t->ntp)
             window->invalidate(ui->web_bounds());
     };
     t.page.ime_caret = [this, id = t.id](const CefRect &caret) {
         if (current() && current()->id == id) {
-            auto r = ui->web_bounds();
+            auto r = ui->page_bounds(*current());
             window->caret(r.x + int(caret.x / ui_scale),
                           r.y + int((caret.y + caret.height) / ui_scale));
         }
@@ -611,7 +613,7 @@ void BrowserController::ensure_browser(Tab &t, const std::string &url) {
     } else {
         t.browser->GetHost()->SetZoomLevel(t.zoom);
         t.browser->GetHost()->SetAudioMuted(t.muted);
-        t.browser->GetHost()->WasHidden(&t != current());
+        t.browser->GetHost()->WasHidden(!tab_visible(t.id));
         t.browser->GetHost()->SetFocus(&t == current() && !ui->editing);
     }
 }
@@ -662,6 +664,15 @@ void BrowserController::activate(int index, bool reveal_group) {
         if (index != active)
             old->inactive_since = std::chrono::steady_clock::now();
     }
+    bool layout_changed = false;
+    if (split_enabled()) {
+        if (tabs[index]->workspace != workspace || tabs[index]->ntp)
+            end_split();
+        else if (tabs[index]->id != split_tabs[0] && tabs[index]->id != split_tabs[1]) {
+            split_tabs[split_tabs[0] == (current() ? current()->id : 0) ? 0 : 1] = tabs[index]->id;
+            layout_changed = true;
+        }
+    }
     active = index;
     wake_tab(tabs[index]->id);
     workspace = tabs[index]->workspace;
@@ -674,9 +685,11 @@ void BrowserController::activate(int index, bool reveal_group) {
     close_menu();
     for (auto &t : tabs)
         if (t->browser) {
-            t->browser->GetHost()->WasHidden(t.get() != current() || t->ntp);
+            t->browser->GetHost()->WasHidden(!tab_visible(t->id) || t->ntp);
             t->browser->GetHost()->SetFocus(t.get() == current());
         }
+    if (layout_changed)
+        resize_pages();
     window->title(current()->page.title + " — Aura");
     ++audit["tab_switches"];
     changed(true);
@@ -1037,6 +1050,15 @@ void BrowserController::restore_window(const SavedWindow &saved) {
     if (tabs.empty())
         open_new_tab();
     activate(std::clamp(saved.active, 0, int(tabs.size()) - 1), false);
+    if (saved.split_left >= 0 && saved.split_right >= 0 && saved.split_left != saved.split_right &&
+        saved.split_left < int(tabs.size()) && saved.split_right < int(tabs.size()) &&
+        (active == saved.split_left || active == saved.split_right) &&
+        !tabs[saved.split_left]->ntp && !tabs[saved.split_right]->ntp &&
+        tabs[saved.split_left]->workspace == workspace &&
+        tabs[saved.split_right]->workspace == workspace) {
+        split_tabs = {tabs[saved.split_left]->id, tabs[saved.split_right]->id};
+        resize_pages();
+    }
 }
 void BrowserController::restore_previous_session() {
     if (state_->previous_restored || state_->previous_windows.empty())
@@ -1099,9 +1121,16 @@ void BrowserController::save_session() {
                                   remembered->second == t->id;
                     if (selected && t->workspace == window.workspace)
                         window.active = int(window.tabs.size());
+                    if (t->id == other->split_tabs[0])
+                        window.split_left = int(window.tabs.size());
+                    if (t->id == other->split_tabs[1])
+                        window.split_right = int(window.tabs.size());
                     window.tabs.push_back({t->pending_url.empty() ? t->page.url : t->pending_url,
                                            t->pinned, t->workspace, selected, t->group});
                 }
+            if (window.split_left < 0 || window.split_right < 0 ||
+                (window.active != window.split_left && window.active != window.split_right))
+                window.split_left = window.split_right = -1;
             if (!window.tabs.empty())
                 saved.push_back(std::move(window));
         }
@@ -1152,7 +1181,7 @@ std::string BrowserController::report() const {
         << ",\"status\":" << json_quote(updates.status)
         << ",\"installation\":" << json_quote(updates.installation_kind())
         << ",\"ready\":" << (!updates.ready_file.empty() ? "true" : "false") << "}"
-        << ",\"dialog_count\":" << dialogs.size()
+        << ",\"dialog_count\":" << dialogs.size() << ",\"split_view\":" << ui->split_report()
         << ",\"tabs\":" << (quit_snapshot_.empty() ? tabs_json(tabs) : quit_snapshot_)
         << ",\"settings\":{";
     bool first_setting = true;
@@ -1201,7 +1230,7 @@ void BrowserController::browser_created(int id, CefRefPtr<CefBrowser> browser) {
             ++audit["page_opened_tabs"];
             browser->GetHost()->SetZoomLevel(t->zoom);
             browser->GetHost()->SetAudioMuted(t->muted);
-            browser->GetHost()->WasHidden(t != current());
+            browser->GetHost()->WasHidden(!tab_visible(t->id));
             browser->GetHost()->SetFocus(t == current());
         }
         if (t->private_tab)
@@ -1274,12 +1303,12 @@ Tab *BrowserController::prepare_popup(int source, int popup_id, const std::strin
     target->popup_pending = true;
     target->loading = true;
     target->page.url = url.empty() ? "about:blank" : url;
-    const auto bounds = ui->web_bounds();
+    const auto bounds = ui->page_bounds(*target);
     target->page.view_width = std::max(1, int(std::lround(bounds.width * ui_scale)));
     target->page.view_height = std::max(1, int(std::lround(bounds.height * ui_scale)));
     target->page.invalidate = [this] { changed(); };
     target->page.repaint = [this, id] {
-        if (current() && current()->id == id)
+        if (tab_visible(id))
             window->invalidate(ui->web_bounds());
     };
     pending_popups_[{source, popup_id}] = id;

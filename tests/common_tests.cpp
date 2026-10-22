@@ -695,3 +695,35 @@ TEST(Profile, LocalizedDefaultWorkspaceIsReservedButCustomNamesStayLiteral) {
     EXPECT_EQ(restored.workspace_label(0), "Моё");
     EXPECT_EQ(restored.workspace_label(id), "History");
 }
+
+TEST(Profile, SplitSessionRoundTripsAndRejectsInvalidPaneIndices) {
+    TemporaryProfile temporary;
+    {
+        Profile p(temporary.path);
+        p.windows = {{{{"https://left.test/"}, {"https://right.test/"}}, 1, 0, 0, 1}};
+        p.split_percent = 65;
+        p.save();
+    }
+    {
+        Profile p(temporary.path);
+        ASSERT_EQ(p.windows.size(), 1u);
+        EXPECT_EQ(p.windows[0].split_left, 0);
+        EXPECT_EQ(p.windows[0].split_right, 1);
+        EXPECT_EQ(p.split_percent, 65);
+        p.windows[0].split_right = 500;
+        p.save();
+    }
+    {
+        Profile p(temporary.path);
+        ASSERT_EQ(p.windows.size(), 1u);
+        EXPECT_EQ(p.windows[0].split_left, -1);
+        EXPECT_EQ(p.windows[0].split_right, -1);
+        EXPECT_EQ(p.windows[0].tabs.size(), 2u);
+        p.windows[0].split_left = 0;
+        p.windows[0].split_right = 0;
+        p.save();
+    }
+    Profile p(temporary.path);
+    EXPECT_EQ(p.windows[0].split_left, -1);
+    EXPECT_EQ(p.windows[0].split_right, -1);
+}

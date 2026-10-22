@@ -6,12 +6,10 @@
 
 namespace aura {
 bool BrowserController::can_sleep(const Tab &t) const {
-    if (quitting ||
-        &t == (active >= 0 && active < int(tabs.size()) ? tabs[active].get() : nullptr) || t.ntp ||
-        t.private_tab || t.pinned || t.loading || t.closing || t.page.closed || !t.page.loaded ||
-        t.page.failed || t.sleeping || t.sleep_pending || !t.browser || !t.devtools ||
-        !t.site_tools_ready || t.media_capture || tools_open ||
-        site_exception(t.page.url, profile.tab_sleep_exceptions))
+    if (quitting || tab_visible(t.id) || t.ntp || t.private_tab || t.pinned || t.loading ||
+        t.closing || t.page.closed || !t.page.loaded || t.page.failed || t.sleeping ||
+        t.sleep_pending || !t.browser || !t.devtools || !t.site_tools_ready || t.media_capture ||
+        tools_open || site_exception(t.page.url, profile.tab_sleep_exceptions))
         return false;
     // Extension/background browser pages are never frozen by this controller.
     if (!t.page.url.starts_with("https://") && !t.page.url.starts_with("http://"))
@@ -43,6 +41,8 @@ void BrowserController::sleep_tab(int id, bool manual) {
     if (!t)
         return;
     if (manual && t == current() && !t->pinned && !t->private_tab && !t->ntp && !t->loading) {
+        if (split_enabled())
+            end_split();
         const auto visible = visible_tabs();
         auto other =
             std::find_if(visible.begin(), visible.end(), [&](int i) { return tabs[i]->id != id; });

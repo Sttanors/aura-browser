@@ -48,6 +48,34 @@ def click_at(window, x, y, button=1):
         x11.XCloseDisplay(display)
 
 
+def drag_between(window, x1, y1, x2, y2):
+    """Window-local native drag on the isolated QA display."""
+    if os.environ.get('AURA_TEST_ISOLATED_DISPLAY') != '1':
+        raise RuntimeError('Dragging requires the isolated QA display')
+    x11 = ctypes.CDLL("libX11.so.6")
+    x11.XOpenDisplay.restype = ctypes.c_void_p
+    x11.XSendEvent.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_long, ctypes.POINTER(Event)]
+    x11.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+    display = x11.XOpenDisplay(None)
+    if not display:
+        raise RuntimeError('Cannot open drag display')
+    try:
+        events = [(4, 4, x1, y1, 0)]
+        events += [(6, 64, x1 + (x2-x1)*i//10, y1 + (y2-y1)*i//10, 256) for i in range(1, 11)]
+        events += [(5, 8, x2, y2, 256)]
+        for kind, mask, x, y, state in events:
+            event = Event()
+            event.button = ButtonEvent(type=kind, display=display, window=int(window), x=x, y=y,
+                                       state=state, button=1 if kind != 6 else 0, same_screen=True)
+            if not x11.XSendEvent(display, int(window), False, mask, ctypes.byref(event)):
+                raise RuntimeError('Cannot send drag event')
+            x11.XSync(display, False)
+            time.sleep(.03)
+    finally:
+        x11.XCloseDisplay(display)
+
+
 def key_at(window, name, state=0):
     """Send a known group-zero key without changing the Wayland keyboard layout."""
     x11 = ctypes.CDLL("libX11.so.6")

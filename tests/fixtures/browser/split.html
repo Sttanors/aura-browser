@@ -1,0 +1,11 @@
+<!doctype html><meta charset="utf-8"><title>Split fixture</title>
+<style>body{font:18px sans-serif;min-height:2400px;margin:20px}h1{font-size:24px}input,button,select{position:absolute;left:20px;width:180px;height:36px}input{top:80px}button{top:132px}a{position:absolute;left:20px;top:185px}select{top:220px}.bottom{position:absolute;top:2000px}</style>
+<h1 id="name"></h1><input placeholder="Unsaved value"><button onclick="onbeforeunload=()=>true;protectedPage=true;report()">Protect form</button><a>Next page</a><select><option>First</option><option>Second</option></select><p class="bottom">Page bottom</p>
+<script>
+const name=new URLSearchParams(location.search).get('name')||'A';
+document.querySelector('h1').textContent=name;document.body.style.background=name.startsWith('A')?'#f0f6ff':'#fff6eb';
+document.querySelector('a').href='?name='+name+'Next';
+let protectedPage=false;const token=Math.random().toString(36).slice(2);
+function report(){document.title=JSON.stringify({name,token,value:document.querySelector('input').value,scroll:scrollY,width:innerWidth,height:innerHeight,focus:document.hasFocus(),selection:document.querySelector('select').selectedIndex,protected:protectedPage});}
+setInterval(report,100);report();
+</script>

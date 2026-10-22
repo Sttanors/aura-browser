@@ -5,6 +5,16 @@
 namespace aura {
 std::span<const SettingSpec> settings_catalog() {
     static const std::vector<SettingSpec> catalog = {
+        {"split_percent",
+         "Tabs",
+         "Split view left pane width",
+         "Percentage of the page area. You can also drag the divider.",
+         &BrowserPreferences::split_percent,
+         SettingKind::Number,
+         {},
+         25,
+         75,
+         1},
         {"tab_sleep_minutes",
          "Tabs",
          "Put inactive tabs to sleep",

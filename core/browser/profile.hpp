@@ -28,6 +28,7 @@ struct SavedWindow {
     std::vector<SavedTab> tabs;
     int active = 0;
     int workspace = 0;
+    int split_left = -1, split_right = -1;
 };
 struct Workspace {
     int id = 0;

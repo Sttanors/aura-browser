@@ -441,10 +441,10 @@ bool BrowserUi::draw_web_frame(SkCanvas &c) {
     const auto current = app_.current();
     // A CEF repaint changes only the page. Preserve native chrome and its focus
     // targets; overlays use the complete painter so they remain above the page.
-    if (!current || current->ntp || current->loading || current->page.failed ||
-        !current->page.view.generation() || !web_backdrop_ || panel_ != None || editing ||
-        find_open || app_.extension_popup || !app_.dialogs.empty() || !app_.menu.empty() ||
-        app_.menu_action || app_.menu_callback || keyboard_focus_ >= 0 ||
+    if (app_.split_enabled() || !current || current->ntp || current->loading ||
+        current->page.failed || !current->page.view.generation() || !web_backdrop_ ||
+        panel_ != None || editing || find_open || app_.extension_popup || !app_.dialogs.empty() ||
+        !app_.menu.empty() || app_.menu_action || app_.menu_callback || keyboard_focus_ >= 0 ||
         (app_.profile.show_status && !status.empty()) ||
         (!toast_.empty() && std::chrono::steady_clock::now() < toast_until_))
         return false;
@@ -683,58 +683,16 @@ void BrowserUi::draw(SkCanvas &c) {
         } else
             icon(c, "extension", b.x + 7, b.y + 8, 20, usable ? ink : muted);
     }
-    if (current && !current->ntp) {
-        shadow(c, web, 15);
-        // Cache only the native backdrop, before drawing CEF pixels. Restoring
-        // it prevents antialiased corners and borders from darkening over time.
-        web_backdrop_.reset();
-        if (!c.recordingContext()) {
-            const auto pixels = c.getTotalMatrix().mapRect(box(web)).roundOut();
-            SkBitmap backing;
-            if (backing.tryAllocPixels(c.imageInfo().makeWH(pixels.width(), pixels.height())) &&
-                c.readPixels(backing, pixels.left(), pixels.top())) {
-                backing.setImmutable();
-                web_backdrop_ = SkImages::RasterFromBitmap(backing);
-                backdrop_x_ = pixels.left();
-                backdrop_y_ = pixels.top();
-            }
-        }
-        page_image(c, current->page.view, web, light ? 0xFFFFFFFF : 0xFF161B25);
-        c.save();
-        c.clipRRect(SkRRect::MakeRectXY(box(web), 15, 15), true);
-        if (current->page.popup_visible) {
-            auto p = current->page.popup_bounds;
-            image(c, current->page.popup,
-                  {web.x + int(p.x / app_.ui_scale), web.y + int(p.y / app_.ui_scale),
-                   int(p.width / app_.ui_scale), int(p.height / app_.ui_scale)});
-        }
-        if (current->page.failed) {
-            fill(c, web, 0, t.background);
-            icon(c, "globe", web.x + 64, web.y + 70, 38, t.accent);
-            label(c, medium_, app_.tr("This page couldn't be reached"), web.x + 64, web.y + 158, 29,
-                  ink, web.width - 100);
-            label(c, regular_, current->page.error, web.x + 64, web.y + 195, 13, muted,
-                  web.width - 100);
-            fill(c, {web.x + 64, web.y + 225, 125, 38}, 10, t.accent);
-            centered_label(c, medium_, app_.tr("Try again"), {web.x + 64, web.y + 225, 125, 38}, 12,
-                           t.background);
-        } else if (!current->page.view.generation()) {
-            label(c, regular_, app_.tr("Opening ") + url_host(current->page.url) + "…", web.x + 40,
-                  web.y + 65, 14, muted);
-        }
-        c.restore();
-        border(c, web, 15, SkColorSetA(ink, 22));
-        if (current->loading)
-            fill(c,
-                 {web.x + 12, web.y, std::max(20, static_cast<int>((web.width - 24) * progress_)),
-                  2},
-                 2, t.accent);
-    } else {
+    if (app_.split_enabled())
+        draw_split(c);
+    else if (current && !current->ntp)
+        draw_page(c, *current, web);
+    else
         draw_start_page(c);
-    }
     if (app_.profile.show_status && !status.empty() && !editing && panel_ == None) {
-        Rect r{web.x + 9, height_ - 43,
-               std::min(web.width - 18, static_cast<int>(status.size() * 7 + 22)), 25};
+        const auto area = current ? page_bounds(*current) : web;
+        Rect r{area.x + 9, area.y + area.height - 31,
+               std::min(area.width - 18, static_cast<int>(status.size() * 7 + 22)), 25};
         fill(c, r, 7, t.surface);
         label(c, regular_, status, r.x + 10, r.y + 17, 10, muted, r.width - 20);
     }
@@ -2606,6 +2564,10 @@ bool BrowserUi::key(const CefKeyEvent &key) {
         }
     }
     if (down) {
+        if (ctrl && alt && code == 'V' && app_.dialogs.empty() && panel_ == None && !editing) {
+            app_.toggle_split();
+            return true;
+        }
         if (ctrl && alt && code == 'S' && app_.dialogs.empty() && panel_ == None && !editing) {
             if (auto t = app_.current())
                 app_.sleep_tab(t->id);
@@ -3159,8 +3121,10 @@ bool BrowserUi::tick() {
     return animate;
 }
 void BrowserUi::pointer(const PointerInput &input) {
+    if (!app_.split_enabled())
+        split_drag_ = false;
     const int x = input.point.x, y = input.point.y;
-    const auto web = web_bounds();
+    auto web = web_bounds();
     auto t = app_.current();
     const bool web_only = t && !t->ntp && inside(web, x, y) && inside(web, hover_x_, hover_y_) &&
                           panel_ == None && !editing && !find_open && drag_tab_ < 0 &&
@@ -3436,7 +3400,9 @@ void BrowserUi::pointer(const PointerInput &input) {
                  !app_.state()->previous_restored && !app_.state()->previous_windows.empty()},
                 {4, app_.tr("Exit Aura"), true, "Ctrl+Q"},
                 {6, app_.tr("Workspaces"), !app_.private_window, "Ctrl+Shift+E"},
-                {7, app_.tr("Tab groups"), !app_.private_window, "Ctrl+Alt+G"}};
+                {7, app_.tr("Tab groups"), !app_.private_window, "Ctrl+Alt+G"},
+                {8, app_.tr(app_.split_enabled() ? "Exit split view" : "Two pages side by side"),
+                 true, "Ctrl+Alt+V"}};
             app_.menu_width = 320;
             app_.menu_x = 16;
             app_.menu_y = 76;
@@ -3451,6 +3417,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                     open_workspaces();
                 else if (command == 7)
                     open_groups();
+                else if (command == 8)
+                    app_.toggle_split();
                 else
                     app_.request_exit();
             };
@@ -3649,6 +3617,42 @@ void BrowserUi::pointer(const PointerInput &input) {
                     return;
                 }
         }
+    }
+    if (app_.split_enabled()) {
+        const auto divider = split_divider();
+        if (split_drag_ || (down && input.button == 1 && inside(divider, x, y))) {
+            split_drag_ = input.kind != PointerInput::Up;
+            if (input.kind == PointerInput::Move || down) {
+                app_.profile.split_percent =
+                    std::clamp(int(std::lround(100.0 * (x - web.x) / (web.width - 8))), 25, 75);
+                app_.resize_pages();
+                app_.changed(true);
+            }
+            return;
+        }
+        for (int id : app_.split_tabs)
+            if (auto candidate = app_.tab(id)) {
+                const auto header = split_header(*candidate);
+                const auto bounds = page_bounds(*candidate);
+                if (inside(header, x, y) || inside(bounds, x, y)) {
+                    if (down || input.kind == PointerInput::Wheel) {
+                        for (int i = 0; i < int(app_.tabs.size()); i++)
+                            if (app_.tabs[i]->id == id) {
+                                if (app_.active != i)
+                                    app_.activate(i);
+                                break;
+                            }
+                    }
+                    if (inside(header, x, y)) {
+                        if (down && x > header.x + header.width - 34)
+                            app_.end_split();
+                        return;
+                    }
+                    t = candidate;
+                    web = bounds;
+                    break;
+                }
+            }
     }
     if (t && !t->ntp && t->page.failed && down &&
         inside({web.x + 64, web.y + 225, 125, 38}, x, y)) {
@@ -4974,5 +4978,130 @@ std::string BrowserUi::sidebar_report() const {
                ",\"bounds\":[14," + std::to_string(y) + ",212,46]}";
     }
     return out + "]";
+}
+} // namespace aura
+
+namespace aura {
+void BrowserUi::draw_page(SkCanvas &c, const Tab &tab, Rect web) {
+    const auto &t = interface_theme(app_.profile);
+    const bool light = app_.profile.theme % 2;
+    const auto ink = t.text, muted = t.muted;
+    shadow(c, web, 15);
+    // Cache only the native backdrop, before drawing CEF pixels. Restoring
+    // it prevents antialiased corners and borders from darkening over time.
+    if (!app_.split_enabled())
+        web_backdrop_.reset();
+    if (!app_.split_enabled() && !c.recordingContext()) {
+        const auto pixels = c.getTotalMatrix().mapRect(box(web)).roundOut();
+        SkBitmap backing;
+        if (backing.tryAllocPixels(c.imageInfo().makeWH(pixels.width(), pixels.height())) &&
+            c.readPixels(backing, pixels.left(), pixels.top())) {
+            backing.setImmutable();
+            web_backdrop_ = SkImages::RasterFromBitmap(backing);
+            backdrop_x_ = pixels.left();
+            backdrop_y_ = pixels.top();
+        }
+    }
+    page_image(c, tab.page.view, web, light ? 0xFFFFFFFF : 0xFF161B25);
+    c.save();
+    c.clipRRect(SkRRect::MakeRectXY(box(web), 15, 15), true);
+    if (tab.page.popup_visible) {
+        auto p = tab.page.popup_bounds;
+        image(c, tab.page.popup,
+              {web.x + int(p.x / app_.ui_scale), web.y + int(p.y / app_.ui_scale),
+               int(p.width / app_.ui_scale), int(p.height / app_.ui_scale)});
+    }
+    if (tab.page.failed) {
+        fill(c, web, 0, t.background);
+        icon(c, "globe", web.x + 64, web.y + 70, 38, t.accent);
+        label(c, medium_, app_.tr("This page couldn't be reached"), web.x + 64, web.y + 158, 29,
+              ink, web.width - 100);
+        label(c, regular_, tab.page.error, web.x + 64, web.y + 195, 13, muted, web.width - 100);
+        fill(c, {web.x + 64, web.y + 225, 125, 38}, 10, t.accent);
+        centered_label(c, medium_, app_.tr("Try again"), {web.x + 64, web.y + 225, 125, 38}, 12,
+                       t.background);
+    } else if (!tab.page.view.generation()) {
+        label(c, regular_, app_.tr("Opening ") + url_host(tab.page.url) + "…", web.x + 40,
+              web.y + 65, 14, muted);
+    }
+    c.restore();
+    border(c, web, 15, SkColorSetA(ink, 22));
+    if (tab.loading)
+        fill(c,
+             {web.x + 12, web.y,
+              std::max(20, static_cast<int>((web.width - 24) *
+                                            (app_.split_enabled() ? tab.progress : progress_))),
+              2},
+             2, t.accent);
+}
+Rect BrowserUi::split_divider() const {
+    const auto r = web_bounds();
+    const int left =
+        std::clamp((r.width - 8) * app_.profile.split_percent / 100,
+                   std::min(220, (r.width - 8) / 2), std::max((r.width - 8) / 2, r.width - 228));
+    return {r.x + left, r.y, 8, r.height};
+}
+Rect BrowserUi::page_bounds(const Tab &tab) const {
+    auto r = web_bounds();
+    if (!app_.split_enabled())
+        return r;
+    const auto divider = split_divider();
+    if (tab.id == app_.split_tabs[0])
+        return {r.x, r.y + 40, divider.x - r.x, r.height - 40};
+    if (tab.id == app_.split_tabs[1])
+        return {divider.x + 8, r.y + 40, r.x + r.width - divider.x - 8, r.height - 40};
+    return r;
+}
+Rect BrowserUi::split_header(const Tab &tab) const {
+    auto r = page_bounds(tab);
+    return {r.x, r.y - 40, r.width, 40};
+}
+void BrowserUi::draw_split(SkCanvas &c) {
+    const auto &theme = interface_theme(app_.profile);
+    web_backdrop_.reset();
+    for (int id : app_.split_tabs)
+        if (auto tab = app_.tab(id)) {
+            const auto r = page_bounds(*tab), header = split_header(*tab);
+            const bool active = tab == app_.current();
+            draw_page(c, *tab, r);
+            fill(c, header, 8, active ? SkColorSetA(theme.accent, 28) : theme.surface);
+            focus_target(header);
+            icon(c, tab->private_tab ? "private" : "globe", header.x + 8, header.y + 12, 16,
+                 theme.muted);
+            label(c, medium_, tab->page.title, header.x + 32, header.y + 16, 11,
+                  active ? theme.text : theme.muted, header.width - 70);
+            label(c, regular_, url_host(tab->page.url), header.x + 32, header.y + 31, 9,
+                  theme.muted, header.width - 70);
+            focus_target({header.x + header.width - 34, header.y, 34, 40});
+            icon(c, "close", header.x + header.width - 25, header.y + 13, 14, theme.muted);
+            border(c, r, 15, SkColorSetA(theme.accent, active ? 170 : 35));
+        }
+    const auto d = split_divider();
+    fill(c, {d.x + 2, d.y + d.height / 2 - 24, 4, 48}, 2,
+         SkColorSetA(theme.accent, split_drag_ || inside(d, hover_x_, hover_y_) ? 210 : 80));
+}
+std::string BrowserUi::split_report() const {
+    if (!app_.split_enabled())
+        return "null";
+    auto rect = [](Rect r) {
+        return "[" + std::to_string(r.x) + "," + std::to_string(r.y) + "," +
+               std::to_string(r.width) + "," + std::to_string(r.height) + "]";
+    };
+    std::string result = "{\"divider\":" + rect(split_divider()) +
+                         ",\"percent\":" + std::to_string(app_.profile.split_percent) +
+                         ",\"panes\":[";
+    for (int i = 0; i < 2; i++) {
+        auto t = app_.tab(app_.split_tabs[i]);
+        if (i)
+            result += ",";
+        if (!t) {
+            result += "null";
+            continue;
+        }
+        result += "{\"id\":" + std::to_string(t->id) + ",\"url\":" + json_quote(t->page.url) +
+                  ",\"header\":" + rect(split_header(*t)) + ",\"bounds\":" + rect(page_bounds(*t)) +
+                  ",\"active\":" + (t == app_.current() ? "true" : "false") + "}";
+    }
+    return result + "]}";
 }
 } // namespace aura

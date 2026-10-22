@@ -3,6 +3,13 @@
 namespace aura {
 namespace {
 constexpr Translation catalog[] = {
+    {"Two pages side by side", "Две страницы рядом"},
+    {"Exit split view", "Закрыть разделение"},
+    {"Open two websites in this workspace first.",
+     "Сначала откройте два сайта в этом пространстве."},
+    {"Split view left pane width", "Ширина левой страницы в разделении"},
+    {"Percentage of the page area. You can also drag the divider.",
+     "Процент области страниц. Также можно перетянуть разделитель."},
     {"Put inactive tabs to sleep", "Усыплять неактивные вкладки"},
     {"Pause background pages and release their image buffers. Forms stay in memory.",
      "Останавливать фоновые страницы и освобождать буферы изображения. Формы сохраняются в "

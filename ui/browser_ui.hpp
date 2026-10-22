@@ -36,6 +36,10 @@ class BrowserUi {
     void toast(std::string message);
     void panel(Panel value);
     Rect web_bounds() const;
+    Rect page_bounds(const Tab &tab) const;
+    Rect split_header(const Tab &tab) const;
+    Rect split_divider() const;
+    std::string split_report() const;
     Panel visible_panel() const {
         return panel_;
     }
@@ -68,6 +72,9 @@ class BrowserUi {
 
   private:
     BrowserController &app_;
+    bool split_drag_ = false;
+    void draw_page(SkCanvas &, const Tab &, Rect);
+    void draw_split(SkCanvas &);
     std::vector<int> sidebar_rows() const;
     TextEditor group_input_;
     bool group_input_focus_ = false;

@@ -9,7 +9,7 @@
 | 1 | Рабочие пространства | Реализовано, Linux проверки PASS |
 | 2 | Группы вкладок | Реализовано, Linux проверки PASS |
 | 3 | Спящие вкладки | Реализовано, Linux проверки PASS |
-| 4 | Две страницы рядом | В очереди |
+| 4 | Две страницы рядом | Реализовано, Linux проверки PASS |
 | 5 | Контейнеры сайтов | В очереди |
 | 6 | Полноценные профили | В очереди |
 | 7 | Палитра команд | В очереди |
@@ -163,3 +163,43 @@ PASS, включая Ctrl+Q на frozen beforeunload форме → Escape → �
 до «Спит», чтобы он не обрезался. Логи /tmp/aura-sleep-{build-final,ctest-final,
 gui-final,regression}.log. Таймаут 5 минут проверен отдельным полным прогоном выше.
 Спящие вкладки завершены в описанном объёме. Windows CI пока не запускался.
+
+## 4. План двух страниц рядом
+
+Ctrl+Alt+V и меню Aura включают две существующие вкладки текущего пространства.
+Каждая сторона — настоящий CEF browser с независимыми history, формой и прокруткой.
+Над каждой страницей — её адрес/название, активная сторона отмечается рамкой.
+Нажатие в страницу переводит keyboard focus; общая адресная строка и find относятся
+к активной стороне. Разделитель изменяет ширину; выход возвращает полную страницу.
+Смена workspace/newtab или закрытие стороны завершает split без закрытия другой
+страницы. Видимые стороны не подлежат автосну. Сохраняются Inter и theme tokens.
+
+Платформенный checkpoint пунктов 1–3: main ed4edd1 опубликован. Windows CI
+[39757245526](https://github.com/Sttanors/aura-browser/actions/runs/39757245526) —
+SUCCESS: compile, unit, базовый real browser integration, portable package и
+build/install проверка Windows installer. Специализированные GUI сценарии
+пространств/групп/сна пока выполнены только на Linux. Файлы релиза не заменялись.
+
+## 4. Две страницы рядом — реализация и первая проверка
+
+Ctrl+Alt+V / меню Aura включает текущий сайт и другую открытую страницу workspace.
+Каждая сторона сохраняет собственный CEF browser, history, scroll и DOM. Выбор
+стороны меняет keyboard focus и адресную строку; native input, IME, select popup и
+контекстное меню используют её координаты. Заголовок каждой стороны показывает
+название и host, активная сторона отмечена рамкой. Разделитель меняет ширину;
+минимальная ширина каждой стороны 220 logical px. Предпочтение 25–75% сохраняется.
+Schema 8 сохраняет индексы сторон для обычных вкладок; пары с private не пишутся.
+Newtab/workspace change/закрытие стороны завершают split, оставляя другую страницу.
+
+Первая проверка: Linux build и 92/92 CTest; GUI три запуска — PASS: live forms,
+независимые scroll/navigation/back, native divider drag, 900×620, restore, RU/EN,
+ввод в обе стороны при 75% и 200%, private exclusion и balanced CEF close. Просмотрены
+скриншоты 200% и малого окна. Sleep и interface regression suites — PASS.
+Уточняющая проверка видимого select popup и отрисовки ещё выполняется.
+
+Checkpoint 4: GUI на изолированном дисплее 144 Гц — PASS, включая настоящий
+видимый CEF select popup, 75/200% и private pair exclusion. Rendering regression —
+PASS во всех 11 комбинациях zoom 75–200%, dark/light и device scale 1/1.25:
+full painter и repeated page-only repaint совпадают на rounded corners (≤1 channel).
+Логи /tmp/aura-split-{gui-popup,rendering-regression}.log. Пункт 4 завершён;
+Windows CI для него пока не выполнялся.
