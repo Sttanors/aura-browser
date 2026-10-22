@@ -38,13 +38,34 @@ test "$(stat -c %a /opt/aura-browser/aura_browser)" = 755
 profile='/home/Aura user/.local/share/aura-browser-profile'
 runuser -u aura-test -- mkdir -p "$profile"
 runuser -u aura-test -- sh -c 'echo keep > "$HOME/.local/share/aura-browser-profile/keep"'
+# Reproduce the exact historical conflict before reinstalling the native package.
+runuser -u aura-test -- sh -c '
+    mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications" "$HOME/.local/share/aura-browser"
+    printf "# Aura installer managed\nOLD\n" > "$HOME/.local/bin/aura-browser"
+    printf "# Aura installer managed\nOLD\n" > "$HOME/.local/bin/aura-browser-uninstall"
+    printf "# Aura installer managed\nOLD\n" > "$HOME/.local/share/applications/aura-browser.desktop"
+    echo old-runtime-kept > "$HOME/.local/share/aura-browser/keep"
+'
 case $family in
-    debian) apt-get install --reinstall -y "$package"; apt-get purge -y aura-browser ;;
-    fedora) dnf reinstall -y "$package"; dnf remove -y aura-browser ;;
-    arch) pacman -U --noconfirm "$package"; pacman -R --noconfirm aura-browser ;;
+    debian) apt-get install --reinstall -y "$package" ;;
+    fedora) dnf reinstall -y "$package" ;;
+    arch) pacman -U --noconfirm "$package" ;;
+esac
+runuser -u aura-test -- sh -c '
+    test ! -e "$HOME/.local/bin/aura-browser"
+    test ! -e "$HOME/.local/share/applications/aura-browser.desktop"
+    test "$(cat "$HOME/.local/share/aura-browser/keep")" = old-runtime-kept
+    test "$(cat "$HOME/.local/share/aura-browser-profile/keep")" = keep
+    test "$(find "$HOME/.local/share/aura-browser-launcher-backups" -name aura-browser.desktop | wc -l)" = 1
+'
+test "$(runuser -u aura-test -- aura-browser --version)" = "$3"
+case $family in
+    debian) apt-get purge -y aura-browser ;;
+    fedora) dnf remove -y aura-browser ;;
+    arch) pacman -R --noconfirm aura-browser ;;
 esac
 test ! -e /usr/bin/aura-browser
 test ! -e /opt/aura-browser/aura_browser
 test ! -e /usr/share/applications/aura-browser.desktop
 test "$(cat "$profile/keep")" = keep
-printf 'PASS: %s package install, dependencies, real launcher, icon, ownership, reinstall/remove, profile preservation\n' "$family"
+printf 'PASS: %s package install, dependencies, real launcher, icon, ownership, .run launcher migration, reinstall/remove, profile preservation\n' "$family"

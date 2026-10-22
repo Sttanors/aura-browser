@@ -140,6 +140,10 @@ struct BrowserWindow::Impl {
     double scale, base_scale, requested_zoom = 1;
     std::string composition, graphics_renderer, clipboard;
     std::function<void(std::string)> paste_callback;
+    std::string paste_bytes;
+    bool paste_incremental = false;
+    std::chrono::steady_clock::time_point paste_deadline;
+    static constexpr size_t paste_limit = 16 * 1024 * 1024;
     std::uint64_t frame_count = 0;
     Cursor cursors[3]{};
     int current_cursor = -1;
@@ -487,6 +491,83 @@ struct BrowserWindow::Impl {
         if (!text.empty() && callbacks.text)
             callbacks.text(text);
     }
+    void finish_paste(bool success) {
+        spdlog::debug("Clipboard transfer complete: success={}, bytes={}", success, paste_bytes.size());
+        paste_incremental = false;
+        auto callback = std::move(paste_callback);
+        auto text = success ? std::move(paste_bytes) : std::string{};
+        paste_bytes.clear();
+        if (callback)
+            callback(std::move(text));
+    }
+    void read_paste_property(bool initial) {
+        const auto property = atom("AURA_PASTE");
+        unsigned long offset = 0;
+        bool received = false;
+        for (;;) {
+            Atom type{};
+            int format{};
+            unsigned long count{}, after{};
+            unsigned char *bytes{};
+            const int result = XGetWindowProperty(display, window, property, offset, 16384,
+                                                   False, AnyPropertyType, &type, &format,
+                                                   &count, &after, &bytes);
+            if (result != Success) {
+                if (bytes) XFree(bytes);
+                finish_paste(false);
+                return;
+            }
+            if (initial && offset == 0 && type == atom("INCR")) {
+                // xclip uses an empty INCR header rather than a size hint.
+                // Enforce the hard limit on actual chunks in either case.
+                const bool valid = format == 32 && (count == 0 ||
+                    (count == 1 && bytes && *reinterpret_cast<unsigned long *>(bytes) <= paste_limit));
+                if (bytes) XFree(bytes);
+                if (!valid) {
+                    XDeleteProperty(display, window, property);
+                    finish_paste(false);
+                    return;
+                }
+                paste_incremental = true;
+                spdlog::debug("Clipboard INCR started");
+                // Deleting acknowledges INCR and asks the owner for the first chunk.
+                XDeleteProperty(display, window, property);
+                XFlush(display);
+                return;
+            }
+            // An old PropertyNotify may precede the first actual INCR chunk.
+            if (type == None && paste_incremental) {
+                if (bytes) XFree(bytes);
+                return;
+            }
+            const bool valid = format == 8 &&
+                (type == atom("UTF8_STRING") || type == XA_STRING || type == atom("TEXT")) &&
+                count <= paste_limit - paste_bytes.size();
+            if (!valid) {
+                if (bytes) XFree(bytes);
+                XDeleteProperty(display, window, property);
+                finish_paste(false);
+                return;
+            }
+            if (count && bytes) {
+                paste_bytes.append(reinterpret_cast<char *>(bytes), count);
+                received = true;
+            }
+            if (bytes) XFree(bytes);
+            if (!after)
+                break;
+            if (!count) {
+                finish_paste(false);
+                return;
+            }
+            offset += (count + 3) / 4;
+        }
+        XDeleteProperty(display, window, property);
+        XFlush(display);
+        paste_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        if (!paste_incremental || !received)
+            finish_paste(true);
+    }
     void selection_request(const XSelectionRequestEvent &request) {
         XEvent response{};
         response.xselection.type = SelectionNotify;
@@ -558,25 +639,19 @@ struct BrowserWindow::Impl {
             selection_request(event.xselectionrequest);
             break;
         case SelectionNotify: {
-            std::string text;
-            if (event.xselection.property != None) {
-                Atom type{};
-                int format{};
-                unsigned long count{}, after{};
-                unsigned char *bytes{};
-                if (XGetWindowProperty(display, window, event.xselection.property, 0, 262144, True,
-                                       AnyPropertyType, &type, &format, &count, &after,
-                                       &bytes) == Success &&
-                    bytes && format == 8)
-                    text.assign(reinterpret_cast<char *>(bytes), count);
-                if (bytes)
-                    XFree(bytes);
-            }
-            auto callback = std::move(paste_callback);
-            if (callback)
-                callback(std::move(text));
+            if (!paste_callback)
+                break;
+            if (event.xselection.property == atom("AURA_PASTE"))
+                read_paste_property(true);
+            else if (event.xselection.property == None)
+                finish_paste(false);
             break;
         }
+        case PropertyNotify:
+            if (paste_callback && paste_incremental && event.xproperty.atom == atom("AURA_PASTE") &&
+                event.xproperty.state == PropertyNewValue)
+                read_paste_property(false);
+            break;
         case MotionNotify:
             if (callbacks.pointer)
                 callbacks.pointer({PointerInput::Move,
@@ -656,7 +731,7 @@ BrowserWindow::BrowserWindow(int width, int height, double scale, WindowCallback
     p.software = std::make_unique<SoftwarePresenter>(p.display, p.window, p.gc);
     const long event_mask = ExposureMask | StructureNotifyMask | FocusChangeMask | KeyPressMask |
                             KeyReleaseMask | ButtonPressMask | ButtonReleaseMask |
-                            PointerMotionMask | LeaveWindowMask;
+                            PointerMotionMask | LeaveWindowMask | PropertyChangeMask;
     XSelectInput(p.display, p.window, event_mask);
     XStoreName(p.display, p.window, "Aura");
     XClassHint hint{const_cast<char *>("aura2"), const_cast<char *>("Aura2")};
@@ -760,6 +835,8 @@ void BrowserWindow::dispatch() {
         if (!XFilterEvent(&e, impl_->window))
             impl_->event(e);
     }
+    if (impl_->paste_callback && std::chrono::steady_clock::now() > impl_->paste_deadline)
+        impl_->finish_paste(false);
 }
 void BrowserWindow::paint() {
     impl_->paint();
@@ -846,6 +923,10 @@ void BrowserWindow::paste(std::function<void(std::string)> callback) {
         return;
     }
     p.paste_callback = std::move(callback);
+    p.paste_bytes.clear();
+    p.paste_incremental = false;
+    p.paste_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    XDeleteProperty(p.display, p.window, p.atom("AURA_PASTE"));
     XConvertSelection(p.display, p.atom("CLIPBOARD"), p.atom("UTF8_STRING"), p.atom("AURA_PASTE"),
                       p.window, CurrentTime);
     XFlush(p.display);

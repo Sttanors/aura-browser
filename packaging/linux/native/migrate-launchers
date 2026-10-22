@@ -1,0 +1,33 @@
+#!/bin/sh
+# Runs as the affected user, never as root. Does not remove app or profile files.
+set -eu
+umask 077
+[ "$(id -u)" != 0 ] || { echo 'Run Aura launcher migration as your regular user.' >&2; exit 1; }
+system_root=
+if [ "$#" != 0 ]; then
+    [ "$#" = 2 ] && [ "$1" = --system-root ] || exit 2
+    system_root=$2
+fi
+[ -f "$system_root/usr/share/applications/aura-browser.desktop" ] || exit 0
+[ -x "$system_root/usr/bin/aura-browser" ] || exit 0
+data=${XDG_DATA_HOME:-$HOME/.local/share}
+case $data in /*) ;; *) echo 'XDG_DATA_HOME must be absolute.' >&2; exit 1;; esac
+desktop=$data/applications/aura-browser.desktop
+managed() { [ ! -L "$1" ] && [ -f "$1" ] && grep -Fq '# Aura installer managed' "$1"; }
+# Never move someone else's desktop override or symlink, even if its name matches.
+managed "$desktop" || exit 0
+backup_root=$data/aura-browser-launcher-backups
+mkdir -p "$backup_root"
+backup=$(mktemp -d "$backup_root/migration.XXXXXXXX")
+mkdir -p "$backup/applications" "$backup/bin"
+mv -- "$desktop" "$backup/applications/aura-browser.desktop"
+for name in aura-browser aura-browser-uninstall; do
+    if managed "$HOME/.local/bin/$name"; then
+        mv -- "$HOME/.local/bin/$name" "$backup/bin/$name"
+    fi
+done
+if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database "$data/applications" >/dev/null 2>&1 || true
+fi
+# KDE watches the applications directory; no process or graphics session is started.
+printf 'Aura: system launcher enabled. Previous launchers retained in %s\n' "$backup"

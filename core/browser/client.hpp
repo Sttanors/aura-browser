@@ -49,6 +49,7 @@ class BrowserClient final : public DiagnosticClient,
                        CefRefPtr<CefDictionaryValue> &, bool *) override;
     bool OnOpenURLFromTab(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, const CefString &,
                           WindowOpenDisposition, bool) override;
+    void OnBeforePopupAborted(CefRefPtr<CefBrowser>, int popup_id) override;
     void OnLoadStart(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, TransitionType) override;
     void OnLoadingStateChange(CefRefPtr<CefBrowser>, bool, bool, bool) override;
     void OnLoadingProgressChange(CefRefPtr<CefBrowser>, double) override;

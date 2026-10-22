@@ -26,7 +26,7 @@ def stop(process):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--suite', choices=('browser', 'settings', 'features', 'startpage', 'wallpaper', 'interface', 'scrolling', 'updates', 'update-install', 'import', 'passwords', 'extensions', 'windows', 'filters', 'rendering', 'compatibility', 'upgrade', 'all'), default='browser')
+    parser.add_argument('--suite', choices=('browser', 'popups', 'navigation', 'clipboard', 'settings', 'features', 'startpage', 'wallpaper', 'interface', 'scrolling', 'updates', 'update-install', 'import', 'passwords', 'extensions', 'windows', 'filters', 'rendering', 'compatibility', 'upgrade', 'all'), default='browser')
     parser.add_argument("--refresh", type=int, choices=(60, 75, 120, 144, 165, 240), default=60)
     args = parser.parse_args()
     for tool in ('weston', 'Xwayland', 'xdotool', 'import'):
@@ -44,6 +44,8 @@ def main():
         env = {**os.environ, 'XDG_RUNTIME_DIR': str(runtime), 'LIBGL_ALWAYS_SOFTWARE': '1',
             'DBUS_SESSION_BUS_ADDRESS': 'unix:path=/nonexistent/aura-test-bus',
             'XDG_CURRENT_DESKTOP': '', 'AURA_TEST_ISOLATED_DISPLAY': '1', 'AURA_TEST_REFRESH': str(args.refresh)}
+        # Fake-HOME installer tests must not detect packages on the developer host.
+        env['AURA_INSTALL_SYSTEM_ROOT'] = str(runtime / 'empty-system')
         env.pop('DISPLAY', None)
         env.pop('WAYLAND_DISPLAY', None)
         with (output / 'weston-process.log').open('w') as weston_log, (output / 'xwayland.log').open('w') as x_log:
@@ -79,8 +81,8 @@ def main():
                     if write_fd >= 0:
                         os.close(write_fd)
                 print(f'Isolated display {env["DISPLAY"]}: Weston Pixman + Xwayland SHM, GLX disabled', flush=True)
-                scripts = {'browser': ['smoke_browser.py'], 'settings': ['smoke_settings.py'],
-                           'features': ['smoke_features.py'], 'startpage': ['smoke_startpage.py'], 'wallpaper': ['smoke_wallpaper.py'], 'scrolling': ['smoke_scrolling.py'], 'interface': ['smoke_interface.py'], 'updates': ['smoke_updates.py'], 'update-install': ['smoke_update_install.py'], 'import': ['smoke_import.py'], 'passwords': ['smoke_passwords.py'], 'extensions': ['smoke_extension_lifecycle.py'], 'windows': ['smoke_windows.py'], 'filters': ['smoke_filters.py'], 'rendering': ['smoke_rendering.py'], 'compatibility': ['smoke_compatibility.py'], 'upgrade': ['smoke_upgrade.py'], 'all': ['smoke_compatibility.py', 'smoke_rendering.py', 'smoke_scrolling.py', 'smoke_interface.py', 'smoke_browser.py', 'smoke_settings.py', 'smoke_startpage.py', 'smoke_wallpaper.py', 'smoke_features.py', 'smoke_updates.py', 'smoke_import.py', 'smoke_passwords.py', 'smoke_extension_lifecycle.py', 'smoke_windows.py', 'smoke_filters.py']}[args.suite]
+                scripts = {'browser': ['smoke_browser.py'], 'popups': ['smoke_popups.py'], 'navigation': ['smoke_navigation.py'], 'clipboard': ['smoke_clipboard.py'], 'settings': ['smoke_settings.py'],
+                           'features': ['smoke_features.py'], 'startpage': ['smoke_startpage.py'], 'wallpaper': ['smoke_wallpaper.py'], 'scrolling': ['smoke_scrolling.py'], 'interface': ['smoke_interface.py'], 'updates': ['smoke_updates.py'], 'update-install': ['smoke_update_install.py'], 'import': ['smoke_import.py'], 'passwords': ['smoke_passwords.py'], 'extensions': ['smoke_extension_lifecycle.py'], 'windows': ['smoke_windows.py'], 'filters': ['smoke_filters.py'], 'rendering': ['smoke_rendering.py'], 'compatibility': ['smoke_compatibility.py'], 'upgrade': ['smoke_upgrade.py'], 'all': ['smoke_popups.py', 'smoke_navigation.py', 'smoke_clipboard.py', 'smoke_compatibility.py', 'smoke_rendering.py', 'smoke_scrolling.py', 'smoke_interface.py', 'smoke_browser.py', 'smoke_settings.py', 'smoke_startpage.py', 'smoke_wallpaper.py', 'smoke_features.py', 'smoke_updates.py', 'smoke_import.py', 'smoke_passwords.py', 'smoke_extension_lifecycle.py', 'smoke_windows.py', 'smoke_filters.py']}[args.suite]
                 for script in scripts:
                     subprocess.run([sys.executable, str(ROOT / 'scripts' / script)],
                         cwd=ROOT, env=env, check=True, timeout=600 if args.suite in ('update-install','extensions','filters','compatibility','upgrade') or script in ('smoke_extension_lifecycle.py','smoke_filters.py','smoke_compatibility.py') else 240)

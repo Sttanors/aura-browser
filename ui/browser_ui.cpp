@@ -103,13 +103,20 @@ float measure(const SkFont &f, const std::string &text) {
 std::string elide(const SkFont &f, std::string text, float width) {
     if (measure(f, text) <= width)
         return text;
-    while (!text.empty() && measure(f, text + "…") > width) {
-        auto end = text.size() - 1;
-        while (end && (static_cast<unsigned char>(text[end]) & 0xC0) == 0x80)
-            --end;
-        text.resize(end);
+    size_t low = 0, high = text.size();
+    while (low < high) {
+        auto middle = low + (high - low + 1) / 2;
+        while (middle < high && (static_cast<unsigned char>(text[middle]) & 0xC0) == 0x80)
+            ++middle;
+        if (measure(f, text.substr(0, middle) + "…") <= width)
+            low = middle;
+        else {
+            high = middle - 1;
+            while (high > low && (static_cast<unsigned char>(text[high]) & 0xC0) == 0x80)
+                --high;
+        }
     }
-    return text + "…";
+    return text.substr(0, low) + "…";
 }
 std::vector<std::string> wrap_text(const SkFont &f, const std::string &text, int width, int limit) {
     std::vector<std::string> lines;
@@ -373,6 +380,22 @@ void BrowserUi::resize(int width, int height) {
     height_ = height;
 }
 void BrowserUi::draw_editor(SkCanvas &c, const TextEditor &e, Rect r, float size, bool active) {
+    // Clipboard input can be megabytes. Keep the full editor value, but shape
+    // only a bounded UTF-8 window around the caret for a responsive native UI.
+    if (e.value.size() > 8192) {
+        size_t begin = e.caret > 4096 ? e.caret - 4096 : 0;
+        while (begin && (static_cast<unsigned char>(e.value[begin]) & 0xC0) == 0x80)
+            --begin;
+        size_t end = std::min(e.value.size(), begin + 8192);
+        while (end < e.value.size() && (static_cast<unsigned char>(e.value[end]) & 0xC0) == 0x80)
+            --end;
+        TextEditor visible;
+        visible.value = e.value.substr(begin, end - begin);
+        visible.caret = std::clamp(e.caret, begin, end) - begin;
+        visible.anchor = std::clamp(e.anchor, begin, end) - begin;
+        draw_editor(c, visible, r, size, active);
+        return;
+    }
     const auto &t = interface_theme(app_.profile);
     auto f = font(regular_, size);
     const float caret = measure(f, e.value.substr(0, e.caret));

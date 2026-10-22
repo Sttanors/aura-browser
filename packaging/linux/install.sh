@@ -8,6 +8,12 @@ fi
 [[ $(uname -m) == x86_64 ]] || { echo 'Linux x86_64 is required.' >&2; exit 1; }
 [[ $EUID != 0 ]] || { echo 'Run as your regular user, without sudo.' >&2; exit 1; }
 for tool in tar gzip sha256sum; do command -v "$tool" >/dev/null; done
+system_root=${AURA_INSTALL_SYSTEM_ROOT:-}
+if [[ -x $system_root/usr/bin/aura-browser && -f $system_root/usr/share/applications/aura-browser.desktop ]]; then
+    echo 'Aura is already installed as a system package. Update it with your package manager.' >&2
+    echo 'To switch to .run, remove the system package first. Your profile is kept.' >&2
+    exit 1
+fi
 app_root="${XDG_DATA_HOME:-$HOME/.local/share}/aura-browser"
 profile="${XDG_DATA_HOME:-$HOME/.local/share}/aura-browser-profile"
 bin_root="$HOME/.local/bin"

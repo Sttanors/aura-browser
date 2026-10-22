@@ -557,3 +557,49 @@ TEST(Platform, ProcessArgumentsPreserveUnicodeQuotesAndTrailingSlashes) {
     std::filesystem::remove_all(root);
     EXPECT_FALSE(launch_process(root / "nonexistent-program", {}));
 }
+
+TEST(Profile, CorruptSettingsRecoverBackupWithoutLosingOriginalBytes) {
+    const auto dir = std::filesystem::temp_directory_path() /
+        ("aura-recover-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    {
+        Profile p(dir);
+        p.language = "ru";
+        p.toggle_bookmark("https://example.test/", "Preserved");
+        p.save();
+        p.save();
+    }
+    const std::string broken = "language = [\n";
+    std::ofstream(dir / "profile.toml") << broken;
+    {
+        Profile p(dir);
+        EXPECT_TRUE(p.recovered_profile);
+        EXPECT_EQ(p.language, "ru");
+        ASSERT_EQ(p.bookmarks.size(), 1);
+        EXPECT_EQ(p.bookmarks.front().title, "Preserved");
+        std::ifstream damaged(dir / "profile.toml.corrupt");
+        EXPECT_EQ(std::string(std::istreambuf_iterator<char>(damaged), {}), broken);
+        p.save();
+    }
+    std::ofstream(dir / "profile.toml") << broken;
+    std::ofstream(dir / "profile.toml.bak") << broken;
+    {
+        Profile p(dir);
+        EXPECT_TRUE(p.recovered_profile);
+        EXPECT_EQ(p.language, "en");
+        EXPECT_TRUE(std::filesystem::exists(dir / "profile.toml.corrupt.1"));
+        p.save();
+    }
+    std::filesystem::remove_all(dir);
+}
+
+TEST(Navigation, ValidatesAuthorityBeforeTreatingPunctuationAsAddress) {
+    EXPECT_EQ(navigation_url("[2001:db8::1]"), "https://[2001:db8::1]");
+    EXPECT_EQ(navigation_url("[::1]:8765/page"), "http://[::1]:8765/page");
+    EXPECT_EQ(navigation_url("intranet:8080"), "http://intranet:8080");
+    EXPECT_EQ(navigation_url("пример.рф/путь"), "https://пример.рф/путь");
+    EXPECT_EQ(navigation_url("example.com/a+b?q=1.5+2.5"), "https://example.com/a+b?q=1.5+2.5");
+    EXPECT_EQ(navigation_url("1.5+2.5"), "https://duckduckgo.com/?q=1.5%2B2.5");
+    for (const std::string input : {"[hello:world]", "[2001::db8::1]", "intranet:99999",
+                                    "intranet:", "intranet:-1", "a..b", "localhostevil"})
+        EXPECT_TRUE(navigation_url(input).starts_with("https://duckduckgo.com/?q=")) << input;
+}

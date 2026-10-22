@@ -224,17 +224,28 @@ void BrowserClient::OnBeforeClose(CefRefPtr<CefBrowser> b) {
     DiagnosticClient::OnBeforeClose(b);
     owner_.browser_closed(id_);
 }
-bool BrowserClient::OnBeforePopup(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, int,
+bool BrowserClient::OnBeforePopup(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, int popup_id,
                                   const CefString &url, const CefString &,
                                   WindowOpenDisposition disposition, bool user_gesture,
-                                  const CefPopupFeatures &, CefWindowInfo &, CefRefPtr<CefClient> &,
+                                  const CefPopupFeatures &, CefWindowInfo &info, CefRefPtr<CefClient> &client,
                                   CefBrowserSettings &, CefRefPtr<CefDictionaryValue> &, bool *) {
     if (owner_.profile.block_popups && !user_gesture) {
         ++owner_.audit["popups_blocked"];
         return true;
     }
-    owner_.open_from_page(id_, url, disposition != CEF_WOD_NEW_BACKGROUND_TAB);
-    return true;
+    auto target = owner_.prepare_popup(id_, popup_id, url,
+                                       disposition != CEF_WOD_NEW_BACKGROUND_TAB);
+    if (!target)
+        return true;
+    info.SetAsWindowless(owner_.window->handle());
+    client = new BrowserClient(owner_, *target);
+    target->client = static_cast<BrowserClient *>(client.get());
+    // Let Chromium create the actual browsing context and retain opener/name/
+    // WindowProxy semantics. Do not replace this with a second LoadURL.
+    return false;
+}
+void BrowserClient::OnBeforePopupAborted(CefRefPtr<CefBrowser>, int popup_id) {
+    owner_.abort_popup(id_, popup_id);
 }
 bool BrowserClient::OnOpenURLFromTab(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
                                      const CefString &url, WindowOpenDisposition disposition,
@@ -300,8 +311,19 @@ void BrowserClient::OnTitleChange(CefRefPtr<CefBrowser> b, const CefString &titl
 }
 void BrowserClient::OnAddressChange(CefRefPtr<CefBrowser> b, CefRefPtr<CefFrame> f,
                                     const CefString &url) {
-    if (auto t = owner_.tab(id_); t && t->ntp)
-        return;
+    if (f->IsMain()) {
+        if (auto t = owner_.tab(id_)) {
+            t->ntp = url == "about:blank#aura-newtab";
+            b->GetHost()->WasHidden(t != owner_.current() || t->ntp);
+            b->GetHost()->SetAudioMuted(t->muted);
+            if (t->ntp) {
+                t->page.url = "aura://newtab";
+                t->page.title = owner_.tr(t->private_tab ? "Private tab" : "New tab");
+                owner_.page_changed(id_);
+                return;
+            }
+        }
+    }
     DiagnosticClient::OnAddressChange(b, f, url);
     owner_.page_changed(id_);
 }

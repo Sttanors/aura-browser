@@ -6,6 +6,8 @@
 #include <chrono>
 #include <fstream>
 #include <stdexcept>
+#include <charconv>
+#include <openssl/x509v3.h>
 #include <toml++/toml.hpp>
 namespace aura {
 namespace {
@@ -33,6 +35,70 @@ std::string encode(const std::string &text) {
         }
     }
     return out;
+}
+// Validate only the authority; query/path punctuation is not a hostname.
+bool bare_address(const std::string &input, bool &local) {
+    if (input.find_first_of(" \t\r\n") != std::string::npos)
+        return false;
+    const auto authority = input.substr(0, input.find_first_of("/?#"));
+    if (authority.empty())
+        return false;
+    std::string host, port;
+    bool has_port = false, ipv6 = false;
+    if (authority.front() == '[') {
+        const auto end = authority.find(']');
+        if (end == std::string::npos)
+            return false;
+        host = authority.substr(1, end - 1);
+        auto ip = a2i_IPADDRESS(host.c_str());
+        ipv6 = ip && ASN1_STRING_length(ip) == 16;
+        ASN1_OCTET_STRING_free(ip);
+        if (!ipv6)
+            return false;
+        if (end + 1 < authority.size()) {
+            if (authority[end + 1] != ':')
+                return false;
+            has_port = true;
+            port = authority.substr(end + 2);
+        }
+    } else {
+        const auto colon = authority.find(':');
+        host = lower(authority.substr(0, colon));
+        if (colon != std::string::npos) {
+            has_port = true;
+            port = authority.substr(colon + 1);
+        }
+        if (host.empty())
+            return false;
+        auto labels = host;
+        if (labels.back() == '.')
+            labels.pop_back();
+        for (size_t begin = 0; begin < labels.size();) {
+            const auto end = labels.find('.', begin);
+            const auto label = labels.substr(begin, end == std::string::npos ? end : end - begin);
+            if (label.empty() || label.front() == '-' || label.back() == '-' ||
+                !std::all_of(label.begin(), label.end(), [](unsigned char c) {
+                    return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c >= 128;
+                }))
+                return false;
+            if (end == std::string::npos)
+                break;
+            begin = end + 1;
+            if (begin == labels.size())
+                return false;
+        }
+        if (labels.empty())
+            return false;
+    }
+    if (has_port) {
+        unsigned value = 0;
+        const auto [end, error] = std::from_chars(port.data(), port.data() + port.size(), value);
+        if (error != std::errc{} || end != port.data() + port.size() || value == 0 || value > 65535)
+            return false;
+    }
+    local = host == "localhost" || host.starts_with("127.") || host == "::1" ||
+            (!ipv6 && host.find('.') == std::string::npos && has_port);
+    return ipv6 || has_port || host == "localhost" || host.find('.') != std::string::npos;
 }
 } // namespace
 std::string search_engine_name(const std::string &engine) {
@@ -63,14 +129,9 @@ std::string navigation_url(std::string input, const std::string &engine) {
     if (input.find("://") != std::string::npos || name.starts_with("javascript:") ||
         name.starts_with("data:"))
         throw std::invalid_argument("This address scheme is not supported");
-    if (input.find_first_of(" \t\n") == std::string::npos &&
-        (input.find('.') != std::string::npos || name.starts_with("localhost") ||
-         name.starts_with("[::1]")))
-        return (name.starts_with("localhost") || name.starts_with("127.") ||
-                        name.starts_with("[::1]")
-                    ? "http://"
-                    : "https://") +
-               input;
+    bool local = false;
+    if (bare_address(input, local))
+        return (local ? "http://" : "https://") + input;
     const std::string base = engine == "google"   ? "https://www.google.com/search?q="
                              : engine == "bing"   ? "https://www.bing.com/search?q="
                              : engine == "yandex" ? "https://yandex.ru/search/?text="
@@ -89,9 +150,27 @@ Profile::Profile(std::filesystem::path path) : directory(std::move(path)) {
 }
 void Profile::load() {
     auto file = directory / "profile.toml";
+    toml::table table;
     if (!std::filesystem::exists(file))
         return;
-    const auto table = toml::parse_file(utf8_path(file));
+    try {
+        table = toml::parse_file(utf8_path(file));
+    } catch (const toml::parse_error &) {
+        // Never overwrite damaged settings: preserve their exact bytes first.
+        auto damaged = directory / "profile.toml.corrupt";
+        for (int n = 1; std::filesystem::exists(damaged); ++n)
+            damaged = directory / ("profile.toml.corrupt." + std::to_string(n));
+        std::filesystem::rename(file, damaged);
+        recovered_profile = true;
+        const auto backup = directory / "profile.toml.bak";
+        if (std::filesystem::exists(backup)) {
+            try {
+                table = toml::parse_file(utf8_path(backup));
+            } catch (const toml::parse_error &) {
+                // Keep a damaged backup too; defaults let the user open Aura.
+            }
+        }
+    }
     static_cast<BrowserPreferences &>(*this) = BrowserPreferences{};
     for (const auto &setting : settings_catalog()) {
         const auto node = table[setting.id];
@@ -219,7 +298,20 @@ void Profile::save() const {
         if (!file)
             throw std::runtime_error("Cannot save browser profile");
     }
-    replace_file(temporary, directory / "profile.toml");
+    const auto current = directory / "profile.toml";
+    if (std::filesystem::exists(current)) {
+        // Rotate only a parseable profile; a bad file must not replace a good backup.
+        try {
+            (void)toml::parse_file(utf8_path(current));
+            const auto backup_temp = directory / "profile.toml.bak.tmp";
+            std::filesystem::copy_file(current, backup_temp,
+                                       std::filesystem::copy_options::overwrite_existing);
+            replace_file(backup_temp, directory / "profile.toml.bak");
+        } catch (const toml::parse_error &) {
+            throw std::runtime_error("Profile changed to invalid TOML; refusing to overwrite it");
+        }
+    }
+    replace_file(temporary, current);
 }
 namespace {
 bool valid_shortcut(const std::string &title, const std::string &url) {

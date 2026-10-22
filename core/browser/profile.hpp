@@ -42,6 +42,8 @@ class Profile : public BrowserPreferences {
     void remove_shortcut(size_t index);
     int active = 0;
     bool session_clean = true;
+    // Set only when malformed on-disk settings were preserved for recovery.
+    bool recovered_profile = false;
     void prune_history();
     void load();
     void save() const;

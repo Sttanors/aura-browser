@@ -32,6 +32,8 @@ struct Tab {
     double progress = 0, zoom = 0;
     std::string icon_url, pending_url;
     bool site_tools_ready = false;
+    bool popup_pending = false;
+    bool remember_on_close = false;
     CefRefPtr<DevToolsSession> devtools;
     std::map<int, std::string> protection_contexts;
     std::string protection_script;
@@ -183,6 +185,8 @@ class BrowserController {
     void browser_closed(int id);
     void page_changed(int id, bool history = false);
     void open_from_page(int source, std::string url, bool foreground);
+    Tab *prepare_popup(int source, int popup_id, const std::string &url, bool foreground);
+    void abort_popup(int source, int popup_id);
     void update_favicon(int id, const std::string &url);
     void download_updated(CefRefPtr<CefDownloadItem> item,
                           CefRefPtr<CefDownloadItemCallback> callback);
@@ -222,6 +226,7 @@ class BrowserController {
     CefRefPtr<CefRequestContext> &private_context_;
     std::vector<SavedTab> recently_closed_;
     std::vector<std::filesystem::path> download_paths_;
+    std::map<std::pair<int, int>, int> pending_popups_;
     std::vector<std::function<void()>> pending_;
     std::string quit_snapshot_;
     std::chrono::steady_clock::time_point save_at_ = std::chrono::steady_clock::now();

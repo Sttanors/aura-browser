@@ -1,0 +1,5 @@
+<!doctype html><meta charset="utf-8"><title>Real popup child</title>
+<script>
+addEventListener('message',e=>{if(e.origin===location.origin&&e.source===opener&&e.data==='ping')opener.postMessage('pong',location.origin);});
+opener?.postMessage('ready',location.origin);
+</script>

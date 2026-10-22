@@ -1,0 +1,6 @@
+#!/bin/sh
+set -e
+if [ "${1:-}" = configure ]; then
+    /usr/lib/aura-browser/migrate-all-users || true
+fi
+exit 0

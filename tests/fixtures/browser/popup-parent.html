@@ -1,0 +1,11 @@
+<!doctype html><meta charset="utf-8"><title>Popup parent</title>
+<button style="position:absolute;left:20px;top:100px;width:160px;height:40px" onclick="child=window.open('popup-child.html','aura-child');report()">Open real popup</button>
+<button style="position:absolute;left:200px;top:100px;width:160px;height:40px" onclick="child?.close();setTimeout(report,200)">Close child</button>
+<script>
+let child=null, exchange=false;
+function report(){document.title=JSON.stringify({parent:true,returned:child!==null,exchange,closed:child?.closed??false});}
+addEventListener('message',e=>{if(e.origin!==location.origin||e.source!==child)return;
+ if(e.data==='ready')child.postMessage('ping',location.origin);
+ if(e.data==='pong'){exchange=true;report();}});
+report();
+</script>

@@ -59,6 +59,16 @@ def main():
                     root=windows()[0]['window']
                     if launch==0:
                         wait_until(lambda:document(root).get('storage')=='normal','No normal storage')
+                        # Application exit must honour the site's unsaved-data prompt.
+                        click_at(root,352,208)
+                        wait_until(lambda:document(root).get('protected'),'Exit fixture was not armed')
+                        key_at(root,'q',4)
+                        wait_until(lambda:current(root).get('dialog_count')==1,'Application exit bypassed beforeunload')
+                        key_at(root,'Escape')
+                        wait_until(lambda:current(root) and current(root)['dialog_count']==0,'Exit cancellation lost the window')
+                        assert proc.poll() is None
+                        click_at(root,352,208)
+                        wait_until(lambda:document(root).get('protected') is False,'Exit fixture was not disarmed')
                         normal=new(root);navigate(normal,base+'?name=normal2')
                         wait_until(lambda:document(normal).get('storage')=='normal','Normal windows did not share storage')
                         assert 'aura_window=normal' in document(normal)['cookie']

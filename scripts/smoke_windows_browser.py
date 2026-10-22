@@ -142,6 +142,24 @@ def main():
                 assert api['passed'],api
                 assert api['capabilities']['initial_indexeddb']==('fictional-persistent-marker' if launch else ''),api
                 wait(lambda s:any(t.get('title')=='Compatibility PASS' and not t.get('failed') for t in s.get('tabs',[])),'Native report must acknowledge compatibility page')
+                popup_url=f'http://127.0.0.1:{server.server_port}/browser/popup-parent.html'
+                click(480,55);type_text(popup_url)
+                user.SendMessageW(window,0x100,13,1);user.SendMessageW(window,0x101,13,1)
+                def popup_parent(s):
+                    for t in s.get('tabs',[]):
+                        if t['url']==popup_url:
+                            try:return json.loads(t['title'])
+                            except ValueError:pass
+                    return {}
+                wait(lambda s:popup_parent(s).get('parent'),'Popup fixture must load')
+                tab_count=len(read()['tabs'])
+                click_web(100,120)
+                wait(lambda s:popup_parent(s).get('exchange'),'Windows popup must retain WindowProxy/opener/postMessage')
+                assert len(read()['tabs'])==tab_count+1 and popup_parent(read())['returned']
+                click(100,200) # Return to the original parent tab in the native sidebar.
+                wait(lambda s:s['active_tab']==0,'Popup parent must activate')
+                click_web(280,120)
+                wait(lambda s:len(s.get('tabs',[]))==tab_count and popup_parent(s).get('closed'),'Script window.close must close the embedded popup')
                 # Exercise real additional Win32 windows with the same profile/process.
                 for _ in range(3):
                     user.SendMessageW(window, 0x100, 27, 1)

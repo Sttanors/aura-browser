@@ -44,7 +44,9 @@ std::string tabs_json(const std::vector<std::unique_ptr<Tab>> &tabs) {
             << ",\"failed\":" << (t->page.failed ? "true" : "false")
             << ",\"http_status\":" << t->page.http_status << ",\"frame_rate\":"
             << (t->browser ? t->browser->GetHost()->GetWindowlessFrameRate() : 0)
-            << ",\"frames\":" << t->page.view.generation() << ",\"zoom_percent\":"
+            << ",\"frames\":" << t->page.view.generation()
+            << ",\"audio_muted\":" << (t->browser && t->browser->GetHost()->IsAudioMuted() ? "true" : "false")
+            << ",\"zoom_percent\":"
             << std::round(
                    std::pow(1.2, t->browser ? t->browser->GetHost()->GetZoomLevel() : t->zoom) *
                    100)
@@ -310,6 +312,12 @@ void BrowserController::start(const std::string &initial, bool private_mode, boo
     }
     if (!private_mode && profile.check_updates && updates.due())
         updates.check();
+    if (profile.recovered_profile) {
+        ui->toast(profile.language == "ru"
+                      ? "Профиль повреждён. Загружена копия или настройки по умолчанию; исходный файл сохранён."
+                      : "Profile damaged. Loaded backup or defaults; original file preserved.");
+        profile.recovered_profile = false;
+    }
 }
 void BrowserController::changed(bool persistent) {
     for (auto *other : state_->windows)
@@ -378,7 +386,12 @@ void BrowserController::tick() {
     const int old_active_id = current() ? current()->id : 0;
     const bool active_closed = current() && current()->page.closed;
     for (int i = static_cast<int>(tabs.size()) - 1; i >= 0; --i)
-        if (tabs[i]->page.closed) {
+        if (tabs[i]->page.closed && !tabs[i]->popup_pending) {
+            if (tabs[i]->remember_on_close && !tabs[i]->private_tab && !quitting) {
+                recently_closed_.push_back({tabs[i]->page.url, tabs[i]->pinned});
+                if (recently_closed_.size() > 30)
+                    recently_closed_.erase(recently_closed_.begin());
+            }
             tabs.erase(tabs.begin() + i);
             if (i < active)
                 --active;
@@ -558,17 +571,13 @@ void BrowserController::close_tab(int index) {
     cancel_permissions(t.id);
     if (t.closing)
         return;
-    if (!t.private_tab) {
-        recently_closed_.push_back({t.page.url, t.pinned});
-        if (recently_closed_.size() > 30)
-            recently_closed_.erase(recently_closed_.begin());
-    }
+    t.remember_on_close = !t.private_tab;
     close_menu();
     t.closing = true;
     if (t.browser) {
         t.browser->GetHost()->CloseDevTools();
         t.browser->GetHost()->CloseBrowser(false);
-    } else
+    } else if (!t.popup_pending)
         t.page.closed = true;
     ++audit["tabs_closed_by_user"];
     changed(true);
@@ -604,14 +613,15 @@ void BrowserController::navigate(std::string input) {
         ui->editing = false;
         ui->panel(BrowserUi::None);
         if (url == "aura://newtab") {
-            t->ntp = true;
-            t->page.url = url;
-            t->page.title = tr(t->private_tab ? "Private tab" : "New tab");
-            window->title(t->page.title + " — Aura");
             if (t->browser) {
-                t->browser->StopLoad();
-                t->browser->GetHost()->SetAudioMuted(true);
-                t->browser->GetHost()->WasHidden(true);
+                // A real history entry unloads the old document and honours
+                // beforeunload. Commit the native start page only on address change.
+                t->browser->GetMainFrame()->LoadURL("about:blank#aura-newtab");
+            } else {
+                t->ntp = true;
+                t->page.url = url;
+                t->page.title = tr(t->private_tab ? "Private tab" : "New tab");
+                window->title(t->page.title + " — Aura");
             }
         } else {
             if (t->browser)
@@ -627,8 +637,6 @@ void BrowserController::navigate(std::string input) {
 void BrowserController::back() {
     close_extension_popup();
     if (auto t = current(); t && t->browser && t->back) {
-        t->ntp = false;
-        t->browser->GetHost()->WasHidden(false);
         t->browser->GoBack();
         ++audit["back"];
         changed();
@@ -637,7 +645,6 @@ void BrowserController::back() {
 void BrowserController::forward() {
     close_extension_popup();
     if (auto t = current(); t && t->browser && t->forward) {
-        t->ntp = false;
         t->browser->GoForward();
         ++audit["forward"];
         changed();
@@ -725,6 +732,22 @@ void BrowserController::answer_dialog(bool accept) {
     auto dialog = std::move(dialogs.front());
     dialogs.pop_front();
     if (!accept && dialog.before_unload) {
+        if (auto t = tab(dialog.tab))
+            t->remember_on_close = false;
+        // Cancel the whole exit transaction, including restart/update intent.
+        if (state_->exiting) {
+            state_->exiting = false;
+            state_->session_frozen = false;
+            for (auto *other : state_->windows) {
+                other->restart_on_exit = false;
+                other->install_update_on_exit = false;
+                other->quitting = false;
+                other->quit_confirmed_ = false;
+                for (auto &t : other->tabs)
+                    if (!t->page.closed)
+                        t->closing = false;
+            }
+        }
         quitting = false;
         quit_snapshot_.clear();
         changed(true);
@@ -786,15 +809,31 @@ void BrowserController::request_quit(bool force) {
     }
     quitting = true;
     close_extension_popup(false);
-    while (!dialogs.empty())
-        answer_dialog(force && dialogs.front().before_unload);
+    // Keep existing beforeunload prompts: closing must never decide for the user.
+    if (force) {
+        while (!dialogs.empty())
+            answer_dialog(dialogs.front().before_unload);
+    } else {
+        for (auto it = dialogs.begin(); it != dialogs.end();) {
+            if (it->before_unload) {
+                ++it;
+                continue;
+            }
+            auto dialog = std::move(*it);
+            it = dialogs.erase(it);
+            if (dialog.callback)
+                dialog.callback->Continue(false, "");
+            if (dialog.action)
+                dialog.action(false, "");
+        }
+    }
     quitting = true;
     for (auto &t : tabs) {
         t->closing = true;
         if (t->browser) {
             t->browser->GetHost()->CloseDevTools();
             t->browser->GetHost()->CloseBrowser(force);
-        } else
+        } else if (!t->popup_pending)
             t->page.closed = true;
     }
 }
@@ -903,8 +942,12 @@ void BrowserController::request_exit(bool force) {
     state_->exiting = true;
     state_->pending_windows.clear();
     for (auto *other : state_->windows)
-        if (!other->quitting)
-            other->request_quit(true);
+        if (!other->quitting) {
+            // `force` above acknowledges Aura's application-level confirmation,
+            // not the individual websites' unsaved-data prompts.
+            other->quit_confirmed_ = true;
+            other->request_quit(false);
+        }
 }
 void BrowserController::save_session() {
     if (!state_->session_frozen && !state_->recovery_pending) {
@@ -946,6 +989,7 @@ std::string BrowserController::report() const {
         << ",\"device_scale\":" << scale << ",\"width\":" << width << ",\"height\":" << height
         << "}"
         << ",\"active_tab\":" << active
+        << ",\"address_input_bytes\":" << (ui->editing ? ui->address.value.size() : 0)
         << ",\"private_window\":" << (private_window ? "true" : "false")
         << ",\"panel\":" << static_cast<int>(ui->visible_panel())
         << ",\"blocked_requests\":" << request_policy->protection->blocked.load()
@@ -1008,6 +1052,16 @@ std::string BrowserController::report() const {
 void BrowserController::browser_created(int id, CefRefPtr<CefBrowser> browser) {
     if (auto t = tab(id)) {
         t->browser = browser;
+        const bool popup = t->popup_pending;
+        t->popup_pending = false;
+        std::erase_if(pending_popups_, [id](const auto &entry) { return entry.second == id; });
+        if (popup) {
+            ++audit["page_opened_tabs"];
+            browser->GetHost()->SetZoomLevel(t->zoom);
+            browser->GetHost()->SetAudioMuted(t->muted);
+            browser->GetHost()->WasHidden(t != current());
+            browser->GetHost()->SetFocus(t == current());
+        }
         if (t->private_tab)
             configure_font_preferences(browser->GetHost()->GetRequestContext());
 
@@ -1023,6 +1077,8 @@ void BrowserController::browser_created(int id, CefRefPtr<CefBrowser> browser) {
             }
         });
         ++created_;
+        if (t->closing || quitting)
+            browser->GetHost()->CloseBrowser(true);
     }
 }
 void BrowserController::browser_closed(int id) {
@@ -1056,6 +1112,44 @@ void BrowserController::open_from_page(int source, std::string url, bool foregro
         new_tab(url, private_tab, foreground && profile.foreground_links);
     });
     ++audit["page_opened_tabs"];
+}
+Tab *BrowserController::prepare_popup(int source, int popup_id, const std::string &url,
+                                      bool foreground) {
+    auto opener = tab(source);
+    if (!opener || opener->closing || quitting)
+        return nullptr;
+    const bool private_tab = opener->private_tab;
+    const int id = next_id_;
+    new_tab("aura://newtab", private_tab, foreground && profile.foreground_links);
+    auto target = tab(id);
+    if (!target)
+        return nullptr;
+    target->ntp = false;
+    target->popup_pending = true;
+    target->loading = true;
+    target->page.url = url.empty() ? "about:blank" : url;
+    const auto bounds = ui->web_bounds();
+    target->page.view_width = std::max(1, int(std::lround(bounds.width * ui_scale)));
+    target->page.view_height = std::max(1, int(std::lround(bounds.height * ui_scale)));
+    target->page.invalidate = [this] { changed(); };
+    target->page.repaint = [this, id] {
+        if (current() && current()->id == id)
+            window->invalidate(ui->web_bounds());
+    };
+    pending_popups_[{source, popup_id}] = id;
+    return target;
+}
+void BrowserController::abort_popup(int source, int popup_id) {
+    const auto it = pending_popups_.find({source, popup_id});
+    if (it == pending_popups_.end())
+        return;
+    if (auto target = tab(it->second)) {
+        target->popup_pending = false;
+        target->page.closed = true;
+        target->client = nullptr;
+    }
+    pending_popups_.erase(it);
+    changed();
 }
 void BrowserController::update_favicon(int id, const std::string &url) {
     auto t = tab(id);

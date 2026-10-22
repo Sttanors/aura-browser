@@ -27,7 +27,7 @@ class LinuxInstallerTests(unittest.TestCase):
                 z.writestr('Aura2/branding/aura.png', 'icon')
             installer = root/'Aura setup.run'
             build(archive, installer)
-            env = dict(os.environ, HOME=str(home), XDG_DATA_HOME=str(data))
+            env = dict(os.environ, AURA_INSTALL_SYSTEM_ROOT=str(root/"empty-system"), HOME=str(home), XDG_DATA_HOME=str(data))
             def run(*args, **kw):
                 return subprocess.run(args, env=env, check=True, text=True, capture_output=True, **kw)
             run('bash', str(installer))
@@ -61,7 +61,7 @@ class LinuxInstallerTests(unittest.TestCase):
             build(archive, installer)
             home = root/'home'
             home.mkdir()
-            env = dict(os.environ, HOME=str(home), XDG_DATA_HOME=str(home/'data'))
+            env = dict(os.environ, AURA_INSTALL_SYSTEM_ROOT=str(root/"empty-system"), HOME=str(home), XDG_DATA_HOME=str(home/'data'))
             original = installer.read_bytes()
             installer.write_bytes(original[:-4]+b'bad!')
             p = subprocess.run(['bash', str(installer)], env=env, capture_output=True)
@@ -93,11 +93,27 @@ class LinuxInstallerTests(unittest.TestCase):
                 z.writestr('Aura2/aura_browser', '#!/usr/bin/env bash\nexit 1\n')
             installer = root/'bad.run'
             build(archive, installer)
-            p = subprocess.run(['bash', str(installer)], env=dict(os.environ, HOME=str(home), XDG_DATA_HOME=str(data)),
+            p = subprocess.run(['bash', str(installer)], env=dict(os.environ, AURA_INSTALL_SYSTEM_ROOT=str(root/"empty-system"), HOME=str(home), XDG_DATA_HOME=str(data)),
                                capture_output=True)
             self.assertNotEqual(p.returncode, 0)
             self.assertEqual((app/'aura_browser').read_text(), 'previous executable')
             self.assertEqual((profile/'profile.toml').read_text(), 'keep')
+
+    def test_refuses_to_shadow_existing_system_package(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);home=root/'home';home.mkdir()
+            system=root/'system'
+            (system/'usr/bin').mkdir(parents=True)
+            (system/'usr/share/applications').mkdir(parents=True)
+            binary=system/'usr/bin/aura-browser';binary.write_text('#!/bin/sh\n');binary.chmod(0o755)
+            (system/'usr/share/applications/aura-browser.desktop').write_text('[Desktop Entry]\n')
+            archive=root/'runtime.zip'
+            with zipfile.ZipFile(archive,'w') as z:z.writestr('Aura2/aura_browser','unused')
+            installer=root/'setup.run';build(archive,installer)
+            result=subprocess.run(['bash',str(installer)],env=dict(os.environ,HOME=str(home),XDG_DATA_HOME=str(home/'data'),AURA_INSTALL_SYSTEM_ROOT=str(system)),capture_output=True,text=True)
+            self.assertNotEqual(result.returncode,0)
+            self.assertIn('system package',result.stderr)
+            self.assertFalse((home/'data/aura-browser').exists())
 
 
 if __name__ == '__main__':
