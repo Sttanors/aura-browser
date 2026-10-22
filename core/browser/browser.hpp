@@ -22,6 +22,7 @@ std::string password_origin(const std::string &url);
 class BrowserUi;
 struct Tab {
     int id = 0;
+    int workspace = 0;
     uint64_t navigation_serial = 0;
     DiagnosticState page;
     CefRefPtr<DiagnosticClient> client;
@@ -127,6 +128,13 @@ class BrowserController {
     std::function<void(int)> menu_action;
     int menu_x = 0, menu_y = 0, menu_width = 240;
     int active = 0, width = 1360, height = 900;
+    int workspace = 0;
+    std::vector<int> visible_tabs() const;
+    void cycle_tab(int direction);
+    void select_visible_tab(int number);
+    std::string workspace_name() const;
+    void switch_workspace(int id);
+    void remove_workspace(int id);
     double scale = 1, ui_scale = 1;
     bool quitting = false;
     int find_matches = 0, find_active = 0, tools_open = 0;
@@ -151,7 +159,7 @@ class BrowserController {
     void tick();
     void changed(bool persistent = false);
     void new_tab(std::string url = "aura://newtab", bool private_tab = false,
-                 bool foreground = true, bool pinned = false);
+                 bool foreground = true, bool pinned = false, int workspace = -1);
     void activate(int index);
     void close_tab(int index);
     void reopen();
@@ -225,6 +233,7 @@ class BrowserController {
     int next_id_ = 1, created_ = 0, closed_ = 0;
     CefRefPtr<CefRequestContext> &private_context_;
     std::vector<SavedTab> recently_closed_;
+    std::map<int, int> workspace_selection_;
     std::vector<std::filesystem::path> download_paths_;
     std::map<std::pair<int, int>, int> pending_popups_;
     std::vector<std::function<void()>> pending_;

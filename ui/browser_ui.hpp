@@ -19,7 +19,8 @@ class BrowserUi {
         Updates,
         Import,
         Passwords,
-        Filters
+        Filters,
+        Workspaces
     };
     BrowserUi(BrowserController &owner, const std::filesystem::path &font);
     ~BrowserUi();
@@ -44,6 +45,8 @@ class BrowserUi {
     std::string import_report() const;
     std::string passwords_report() const;
     std::string filters_report() const;
+    std::string workspaces_report() const;
+    void open_workspaces(int move_tab = -1);
     void passwords_locked() {
         clear_password_fields();
         password_mode_ = 0;
@@ -61,6 +64,13 @@ class BrowserUi {
 
   private:
     BrowserController &app_;
+    TextEditor workspace_input_;
+    bool workspace_input_focus_ = false;
+    int workspace_edit_ = -1, workspace_move_tab_ = -1, workspace_scroll_ = 0;
+    std::string workspace_error_;
+    void save_workspace();
+    void draw_workspaces(SkCanvas &, Rect);
+    void workspaces_pointer(Rect, int, int);
     sk_sp<SkTypeface> regular_, medium_;
     sk_sp<SkImage> web_backdrop_;
     int backdrop_x_ = 0, backdrop_y_ = 0;

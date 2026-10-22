@@ -603,3 +603,42 @@ TEST(Navigation, ValidatesAuthorityBeforeTreatingPunctuationAsAddress) {
                                     "intranet:", "intranet:-1", "a..b", "localhostevil"})
         EXPECT_TRUE(navigation_url(input).starts_with("https://duckduckgo.com/?q=")) << input;
 }
+
+TEST(Profile, WorkspacesPersistTabsAndRemovalMovesDataToDefault) {
+    auto root = std::filesystem::temp_directory_path() /
+                ("aura-workspaces-" +
+                 std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    {
+        Profile p(root);
+        int work = p.add_workspace("Работа");
+        ASSERT_GT(work, 0);
+        EXPECT_EQ(p.add_workspace("Работа"), -1);
+        EXPECT_EQ(p.add_workspace("  "), -1);
+        EXPECT_EQ(p.add_workspace("Bad\nName"), -1);
+        p.windows = {
+            {{{"https://example.test/", true, work, true}, {"https://personal.test/", false, 0}},
+             0,
+             work}};
+        ASSERT_TRUE(p.rename_workspace(work, "Работа и учёба"));
+        p.save();
+    }
+    {
+        Profile p(root);
+        ASSERT_EQ(p.workspaces.size(), 2);
+        ASSERT_EQ(p.windows.size(), 1);
+        const int work = p.workspaces.back().id;
+        EXPECT_EQ(p.workspaces.back().name, "Работа и учёба");
+        EXPECT_EQ(p.windows[0].workspace, work);
+        EXPECT_EQ(p.windows[0].tabs[0].workspace, work);
+        EXPECT_TRUE(p.windows[0].tabs[0].pinned);
+        EXPECT_TRUE(p.windows[0].tabs[0].workspace_active);
+        EXPECT_FALSE(p.remove_workspace(0));
+        EXPECT_TRUE(p.remove_workspace(work));
+        EXPECT_EQ(p.windows[0].workspace, 0);
+        EXPECT_EQ(p.windows[0].tabs[0].workspace, 0);
+        EXPECT_EQ(p.windows[0].tabs.size(), 2);
+        p.save();
+    }
+    EXPECT_EQ(Profile(root).workspaces.size(), 1);
+    std::filesystem::remove_all(root);
+}

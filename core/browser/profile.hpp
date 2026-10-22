@@ -20,10 +20,17 @@ struct Shortcut {
 struct SavedTab {
     std::string url;
     bool pinned = false;
+    int workspace = 0;
+    bool workspace_active = false;
 };
 struct SavedWindow {
     std::vector<SavedTab> tabs;
     int active = 0;
+    int workspace = 0;
+};
+struct Workspace {
+    int id = 0;
+    std::string name;
 };
 class Profile : public BrowserPreferences {
   public:
@@ -32,6 +39,11 @@ class Profile : public BrowserPreferences {
     std::vector<Visit> history, bookmarks;
     std::vector<SavedTab> session;
     std::vector<SavedWindow> windows;
+    std::vector<Workspace> workspaces{{0, "Personal space"}};
+    bool has_workspace(int id) const;
+    int add_workspace(std::string name);
+    bool rename_workspace(int id, std::string name);
+    bool remove_workspace(int id);
     std::vector<Shortcut> shortcuts = {{"Wikipedia", "https://www.wikipedia.org/"},
                                        {"GitHub", "https://github.com/"},
                                        {"MDN Web Docs", "https://developer.mozilla.org/"}};

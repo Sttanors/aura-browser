@@ -356,14 +356,17 @@ Rect BrowserUi::panel_bounds() const {
                            : panel_ == Filters    ? 900
                                                   : 660,
                            r.width - 24);
-    const int h = std::min(panel_ == Settings     ? 760
-                           : panel_ == Extensions ? 700
-                           : panel_ == Shortcuts  ? 700
-                           : panel_ == Passwords  ? 700
-                           : panel_ == Import     ? 700
-                           : panel_ == Filters    ? 700
-                                                  : 580,
-                           height_ - 124);
+    const int h =
+        std::min(panel_ == Settings     ? 760
+                 : panel_ == Extensions ? 700
+                 : panel_ == Shortcuts  ? 700
+                 : panel_ == Passwords  ? 700
+                 : panel_ == Import     ? 700
+                 : panel_ == Filters    ? 700
+                 : panel_ == Workspaces
+                     ? std::clamp(218 + int(app_.profile.workspaces.size()) * 52, 380, 700)
+                     : 580,
+                 height_ - 124);
     return {r.x + (r.width - w) / 2, std::max(100, (height_ - h) / 2), w, h};
 }
 Rect BrowserUi::dialog_bounds() const {
@@ -474,7 +477,7 @@ void BrowserUi::draw(SkCanvas &c) {
     fill(c, {240, 0, width_ - 240, height_}, 0, SkColorSetA(t.background, 80));
     brand_logo(c, {20, 17, 30, 30});
     label(c, medium_, "aura", 58, 40, 23, ink);
-    label(c, regular_, app_.tr("Personal space"), 24, 65, 11, muted);
+    label(c, regular_, app_.workspace_name(), 24, 65, 11, muted, 196);
     auto button = [&](Rect rect, const std::string &name, bool enabled = true,
                       bool selected = false) {
         if (enabled && !name.empty())
@@ -493,24 +496,28 @@ void BrowserUi::draw(SkCanvas &c) {
     label(c, medium_, app_.tr("New tab"), 59, 113, 13, ink);
     label(c, regular_, "Ctrl T", 170, 112, 10, muted);
     label(c, regular_, app_.tr("Tabs"), 24, 161, 12, muted);
-    label(c, regular_, std::to_string(app_.tabs.size()), 207, 161, 9, muted);
+    const auto visible = app_.visible_tabs();
+    const int visible_active =
+        int(std::find(visible.begin(), visible.end(), app_.active) - visible.begin());
+    label(c, regular_, std::to_string(visible.size()), 207, 161, 9, muted);
     const int list_bottom = height_ - 220;
     int tab_capacity = std::max(1, (list_bottom - 178) / 52);
     if (current && (current->id != visible_active_id_ || app_.active != visible_active_index_)) {
-        if (app_.active < tab_scroll_)
-            tab_scroll_ = app_.active;
-        else if (app_.active >= tab_scroll_ + tab_capacity)
-            tab_scroll_ = app_.active - tab_capacity + 1;
+        if (visible_active < tab_scroll_)
+            tab_scroll_ = visible_active;
+        else if (visible_active >= tab_scroll_ + tab_capacity)
+            tab_scroll_ = visible_active - tab_capacity + 1;
         visible_active_id_ = current->id;
         visible_active_index_ = app_.active;
     }
     tab_scroll_ =
-        std::clamp(tab_scroll_, 0, std::max(0, static_cast<int>(app_.tabs.size()) - tab_capacity));
+        std::clamp(tab_scroll_, 0, std::max(0, static_cast<int>(visible.size()) - tab_capacity));
     c.save();
     c.clipRect(SkRect::MakeLTRB(12, 176, 232, list_bottom));
-    for (int i = tab_scroll_; i < static_cast<int>(app_.tabs.size()); ++i) {
+    for (int position = tab_scroll_; position < static_cast<int>(visible.size()); ++position) {
+        const int i = visible[position];
         auto &tab = *app_.tabs[i];
-        const int y = 178 + (i - tab_scroll_) * 52;
+        const int y = 178 + (position - tab_scroll_) * 52;
         if (y + 46 > list_bottom)
             break;
         const bool selected = i == app_.active;
@@ -723,7 +730,8 @@ void BrowserUi::draw(SkCanvas &c) {
                                       app_.tr("About Aura and updates"),
                                       app_.tr("Import browser data"),
                                       app_.tr("Passwords"),
-                                      app_.tr("Filter lists")};
+                                      app_.tr("Filter lists"),
+                                      app_.tr("Workspaces")};
         label(c, medium_, titles[panel_], r.x + 28, r.y + 47, 23, ink);
         icon(c, "close", r.x + r.width - 43, r.y + 26, 19, muted);
         if (panel_ == History || panel_ == Bookmarks) {
@@ -819,6 +827,8 @@ void BrowserUi::draw(SkCanvas &c) {
             draw_passwords(c, r);
         if (panel_ == Filters)
             draw_filters(c, r);
+        if (panel_ == Workspaces)
+            draw_workspaces(c, r);
     }
 
     if (editing) {
@@ -2412,6 +2422,8 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
             else if (panel_ == Filters && target == &filter_input_ && filter_input_focus_ &&
                      !app_.filter_lists().busy())
                 live = &filter_input_;
+            else if (panel_ == Workspaces && target == &workspace_input_ && workspace_input_focus_)
+                live = &workspace_input_;
             else if (panel_ == Extensions && target == &extension_input_ && extension_input_focus_)
                 live = &extension_input_;
             else if (panel_ == Import && target == &import_input_ && import_input_focus_ &&
@@ -2424,7 +2436,8 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
                 live = target;
             if (live && !text.empty() &&
                 (panel_ != Passwords || live->value.size() + text.size() <= 8192) &&
-                (live != &filter_input_ || live->value.size() + text.size() <= 4096))
+                (live != &filter_input_ || live->value.size() + text.size() <= 4096) &&
+                (live != &workspace_input_ || live->value.size() + text.size() <= 120))
                 live->insert(text);
             if (live == &find)
                 app_.find_text(find.value);
@@ -2484,6 +2497,7 @@ bool BrowserUi::key(const CefKeyEvent &key) {
         shortcut_focus_ = -1;
         password_focus_ = -1;
         filter_input_focus_ = false;
+        workspace_input_focus_ = false;
         if (auto tab = app_.current(); tab && tab->browser)
             tab->browser->GetHost()->SetFocus(false);
         if (!focus_targets_.empty()) {
@@ -2500,7 +2514,7 @@ bool BrowserUi::key(const CefKeyEvent &key) {
         keyboard_focus_ < int(focus_targets_.size()) && (code == 0x0D || code == 0x20) &&
         !settings_search_focus_ && settings_edit_.empty() && !extension_input_focus_ &&
         !import_input_focus_ && !filter_input_focus_ && shortcut_focus_ < 0 &&
-        password_focus_ < 0 && !editing) {
+        password_focus_ < 0 && !workspace_input_focus_ && !editing) {
         const auto r = focus_targets_[keyboard_focus_];
         const int previous = keyboard_focus_;
         const auto previous_panel = panel_;
@@ -2535,6 +2549,10 @@ bool BrowserUi::key(const CefKeyEvent &key) {
         }
     }
     if (down) {
+        if (ctrl && shift && code == 'E' && app_.dialogs.empty()) {
+            open_workspaces();
+            return true;
+        }
         last_key_ = key;
         if (!app_.dialogs.empty()) {
             if (code == 0x0D)
@@ -2546,6 +2564,35 @@ bool BrowserUi::key(const CefKeyEvent &key) {
                 app_.changed();
                 return code < 0x20 || ctrl || (code >= 0x21 && code <= 0x2E);
             }
+            return true;
+        }
+        if (panel_ == Workspaces && workspace_input_focus_) {
+            if (code == 0x0D) {
+                save_workspace();
+                return true;
+            }
+            if (code == 0x1B) {
+                workspace_input_focus_ = false;
+                workspace_edit_ = -1;
+                app_.changed();
+                return true;
+            }
+            if (!ctrl || (code != 'L' && code != 'T' && code != 'W' && code != 'Q')) {
+                editor_key(workspace_input_, key);
+                app_.changed();
+                return code < 0x20 || ctrl || (code >= 0x21 && code <= 0x2E);
+            }
+        }
+        if (panel_ == Workspaces && !workspace_input_focus_ &&
+            (code == 0x21 || code == 0x22 || code == 0x24 || code == 0x23)) {
+            const int capacity = std::max(1, (panel_bounds().height - 218) / 52);
+            const int maximum = std::max(0, int(app_.profile.workspaces.size()) - capacity);
+            workspace_scroll_ = std::clamp(
+                code == 0x24   ? 0
+                : code == 0x23 ? maximum
+                               : workspace_scroll_ + (code == 0x22 ? capacity : -capacity),
+                0, maximum);
+            app_.changed();
             return true;
         }
         if (panel_ == Shortcuts && shortcut_focus_ >= 0) {
@@ -2698,13 +2745,11 @@ bool BrowserUi::key(const CefKeyEvent &key) {
             return true;
         }
         if (ctrl && code == 0x09) {
-            if (!app_.tabs.empty())
-                app_.activate((app_.active + (shift ? static_cast<int>(app_.tabs.size()) - 1 : 1)) %
-                              app_.tabs.size());
+            app_.cycle_tab(shift ? -1 : 1);
             return true;
         }
         if (ctrl && code >= '1' && code <= '9') {
-            app_.activate(code == '9' ? static_cast<int>(app_.tabs.size()) - 1 : code - '1');
+            app_.select_visible_tab(code - '0');
             return true;
         }
         if (alt && (code == 0x25 || code == 0x27)) {
@@ -2935,6 +2980,9 @@ void BrowserUi::text(const std::string &value) {
             app_.passwords.touch();
         }
         erase_secret(clean);
+    } else if (panel_ == Workspaces) {
+        if (workspace_input_focus_ && workspace_input_.value.size() + clean.size() <= 120)
+            workspace_input_.insert(clean);
     } else if (panel_ == Filters) {
         if (filter_input_focus_ && !app_.filter_lists().busy() &&
             filter_input_.value.size() + clean.size() <= 4096)
@@ -3031,8 +3079,11 @@ void BrowserUi::pointer(const PointerInput &input) {
         popup_pointer(input))
         return;
     if (input.kind == PointerInput::Move && drag_tab_ >= 0 && std::abs(y - drag_y_) > 18) {
+        const auto visible = app_.visible_tabs();
+        if (visible.empty())
+            return;
         const int index =
-            std::clamp((y - 178) / 52 + tab_scroll_, 0, static_cast<int>(app_.tabs.size()) - 1);
+            visible[std::clamp((y - 178) / 52 + tab_scroll_, 0, int(visible.size()) - 1)];
         app_.move_tab(drag_tab_, index);
         drag_tab_ = index;
         drag_y_ = y;
@@ -3050,6 +3101,12 @@ void BrowserUi::pointer(const PointerInput &input) {
     if (input.kind == PointerInput::Wheel && panel_ == Filters) {
         panel_scroll_ = std::clamp(panel_scroll_ + (input.dy < 0 ? 1 : -1), 0,
                                    std::max(0, int(filter_lines_.size()) - 1));
+        return;
+    }
+    if (input.kind == PointerInput::Wheel && panel_ == Workspaces) {
+        const int capacity = std::max(1, (panel_bounds().height - 218) / 52);
+        workspace_scroll_ = std::clamp(workspace_scroll_ + (input.dy < 0 ? 1 : -1), 0,
+                                       std::max(0, int(app_.profile.workspaces.size()) - capacity));
         return;
     }
     if (input.kind == PointerInput::Wheel && panel_ == Shortcuts) {
@@ -3092,9 +3149,7 @@ void BrowserUi::pointer(const PointerInput &input) {
     }
     if (input.kind == PointerInput::Wheel && x < 240) {
         if (app_.profile.wheel_switch && !app_.tabs.empty())
-            app_.activate(
-                (app_.active + (input.dy < 0 ? 1 : static_cast<int>(app_.tabs.size()) - 1)) %
-                app_.tabs.size());
+            app_.cycle_tab(input.dy < 0 ? 1 : -1);
         else
             tab_scroll_ = std::max(0, tab_scroll_ + (input.dy < 0 ? 1 : -1));
         return;
@@ -3234,6 +3289,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                 passwords_pointer(r, x, y);
             else if (panel_ == Filters)
                 filters_pointer(r, x, y);
+            else if (panel_ == Workspaces)
+                workspaces_pointer(r, x, y);
         }
         return;
     }
@@ -3258,7 +3315,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                 {3, app_.tr("Close window"), true, "Ctrl+Shift+W"},
                 {5, app_.tr("Restore previous session"),
                  !app_.state()->previous_restored && !app_.state()->previous_windows.empty()},
-                {4, app_.tr("Exit Aura"), true, "Ctrl+Q"}};
+                {4, app_.tr("Exit Aura"), true, "Ctrl+Q"},
+                {6, app_.tr("Workspaces"), !app_.private_window, "Ctrl+Shift+E"}};
             app_.menu_width = 320;
             app_.menu_x = 16;
             app_.menu_y = 76;
@@ -3269,6 +3327,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                     app_.request_quit();
                 else if (command == 5)
                     app_.restore_previous_session();
+                else if (command == 6)
+                    open_workspaces();
                 else
                     app_.request_exit();
             };
@@ -3279,10 +3339,12 @@ void BrowserUi::pointer(const PointerInput &input) {
             return;
         }
         if (y >= 178 && y < height_ - 220) {
-            int index = (y - 178) / 52 + tab_scroll_;
-            if (index - tab_scroll_ >= std::max(1, (height_ - 220 - 178) / 52))
+            const auto visible = app_.visible_tabs();
+            const int position = (y - 178) / 52 + tab_scroll_;
+            if (position - tab_scroll_ >= std::max(1, (height_ - 220 - 178) / 52))
                 return;
-            if (index < static_cast<int>(app_.tabs.size())) {
+            if (position < static_cast<int>(visible.size())) {
+                const int index = visible[position];
                 if (input.button == 2 && !app_.profile.middle_close)
                     return;
                 if (input.button == 2 || (x > 195 && !app_.tabs[index]->pinned))
@@ -3299,7 +3361,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                                                                  : app_.tr("Mute tab")},
                                      {3, app_.tr("Duplicate tab")},
                                      {4, app_.tr("Close tab")},
-                                     {5, app_.tr("Reopen closed tab")}};
+                                     {5, app_.tr("Reopen closed tab")},
+                                     {6, app_.tr("Move to workspace"), !app_.private_window}};
                         app_.menu_x = std::clamp(x + 8, 8, width_ - 250);
                         app_.menu_y = std::clamp(y, 32, height_ - 180);
                         app_.menu_action = [this, id](int command) {
@@ -3319,6 +3382,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                                 app_.new_tab(tab->page.url, tab->private_tab);
                             else if (command == 4)
                                 app_.close_tab(index);
+                            else if (command == 6)
+                                open_workspaces(id);
                             else
                                 app_.reopen();
                         };
@@ -4360,6 +4425,160 @@ std::string BrowserUi::filters_report() const {
         out += "{\"index\":" + std::to_string(i) +
                ",\"edit\":" + rect({r.x + 28, y, r.width - 150, 32}) +
                ",\"remove\":" + rect({r.x + r.width - 110, y, 82, 32}) + "}";
+    }
+    return out + "]}";
+}
+} // namespace aura
+
+namespace aura {
+void BrowserUi::open_workspaces(int move_tab) {
+    panel(Workspaces);
+    workspace_move_tab_ = move_tab;
+    workspace_edit_ = -1;
+    workspace_input_focus_ = false;
+    workspace_input_.set("");
+    workspace_error_.clear();
+    workspace_scroll_ = 0;
+    app_.changed();
+}
+void BrowserUi::save_workspace() {
+    if (app_.private_window)
+        return;
+    const bool editing = workspace_edit_ >= 0;
+    const int id = editing ? workspace_edit_ : app_.profile.add_workspace(workspace_input_.value);
+    if (id < 0 || (editing && !app_.profile.rename_workspace(id, workspace_input_.value))) {
+        workspace_error_ = app_.tr("Enter a short, unique name. Up to 32 workspaces.");
+        app_.changed();
+        return;
+    }
+    workspace_error_.clear();
+    workspace_input_.set("");
+    workspace_input_focus_ = false;
+    workspace_edit_ = -1;
+    if (!editing && workspace_move_tab_ < 0)
+        app_.switch_workspace(id);
+    app_.changed(true);
+}
+void BrowserUi::draw_workspaces(SkCanvas &c, Rect r) {
+    const auto t = interface_theme(app_.profile);
+    const bool enabled = !app_.private_window;
+    label(c, regular_,
+          app_.tr(enabled ? "Switch tasks without reloading your pages."
+                          : "Workspaces are unavailable in private windows."),
+          r.x + 28, r.y + 74, 12, t.muted, r.width - 56);
+    auto button = [&](Rect b, const std::string &text, bool active, bool primary = false) {
+        if (active)
+            focus_target(b);
+        fill(c, b, 8,
+             SkColorSetA(t.accent, primary                                   ? 45
+                                   : inside(b, hover_x_, hover_y_) && active ? 28
+                                                                             : 12));
+        border(c, b, 8, SkColorSetA(t.accent, active ? 110 : 30));
+        centered_label(c, medium_, app_.tr(text), b, 12, active ? t.text : t.muted, 5, 5);
+    };
+    label(c, regular_, app_.tr("Workspace name"), r.x + 28, r.y + 99, 11, t.muted);
+    Rect input{r.x + 28, r.y + 108, r.width - 166, 36};
+    if (enabled)
+        focus_target(input);
+    fill(c, input, 8, t.background);
+    border(c, input, 8, SkColorSetA(t.accent, workspace_input_focus_ ? 220 : 85));
+    draw_editor(c, workspace_input_, {input.x + 10, input.y + 2, input.width - 20, 32}, 13,
+                workspace_input_focus_);
+    button({r.x + r.width - 126, r.y + 108, 98, 36}, workspace_edit_ >= 0 ? "Save name" : "Create",
+           enabled && (workspace_edit_ >= 0 || app_.profile.workspaces.size() < 32), true);
+    label(c, regular_, workspace_error_, r.x + 28, r.y + 162, 11, t.text, r.width - 56);
+    if (workspace_move_tab_ >= 0)
+        label(c, regular_, app_.tr("Choose where to move the selected tab."), r.x + 28, r.y + 185,
+              11, t.muted, r.width - 56);
+    const int capacity = std::max(1, (r.height - 218) / 52);
+    workspace_scroll_ = std::clamp(workspace_scroll_, 0,
+                                   std::max(0, int(app_.profile.workspaces.size()) - capacity));
+    for (int i = workspace_scroll_;
+         i < int(app_.profile.workspaces.size()) && i < workspace_scroll_ + capacity; ++i) {
+        const auto &w = app_.profile.workspaces[i];
+        const int y = r.y + 192 + (i - workspace_scroll_) * 52;
+        const int count =
+            int(std::count_if(app_.tabs.begin(), app_.tabs.end(),
+                              [&](const auto &tab) { return tab->workspace == w.id; }));
+        const auto name = app_.tr(w.name) + " (" + std::to_string(count) + ")";
+        if (w.id == app_.workspace)
+            fill(c, {r.x + 18, y - 3, r.width - 36, 46}, 8, SkColorSetA(t.accent, 18));
+        label(c, w.id == app_.workspace ? medium_ : regular_, name, r.x + 28, y + 22, 13, t.text,
+              std::max(40, r.width - 364));
+        button({r.x + r.width - 324, y, 86, 34},
+               workspace_move_tab_ >= 0 ? "Move here"
+               : w.id == app_.workspace ? "Current"
+                                        : "Open",
+               enabled);
+        button({r.x + r.width - 230, y, 112, 34}, "Rename", enabled);
+        button({r.x + r.width - 110, y, 82, 34}, "Remove", enabled && w.id != 0);
+    }
+    label(c, regular_, app_.tr("Page Up / Page Down to scroll. Private tabs are never saved."),
+          r.x + 28, r.y + r.height - 13, 10, t.muted, r.width - 56);
+}
+void BrowserUi::workspaces_pointer(Rect r, int x, int y) {
+    if (app_.private_window)
+        return;
+    if (inside({r.x + 28, r.y + 108, r.width - 166, 36}, x, y)) {
+        workspace_input_focus_ = true;
+        keyboard_focus_ = -1;
+        app_.window->caret(r.x + 38, r.y + 142);
+        return;
+    }
+    if (inside({r.x + r.width - 126, r.y + 108, 98, 36}, x, y)) {
+        save_workspace();
+        return;
+    }
+    workspace_input_focus_ = false;
+    const int index = workspace_scroll_ + (y - r.y - 192) / 52;
+    const int capacity = std::max(1, (r.height - 218) / 52);
+    if (y < r.y + 192 || index >= int(app_.profile.workspaces.size()) ||
+        index >= workspace_scroll_ + capacity)
+        return;
+    const auto item = app_.profile.workspaces[index];
+    if (x >= r.x + r.width - 324 && x < r.x + r.width - 238) {
+        if (workspace_move_tab_ >= 0) {
+            if (auto tab = app_.tab(workspace_move_tab_))
+                tab->workspace = item.id;
+            app_.changed(true);
+        } else
+            app_.switch_workspace(item.id);
+        panel(None);
+    } else if (x >= r.x + r.width - 230 && x < r.x + r.width - 118) {
+        workspace_edit_ = item.id;
+        workspace_input_.set(app_.tr(item.name), true);
+        workspace_input_focus_ = true;
+    } else if (x >= r.x + r.width - 110 && item.id != 0) {
+        app_.confirm_action(app_.tr("Remove workspace?") + " " + app_.tr(item.name),
+                            app_.tr("Tabs will move to Personal space. Pages stay open."),
+                            [this, id = item.id] { app_.remove_workspace(id); });
+    }
+}
+std::string BrowserUi::workspaces_report() const {
+    if (panel_ != Workspaces)
+        return "null";
+    const auto r = panel_bounds();
+    auto rect = [](Rect b) {
+        return "[" + std::to_string(b.x) + "," + std::to_string(b.y) + "," +
+               std::to_string(b.width) + "," + std::to_string(b.height) + "]";
+    };
+    std::string out = "{\"input\":" + rect({r.x + 28, r.y + 108, r.width - 166, 36}) +
+                      ",\"save\":" + rect({r.x + r.width - 126, r.y + 108, 98, 36}) +
+                      ",\"input_length\":" + std::to_string(workspace_input_.value.size()) +
+                      ",\"error\":" + json_quote(workspace_error_) + ",\"items\":[";
+    const int capacity = std::max(1, (r.height - 218) / 52);
+    bool first = true;
+    for (int i = workspace_scroll_;
+         i < int(app_.profile.workspaces.size()) && i < workspace_scroll_ + capacity; ++i) {
+        if (!first)
+            out += ',';
+        first = false;
+        const auto &w = app_.profile.workspaces[i];
+        const int y = r.y + 192 + (i - workspace_scroll_) * 52;
+        out += "{\"id\":" + std::to_string(w.id) + ",\"name\":" + json_quote(w.name) +
+               ",\"open\":" + rect({r.x + r.width - 324, y, 86, 34}) +
+               ",\"rename\":" + rect({r.x + r.width - 230, y, 112, 34}) +
+               ",\"remove\":" + rect({r.x + r.width - 110, y, 82, 34}) + "}";
     }
     return out + "]}";
 }

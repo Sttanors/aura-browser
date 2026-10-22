@@ -207,6 +207,23 @@ void Profile::load() {
         }
     }
     active = std::max(0, table["active"].value_or(0));
+    workspaces = {{0, "Personal space"}};
+    if (auto entries = table["workspaces"].as_array())
+        for (const auto &entry : *entries) {
+            if (workspaces.size() >= 32)
+                break;
+            if (auto row = entry.as_table()) {
+                const int id = (*row)["id"].value_or(-1);
+                auto name = trim((*row)["name"].value_or(std::string{}));
+                if (id < 0 || id > 1000000 || name.empty() || name.size() > 120 ||
+                    name.find_first_of("\r\n\t") != std::string::npos)
+                    continue;
+                if (id == 0)
+                    workspaces.front().name = name;
+                else if (!has_workspace(id))
+                    workspaces.push_back({id, std::move(name)});
+            }
+        }
     session_clean = table["session_clean"].value_or(true);
     history.clear();
     bookmarks.clear();
@@ -229,7 +246,11 @@ void Profile::load() {
         for (auto &n : *a)
             if (auto t = n.as_table())
                 session.push_back({(*t)["url"].value_or(std::string("aura://newtab")),
-                                   (*t)["pinned"].value_or(false)});
+                                   (*t)["pinned"].value_or(false),
+                                   has_workspace((*t)["workspace"].value_or(0))
+                                       ? (*t)["workspace"].value_or(0)
+                                       : 0,
+                                   (*t)["workspace_active"].value_or(false)});
     if (auto entries = table["windows"].as_array())
         for (const auto &node : *entries) {
             if (windows.size() >= 32)
@@ -237,6 +258,9 @@ void Profile::load() {
             if (auto row = node.as_table()) {
                 SavedWindow window;
                 window.active = std::max(0, (*row)["active"].value_or(0));
+                window.workspace = (*row)["workspace"].value_or(0);
+                if (!has_workspace(window.workspace))
+                    window.workspace = 0;
                 if (auto tabs = (*row)["tabs"].as_array())
                     for (const auto &tab : *tabs) {
                         if (window.tabs.size() >= 500)
@@ -246,7 +270,11 @@ void Profile::load() {
                             try {
                                 if (!url.empty())
                                     window.tabs.push_back(
-                                        {navigation_url(url), (*item)["pinned"].value_or(false)});
+                                        {navigation_url(url), (*item)["pinned"].value_or(false),
+                                         has_workspace((*item)["workspace"].value_or(0))
+                                             ? (*item)["workspace"].value_or(0)
+                                             : 0,
+                                         (*item)["workspace_active"].value_or(false)});
                             } catch (const std::exception &) {
                             }
                         }
@@ -260,7 +288,11 @@ void Profile::load() {
 }
 void Profile::save() const {
     toml::table root;
-    root.insert("schema", 5);
+    root.insert("schema", 6);
+    toml::array spaces;
+    for (const auto &space : workspaces)
+        spaces.push_back(toml::table{{"id", space.id}, {"name", space.name}});
+    root.insert("workspaces", std::move(spaces));
     root.insert("active", active);
     root.insert("session_clean", session_clean);
     for (const auto &setting : settings_catalog())
@@ -279,15 +311,22 @@ void Profile::save() const {
     root.insert("bookmarks", list(bookmarks));
     toml::array tabs;
     for (auto &t : session)
-        tabs.push_back(toml::table{{"url", t.url}, {"pinned", t.pinned}});
+        tabs.push_back(toml::table{{"url", t.url},
+                                   {"pinned", t.pinned},
+                                   {"workspace", t.workspace},
+                                   {"workspace_active", t.workspace_active}});
     root.insert("session", std::move(tabs));
     toml::array saved_windows;
     for (const auto &window : windows) {
         toml::array saved_tabs;
         for (const auto &t : window.tabs)
-            saved_tabs.push_back(toml::table{{"url", t.url}, {"pinned", t.pinned}});
-        saved_windows.push_back(
-            toml::table{{"active", window.active}, {"tabs", std::move(saved_tabs)}});
+            saved_tabs.push_back(toml::table{{"url", t.url},
+                                             {"pinned", t.pinned},
+                                             {"workspace", t.workspace},
+                                             {"workspace_active", t.workspace_active}});
+        saved_windows.push_back(toml::table{{"active", window.active},
+                                            {"workspace", window.workspace},
+                                            {"tabs", std::move(saved_tabs)}});
     }
     root.insert("windows", std::move(saved_windows));
     const auto temporary = directory / "profile.toml.tmp";
@@ -319,6 +358,54 @@ bool valid_shortcut(const std::string &title, const std::string &url) {
            title.find_first_of("\r\n\t") == std::string::npos;
 }
 } // namespace
+bool Profile::has_workspace(int id) const {
+    return std::any_of(workspaces.begin(), workspaces.end(),
+                       [id](const auto &w) { return w.id == id; });
+}
+int Profile::add_workspace(std::string name) {
+    name = trim(std::move(name));
+    if (workspaces.size() >= 32 || name.empty() || name.size() > 120 ||
+        name.find_first_of("\r\n\t") != std::string::npos ||
+        std::any_of(workspaces.begin(), workspaces.end(),
+                    [&](const auto &w) { return lower(w.name) == lower(name); }))
+        return -1;
+    int id = 1;
+    for (const auto &w : workspaces)
+        id = std::max(id, w.id + 1);
+    if (id > 1000000)
+        return -1;
+    workspaces.push_back({id, std::move(name)});
+    return id;
+}
+bool Profile::rename_workspace(int id, std::string name) {
+    name = trim(std::move(name));
+    if (name.empty() || name.size() > 120 || name.find_first_of("\r\n\t") != std::string::npos ||
+        std::any_of(workspaces.begin(), workspaces.end(),
+                    [&](const auto &w) { return w.id != id && lower(w.name) == lower(name); }))
+        return false;
+    for (auto &w : workspaces)
+        if (w.id == id) {
+            w.name = std::move(name);
+            return true;
+        }
+    return false;
+}
+bool Profile::remove_workspace(int id) {
+    if (id == 0 || !has_workspace(id))
+        return false;
+    std::erase_if(workspaces, [id](const auto &w) { return w.id == id; });
+    for (auto &window : windows) {
+        if (window.workspace == id)
+            window.workspace = 0;
+        for (auto &t : window.tabs)
+            if (t.workspace == id)
+                t.workspace = 0;
+    }
+    for (auto &t : session)
+        if (t.workspace == id)
+            t.workspace = 0;
+    return true;
+}
 bool Profile::add_shortcut(std::string title, std::string url) {
     if (shortcuts.size() >= 1000 || !valid_shortcut(title, url))
         return false;

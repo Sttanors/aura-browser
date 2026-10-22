@@ -3,6 +3,28 @@
 namespace aura {
 namespace {
 constexpr Translation catalog[] = {
+    {"Private window", "Приватное окно"},
+    {"Current", "Текущее"},
+    {"Open", "Открыть"},
+    {"Workspaces", "Рабочие пространства"},
+    {"Move to workspace", "Переместить в пространство"},
+    {"Workspace name", "Название пространства"},
+    {"Save name", "Сохранить имя"},
+    {"Create", "Создать"},
+    {"Move here", "Перенести"},
+    {"Rename", "Переименовать"},
+    {"Switch tasks without reloading your pages.", "Переключайте задачи без перезагрузки страниц."},
+    {"Workspaces are unavailable in private windows.",
+     "Пространства недоступны в приватных окнах."},
+    {"Enter a short, unique name. Up to 32 workspaces.",
+     "Введите короткое уникальное имя. Максимум 32 пространства."},
+    {"Choose where to move the selected tab.", "Выберите пространство для выбранной вкладки."},
+    {"Page Up / Page Down to scroll. Private tabs are never saved.",
+     "Прокрутка: Page Up / Page Down. Приватные вкладки не сохраняются."},
+    {"Remove workspace?", "Удалить пространство?"},
+    {"Tabs will move to Personal space. Pages stay open.",
+     "Вкладки перейдут в основное пространство. Страницы останутся открытыми."},
+
     {"Brave engine with EasyList, EasyPrivacy and your custom rules.",
      "Движок Brave с EasyList, EasyPrivacy и вашими правилами."},
     {"Scriptlets, CSP and unsupported procedural rules are not applied.",
