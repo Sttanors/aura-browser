@@ -1,0 +1,17 @@
+<!doctype html><meta charset="utf-8"><meta property="og:title" content="A quieter place to read"><meta name="author" content="Aura test author"><title>A quieter place to read</title>
+<nav>Navigation, subscriptions and unrelated links</nav>
+<label>Original form <input id="original" value="original"></label><button id="protect">Protect original page</button>
+<article id="story"><h1>A quieter place to read</h1><p>This article is a local fixture for a complete reading view. It explains why long articles deserve readable type, a calm column, and a reliable way back to the original page. Reader mode should keep the original form and its focus without sending any content to a remote server.</p><p>&lt;img src=x onerror=alert('READER_PAYLOAD')&gt; is literal text and must stay text.</p></article>
+<footer>Unrelated footer and advertisements</footer>
+<script nonce="aura">
+const token=Math.random().toString(36);let attacks=0;
+const form=document.getElementById('original');
+document.getElementById('protect').onclick=()=>window.onbeforeunload=window.onbeforeunload?null:()=>true;
+for(let i=0;i<45;i++) {
+ const paragraph=document.createElement('p');paragraph.textContent=`Paragraph ${i+1}. A browser should make reading comfortable while respecting the original page. The text is extracted locally, the article remains selectable, and the reader can adjust its size and width. Returning to the original page should preserve form data, scroll position, and every existing document instance.`;document.getElementById('story').append(paragraph);
+}
+const image=document.createElement('img');image.src='/missing-reader-image';image.onerror=()=>attacks++;document.getElementById('story').append(image);
+const args=new URLSearchParams(location.search);if(args.has('oversized'))for(let i=0;i<2100;i++){const p=document.createElement('p');p.textContent='This is a long paragraph for a resource-bound article test. '.repeat(8);document.getElementById('story').append(p);}if(args.has('empty'))document.getElementById('story').remove();
+function report(){const r=form.getBoundingClientRect();document.title=JSON.stringify({token,form:form.value,protected:Boolean(window.onbeforeunload),attacks,scroll:Math.round(scrollY),input:[r.x,r.y,r.width,r.height].map(Math.round),dialog:document.querySelectorAll('dialog').length});}
+report();setInterval(report,150);
+</script>

@@ -19,6 +19,9 @@ if ($version.FileMajorPart -ne $numeric[0] -or $version.FileMinorPart -ne $numer
 if ($version.ProductVersion -ne $identity.version) { throw 'Executable product version mismatch' }
 if ($version.ProductName -ne 'Aura Browser' -or $version.FileDescription -ne 'Aura Browser') { throw 'Executable identity missing' }
 if (-not (Test-Path (Join-Path $payload 'Aura2/branding/aura.ico'))) { throw 'Branding assets missing' }
+foreach ($name in 'reader/view.js','vendor/readability.js','vendor/READABILITY-LICENSE.md') {
+    if (-not (Test-Path (Join-Path $payload "Aura2/$name"))) { throw "Reader asset missing from package: $name" }
+}
 if (Test-Path (Join-Path $payload 'Aura2/bootstrap.exe')) { throw 'Unbranded CEF bootstrap leaked into package' }
 $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
 if (-not (Test-Path $iscc)) { throw 'Inno Setup 6 missing from CI image' }

@@ -126,6 +126,10 @@ bool BrowserClient::OnBeforeBrowse(CefRefPtr<CefBrowser> browser, CefRefPtr<CefF
     if (frame->IsMain()) {
         if (auto t = owner_.tab(id_)) {
             ++t->navigation_serial;
+            t->reader_active = t->reader_pending = false;
+            t->reader_context = 0;
+            t->reader_ui = "null";
+            t->selected_text.clear();
             t->media_capture = false;
             t->audio_contexts.clear();
             owner_.wake_tab(id_);
@@ -489,5 +493,17 @@ void BrowserClient::OnResetDialogState(CefRefPtr<CefBrowser>) {
             ++it;
     }
     owner_.changed();
+}
+} // namespace aura
+
+namespace aura {
+void BrowserClient::OnTextSelectionChanged(CefRefPtr<CefBrowser>, const CefString &text,
+                                           const CefRange &) {
+    if (auto t = owner_.tab(id_)) {
+        t->selected_text = text.ToString();
+        if (t->selected_text.size() > 16 * 1024 * 1024)
+            t->selected_text.clear();
+        owner_.changed();
+    }
 }
 } // namespace aura

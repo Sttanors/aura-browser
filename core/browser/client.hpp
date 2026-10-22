@@ -41,6 +41,8 @@ class BrowserClient final : public DiagnosticClient,
                                    cef_permission_request_result_t) override;
     void OnPaint(CefRefPtr<CefBrowser>, PaintElementType, const RectList &, const void *, int,
                  int) override;
+    void OnTextSelectionChanged(CefRefPtr<CefBrowser>, const CefString &,
+                                const CefRange &) override;
 #ifdef _WIN32
     void OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType, const RectList &,
                             const CefAcceleratedPaintInfo &) override;

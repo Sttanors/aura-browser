@@ -4,3 +4,5 @@ EasyList and EasyPrivacy — The EasyList authors (https://easylist.to/).
 Unmodified bundled snapshots. GPL-3.0-or-later OR CC-BY-SA-3.0-or-later.
 License policy: https://easylist.to/pages/licence.html
 Rust dependency sources: cargo build --locked fetches the exact Cargo.lock versions.
+Mozilla Readability — Apache-2.0, https://github.com/mozilla/readability
+Pinned commit and file hashes: readability-lock.json. License: READABILITY-LICENSE.md.

@@ -27,7 +27,7 @@ def runtime_archive(output: Path):
             for name in ("aura_browser.dll",):
                 shutil.copy2(build / name, stage / name)
         shutil.copytree(ROOT / "resources/fonts", stage / "fonts")
-        for folder in ("vendor", "protection", "branding"):
+        for folder in ("vendor", "protection", "branding", "reader"):
             shutil.copytree(ROOT/"resources"/folder, stage/folder)
         shutil.copy2(ROOT / "resources/default.toml", stage / "default.toml")
         license_names = ("LICENSE", "LICENSE.txt", "LICENSE.TXT", "OFL.txt", "CREDITS.html", "FTL.TXT", "zlib.h")

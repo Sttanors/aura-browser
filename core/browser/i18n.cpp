@@ -958,6 +958,30 @@ constexpr Translation catalog[] = {
     {"Save bookmark", "Сохранить закладку"},
     {"Find in page", "Найти на странице"},
 
+    {"Reader mode", "Режим чтения"},
+    {"Exit reader", "Закрыть режим чтения"},
+    {"Text size", "Размер текста"},
+    {"Reader text size", "Размер текста для чтения"},
+    {"Text size in the local reader view.", "Размер текста в локальном режиме чтения."},
+    {"Reader column width", "Ширина колонки для чтения"},
+    {"Maximum width of the reader text column.",
+     "Максимальная ширина колонки текста в режиме чтения."},
+    {"Reader font", "Шрифт для чтения"},
+    {"Font used for articles in reader mode.", "Шрифт статьи в режиме чтения."},
+    {"Open a loaded article on a website first.",
+     "Сначала откройте и дождитесь загрузки статьи на сайте."},
+    {"Reader files are missing. Reinstall Aura.",
+     "Файлы режима чтения отсутствуют. Переустановите Aura."},
+    {"Preparing reader view...", "Подготовка режима чтения…"},
+    {"Could not prepare reader view. Try again after the page loads.",
+     "Не удалось подготовить режим чтения. Повторите после загрузки страницы."},
+    {"No article found on this page.", "На этой странице не найдена статья."},
+
+    {"Narrow", "Узкая"},
+    {"Medium", "Средняя"},
+
+    {"This article is too large for reader mode. The original page is unchanged.", "Статья слишком большая для режима чтения. Исходная страница сохранена."},
+
 };
 } // namespace
 std::span<const Translation> translations() {

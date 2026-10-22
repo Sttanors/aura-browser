@@ -18,6 +18,8 @@ struct BrowserPreferences {
     int ui_zoom = 100;
     int tab_sleep_minutes = 0;
     int split_percent = 50;
+    int reader_font_size = 20, reader_width = 720;
+    std::string reader_font = "serif";
     std::string tab_sleep_exceptions;
     int theme = 0, default_zoom = 100, default_font_size = 16, minimum_font_size = 0,
         history_limit = 1000, history_days = 0, suggestion_limit = 6;

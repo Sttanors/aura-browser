@@ -29,6 +29,11 @@ struct Tab {
     int container = 0;
     uint64_t navigation_serial = 0;
     bool sleeping = false, sleep_pending = false, media_capture = false;
+    bool reader_active = false, reader_pending = false;
+    int reader_context = 0;
+    std::string reader_ui = "null";
+    std::string selected_text;
+    std::chrono::steady_clock::time_point reader_started{};
     std::map<std::string, bool> audio_contexts;
     std::chrono::steady_clock::time_point inactive_since = std::chrono::steady_clock::now();
     std::chrono::steady_clock::time_point sleep_retry_after{};
@@ -204,6 +209,8 @@ class BrowserController {
     void mute();
     bool can_sleep(const Tab &tab) const;
     void sleep_tab(int id, bool manual = true);
+    void toggle_reader();
+    void reader_event(Tab &, CefRefPtr<CefDictionaryValue>);
     void wake_tab(int id);
     void devtools();
     void find_text(const std::string &text, bool next = false, bool backwards = false);

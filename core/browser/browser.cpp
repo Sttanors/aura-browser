@@ -49,6 +49,10 @@ std::string tabs_json(const std::vector<std::unique_ptr<Tab>> &tabs) {
             << ",\"sleeping\":" << (t->sleeping ? "true" : "false")
             << ",\"creation_pending\":" << (t->creation_pending ? "true" : "false")
             << ",\"sleep_pending\":" << (t->sleep_pending ? "true" : "false")
+            << ",\"reader_active\":" << (t->reader_active ? "true" : "false")
+            << ",\"reader_pending\":" << (t->reader_pending ? "true" : "false")
+            << ",\"reader_ui\":" << t->reader_ui
+            << ",\"selection_bytes\":" << t->selected_text.size()
             << ",\"buffer_bytes\":" << t->page.view.bytes().size() + t->page.popup.bytes().size()
             << ",\"container\":" << t->container << ",\"workspace\":" << t->workspace
             << ",\"group\":" << t->group << ",\"loaded\":" << (t->page.loaded ? "true" : "false")
@@ -431,6 +435,17 @@ void BrowserController::defer(std::function<void()> action) {
 }
 void BrowserController::tick() {
     const auto now = std::chrono::steady_clock::now();
+    for (auto &t : tabs)
+        if (t->reader_pending && now - t->reader_started > std::chrono::seconds(30)) {
+            t->reader_pending = false;
+            if (t->devtools && t->reader_context)
+                t->devtools->call("Runtime.evaluate",
+                                  "{\"contextId\":" + std::to_string(t->reader_context) +
+                                      ",\"expression\":\"globalThis.__auraReader?.close()\"}");
+            if (t.get() == current())
+                ui->toast(tr("Could not prepare reader view. Try again after the page loads."));
+            changed();
+        }
     if (profile.tab_sleep_minutes > 0 && !quitting)
         for (auto &t : tabs)
             if (can_sleep(*t) && now >= t->sleep_retry_after &&

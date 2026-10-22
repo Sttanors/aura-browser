@@ -13,7 +13,7 @@
 | 5 | Контейнеры сайтов | Реализовано, Linux проверки PASS |
 | 6 | Полноценные профили | Реализовано, Linux проверки PASS |
 | 7 | Палитра команд | Реализовано, Linux проверки PASS |
-| 8 | Режим чтения | В очереди |
+| 8 | Режим чтения | Реализовано, Linux проверки PASS |
 | 9 | Перевод страниц и выделения | Онлайн, только по явной команде, провайдер выбирается пользователем |
 | 10 | Центр разрешений сайта | В очереди |
 | 11 | Панель данных сайтов | В очереди |
@@ -299,7 +299,8 @@ localStorage/IndexedDB, history/bookmarks/settings, singleton forwarding, rename
 archive/restore при работающем втором профиле, перезапуск с сохранением данных.
 EN/RU 900×620 просмотрены: кнопки и подписи помещаются, декоративные карточки не
 добавлялись. Логи /tmp/aura-profiles-{build,ctest,gui}.log, screenshots в
-artifacts/profiles-smoke. Windows runtime для этого пункта ещё не проверен.
+artifacts/profiles-smoke. Windows CI на 2fe98f6 (39829001019) включает этот пункт: build/tests/installer PASS.
+Отдельная интерактивная profile GUI suite пока выполнена только в Linux.
 Checkpoint 6 завершён; установочные пакеты пока не пересобирались.
 
 Отдельная плановая CEF security maintenance 39782939594 сообщает о новой версии
@@ -341,3 +342,58 @@ Disabled/empty состояния не выполняют действие. Ко
 в profile/backups. Базовый browser regression — PASS. Логи
 /tmp/aura-commands-{build-final,ctest,gui-final,browser-regression}.log.
 Checkpoint 7 завершён; установщики пока не обновлялись.
+
+## 8. План режима чтения
+
+Задача: читать длинную статью без меню/баннеров сайта и вернуться к исходной форме
+без перезагрузки. По явной команде Ctrl+Alt+R, меню Aura или палитре Mozilla
+Readability работает в isolated world над clone документа. В overlay выводится
+только текст через textContent, ни один HTML-фрагмент статьи не вставляется.
+Исходный DOM не заменяется. Страница без статьи показывает понятное сообщение.
+
+Дизайн: viewport overlay с верхней строкой Reader mode / Exit, строка настроек
+шрифта, размера и ширины; центрированная колонка с заголовком/автором/абзацами.
+Тёмный фон #0D111B, текст #EDF3FF, muted #99A7C1, accent #A7B6FF; светлая схема
+#FAFBFF/#182033. Inter/system для управления, serif или sans для статьи, 18–32 px,
+line-height 1.7, 560/720/900 px максимум ширины. Controls wrap на узком экране.
+Tab/Shift+Tab, visible focus, Escape и Exit закрывают; без декоративных карточек.
+Размер/ширина/семейство сохраняются, содержимое статьи не записывается на диск.
+
+Источники: https://github.com/mozilla/readability/blob/main/README.md и SECURITY.md.
+Readability не sanitizer: поэтому извлечённый HTML не отображается; только plain
+text nodes из detached clone. Закрепляются commit, checksum и Apache-2.0 license.
+
+Windows CI 39829001019 на checkpoint 7 (2fe98f6): SUCCESS, включая compile,
+99 tests, базовый browser integration и установку Windows package.
+
+## 8. Режим чтения — реализация перед завершающей проверкой
+
+Ctrl+Alt+R / меню Aura / палитра, HTTP(S) main frame. Mozilla Readability на clone
+в отдельном execution world, только plain text paragraphs/headings/pre/quotes
+через textContent. Закрытый shadow root внутри modal dialog изолирует оформление
+и controls. Исходная страница не заменяется: форма/DOM/beforeunload/scroll остаются.
+Select/copy, scrolling, Escape/Exit; serif/sans, 18–32 px и 560/720/900 px колонка.
+Параметры входят в общий каталог настроек и сохраняются; текст не пишется в profile.
+Статья определяется после явной команды; DOM parsing ограничен 50 000 элементов,
+текст 2 млн UTF-16 units, без сетевого провайдера и без отображения HTML статьи.
+
+Readability ab4027a8b37669745016869a37a504727992b2ba, Apache-2.0 license и SHA256
+в bundled manifests. Runtime build и portable installer payload включают reader
+assets; Windows installer CI проверяет их наличие. Lifecycle callbacks проверяют
+живость controller, tab и navigation serial; timeout 30 сек и очистка при смене
+execution context. Вкладка не засыпает во время подготовки reader.
+
+GUI уже PASS: настоящая статья >14k characters/47 блоков, исходные DOM token,
+form, beforeunload и scroll неизменны; font/size/width, restart, CSP+Trusted Types,
+empty article/private/RU 900×620, переход из палитры. Дополнительный тест Copy
+выявил зависание CEF clipboard в CPU-only X11; Ctrl+C для reader с selection
+теперь использует native clipboard Aura. Выделенный текст берётся через CEF
+OnTextSelectionChanged, хранится только в памяти и очищается при навигации/close.
+Копирование проверено внешним xclip. Убрано зависшее Preparing reader toast после
+успешного открытия. CTest 99/99 и Python 26/26 PASS; palette regression PASS.
+Завершающие regression clipboard (2.1 MB UTF-8) и manual sleep — PASS.
+Слишком большие статьи отклоняются с отдельным сообщением, без скрытого обрезания
+текста (2000 блоков). Это также проверено настоящей статьёй из 2100 абзацев.
+Логи /tmp/aura-reader-{build-final,ctest-final,gui-final,commands-regression,
+clipboard-regression,sleep-regression}.log. Checkpoint 8 завершён; Windows CI для
+reader ещё не выполнен. Установочные пакеты не обновлялись.

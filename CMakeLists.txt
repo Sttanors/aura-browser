@@ -144,7 +144,7 @@ if(AURA_BUILD_DIAGNOSTIC AND NOT APPLE)
   set_target_properties(aura_adblock PROPERTIES IMPORTED_LOCATION "${AURA_RUST_TARGET}/release/${AURA_RUST_LIBRARY}")
   add_dependencies(aura_adblock aura_adblock_build)
   set(AURA_BROWSER_SOURCES app/browser_main.cpp core/browser/browser.cpp core/browser/client.cpp core/browser/devtools.cpp core/browser/tab_lifecycle.cpp core/browser/split_view.cpp core/browser/containers.cpp core/browser/protection.cpp core/browser/filter_lists.cpp core/browser/extensions.cpp core/browser/site_tools.cpp core/browser/extension_popup.cpp core/browser/updates.cpp core/browser/imports.cpp
-    core/cef/diagnostic_client.cpp ui/browser_ui.cpp ui/wallpaper.cpp)
+    core/cef/diagnostic_client.cpp core/browser/reader.cpp ui/browser_ui.cpp ui/wallpaper.cpp)
   if(WIN32)
     add_library(aura_browser SHARED ${AURA_BROWSER_SOURCES} platform/windows/browser_window.cpp render/cef_bridge/shared_texture_probe.cpp)
     target_link_libraries(aura_browser PRIVATE d3d11 dxgi)
@@ -228,6 +228,7 @@ if(AURA_BUILD_DIAGNOSTIC AND NOT APPLE)
   endif()
   add_custom_target(aura_protection_resources ALL
     COMMAND "${CMAKE_COMMAND}" -E copy_directory "${PROJECT_SOURCE_DIR}/resources/protection" "$<TARGET_FILE_DIR:aura_browser>/protection"
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory "${PROJECT_SOURCE_DIR}/resources/reader" "$<TARGET_FILE_DIR:aura_browser>/reader"
     COMMAND "${CMAKE_COMMAND}" -E copy_directory "${PROJECT_SOURCE_DIR}/resources/vendor" "$<TARGET_FILE_DIR:aura_browser>/vendor" VERBATIM)
   add_dependencies(aura_browser aura_protection_resources)
 endif()

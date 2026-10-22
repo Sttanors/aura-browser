@@ -26,5 +26,13 @@
   "vendor/easylist-GPL-3.0.txt": {
     "url": "https://www.gnu.org/licenses/gpl-3.0.txt",
     "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+  },
+  "vendor/readability.js": {
+    "url": "https://raw.githubusercontent.com/mozilla/readability/ab4027a8b37669745016869a37a504727992b2ba/Readability.js",
+    "sha256": "e9330028c8a5a4aa7d75147be2605d520f7f213c7b28474947dc0e9c984e9bed"
+  },
+  "vendor/READABILITY-LICENSE.md": {
+    "url": "https://raw.githubusercontent.com/mozilla/readability/ab4027a8b37669745016869a37a504727992b2ba/LICENSE.md",
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
   }
 }

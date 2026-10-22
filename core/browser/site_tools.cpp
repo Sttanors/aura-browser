@@ -89,11 +89,31 @@ void BrowserController::setup_site_tools(int id, std::function<void()> ready) {
                 changed();
             if (c && c->GetString("name") == "Aura Site Protection")
                 t->protection_contexts[c->GetInt("id")] = c->GetString("origin").ToString();
-        } else if (method == "Runtime.executionContextDestroyed")
-            t->protection_contexts.erase(p->GetInt("executionContextId"));
-        else if (method == "Runtime.executionContextsCleared")
+        } else if (method == "Runtime.executionContextDestroyed") {
+            const int context = p->GetInt("executionContextId");
+            t->protection_contexts.erase(context);
+            if (context == t->reader_context) {
+                t->reader_active = t->reader_pending = false;
+                t->reader_context = 0;
+                t->reader_ui = "null";
+                changed();
+            }
+        } else if (method == "Runtime.executionContextsCleared") {
             t->protection_contexts.clear();
-        else if (method == "Runtime.bindingCalled" && p->GetString("name") == "auraProtection") {
+            t->reader_active = t->reader_pending = false;
+            t->reader_context = 0;
+            t->reader_ui = "null";
+            changed();
+        } else if (method == "Runtime.bindingCalled" && p->GetString("name") == "auraReaderState") {
+            if (t->reader_context && p->GetInt("executionContextId") == t->reader_context) {
+                const auto payload = p->GetString("payload").ToString();
+                if (payload.size() <= 2048) {
+                    auto value = CefParseJSON(payload, JSON_PARSER_RFC);
+                    if (value && value->GetType() == VTYPE_DICTIONARY)
+                        reader_event(*t, value->GetDictionary());
+                }
+            }
+        } else if (method == "Runtime.bindingCalled" && p->GetString("name") == "auraProtection") {
             ++audit["protection_bindings"];
             const int context = p->GetInt("executionContextId");
             if (!t->protection_contexts.contains(context))
