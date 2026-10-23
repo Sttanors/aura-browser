@@ -12,13 +12,13 @@ Linux uses X11/XWayland; Windows uses Win32. Both versions share the browser and
 documentation and automated checks. The project owner directs the product and makes product decisions.
 AI assistance does not imply that the software is error-free. Aura is currently a preview.
 
-**Development status:** `main` is ahead of the packaged preview. New features and their checks
-are tracked in the [15-feature progress journal](docs/features-progress.md) (Russian).
-Installers are updated in separate releases.
+**Release 0.4.0 Preview 1** includes all 15 additions recorded in the
+[feature progress journal](docs/features-progress.md) (Russian): workspaces, groups, containers, profiles,
+reader/translation tools, site controls, bookmark/session managers, screenshots and configurable hotkeys.
 
 ## Download and install
 
-Get the files from [GitHub Releases](https://github.com/Sttanors/aura-browser/releases/tag/v0.3.0-preview.1).
+Get the files from [GitHub Releases](https://github.com/Sttanors/aura-browser/releases/tag/v0.4.0-preview.1).
 SHA-256 checksum files accompany each download. Installers contain the browser runtime. Native Linux package managers can download system-library dependencies.
 
 | Platform | Installer | How to install |
@@ -35,9 +35,9 @@ Close Aura before upgrading.
 
 | Distribution (x86_64) | Install downloaded package | Remove |
 |---|---|---|
-| Arch Linux / CachyOS (current rolling) | `sudo pacman -U ./aura-browser-0.3.0rc1-1-x86_64.pkg.tar.gz` | `sudo pacman -R aura-browser` |
-| Debian 13+ | `sudo apt install './aura-browser_0.3.0-preview.1-1_amd64.deb'` | `sudo apt remove aura-browser` |
-| Fedora 44 | `sudo dnf install './aura-browser-0.3.0-preview.1-1.x86_64.rpm'` | `sudo dnf remove aura-browser` |
+| Arch Linux / CachyOS (current rolling) | `sudo pacman -U ./aura-browser-0.4.0rc1-1-x86_64.pkg.tar.gz` | `sudo pacman -R aura-browser` |
+| Debian 13+ | `sudo apt install './aura-browser_0.4.0-preview.1-1_amd64.deb'` | `sudo apt remove aura-browser` |
+| Fedora 44 | `sudo dnf install './aura-browser-0.4.0-preview.1-1.x86_64.rpm'` | `sudo dnf remove aura-browser` |
 
 Native package managers install required system libraries. These packages are built against Debian 13's
 ABI, rather than the newer ABI of the original development machine; Debian 12 is not a supported target.
@@ -72,7 +72,7 @@ Keep all runtime files together. Direct launches create `profile/` beside the ex
 
 ## Features
 
-Source additions after the current release: [workspaces and tab groups](docs/tab-organization.md).
+Release additions: [workspaces and tab groups](docs/tab-organization.md).
 Their implementation and platform checks are tracked in [feature progress](docs/features-progress.md).
 
 - Independent Chromium tabs: create, close, restore, reorder, pin, duplicate and mute.
@@ -95,7 +95,7 @@ back/forward stacks and form contents are not restored. Update installation requ
 action; native Linux packages use their package manager. Full CJK IME, DRM/codecs, printing and
 different window managers need further validation.
 
-If upgrading from preview.3.1, close Aura and install 0.3.0-preview.1 manually once;
+If upgrading from preview.3.1, close Aura and install 0.4.0-preview.1 manually once;
 that older published build did not include the new updater. Profiles are retained.
 Future updates use signed metadata; native Linux packages continue through their package manager.
 
@@ -107,10 +107,10 @@ falling back to an offscreen-pixmap copy. Windows uses Skia raster and a persist
 CEF frame rate follows the monitor, including 120/144/165 Hz; actual smoothness depends on page,
 window size and CPU performance. Linux reads refresh rate through Wayland output information or RandR.
 
-Version 0.3.0-preview.1 reduces antialiased raster clipping to the page perimeter, uses the same painter for
+Version 0.4.0-preview.1 reduces antialiased raster clipping to the page perimeter, uses the same painter for
 full/page-only redraws, and discovers Wayland refresh without blocking startup. Measurements,
 75–200%/fractional-DPI pixel checks and limits are in [Linux performance](docs/linux-performance.md).
-Available in the 0.3.0-preview.1 installers.
+Available in the 0.4.0-preview.1 installers.
 
 The experimental Linux EGL/GLES path remains in the source. It is not considered stable on the original
 test machine after a complete system freeze. Native Wayland and Vulkan are not implemented.
@@ -158,7 +158,7 @@ DNT requests cooperation from websites; it does not itself block tracking.
 **Data → Import browser data** previews Firefox/Chromium profiles, Chromium JSON
 bookmarks and HTML exports. Select bookmarks/history before applying; a profile
 backup is saved first. See [supported formats, limits and restoration](docs/importing-browser-data.md).
-This feature is in the current source; existing Preview 3.1 installers predate it.
+Included in the current installers; legacy Preview 3.1 installers predate it.
 
 ### Start page
 
@@ -237,10 +237,10 @@ Open **Keyboard shortcuts** from the Aura menu or command palette to remap 34 co
 | Ctrl 1…8 / Ctrl 9 | Select tab / last tab |
 | Ctrl N / Ctrl Shift N | New window / private window |
 | Ctrl Alt N | New private tab |
-| Ctrl Shift E / Ctrl Alt G | Workspaces / tab groups (source additions) |
-| Ctrl Alt S | Put current tab to sleep (source addition) |
-| Ctrl Alt V | Two websites side by side / exit split (source addition) |
-| Ctrl Alt C | Site containers (source addition) |
+| Ctrl Shift E / Ctrl Alt G | Workspaces / tab groups  |
+| Ctrl Alt S | Put current tab to sleep  |
+| Ctrl Alt V | Two websites side by side / exit split  |
+| Ctrl Alt C | Site containers  |
 | Alt ← / Alt → | Back / forward |
 | Ctrl R or F5 / Ctrl Shift R | Reload/stop / reload without cache |
 | Ctrl + / Ctrl − / Ctrl 0 | Site zoom, or independent start-page zoom |
@@ -384,4 +384,4 @@ See [interface design notes](docs/design/interface-refinement.md) for implementa
 Aura provides a master-password vault, explicit HTTPS login filling and
 manual transfer through an encrypted file. Open **Settings → Data → Passwords**
 or press **Ctrl+Shift+Y**. [Usage, backup and limitations](docs/password-vault.md).
-Available since 0.3.0-preview.1; earlier preview.3.1 installations require one manual upgrade.
+Available since 0.4.0-preview.1; earlier preview.3.1 installations require one manual upgrade.

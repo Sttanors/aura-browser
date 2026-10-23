@@ -72,17 +72,17 @@
       "strip_root": false
     },
     "cef-linux64": {
-      "version": "154.0.34+g14c5a08+chromium-154.0.8037.98",
-      "url": "https://cef-builds.spotifycdn.com/cef_binary_154.0.34+g14c5a08+chromium-154.0.8037.98_linux64_minimal.tar.bz2",
+      "version": "156.0.8+g426920c+chromium-156.0.8078.48",
+      "url": "https://cef-builds.spotifycdn.com/cef_binary_156.0.8+g426920c+chromium-156.0.8078.48_linux64_minimal.tar.bz2",
       "archive": "cef-linux64.tar.bz2",
-      "sha256": "e87e2c76304372dd28b899ceb6efa4b353f52700594ddc358a8237ec07ec6492",
+      "sha256": "dc58ac593d46c21ee2c5d50b8db5730facefa4201838e0c9f3deb59372bfb4fa",
       "strip_root": true
     },
     "cef-windows64": {
-      "version": "154.0.34+g14c5a08+chromium-154.0.8037.98",
-      "url": "https://cef-builds.spotifycdn.com/cef_binary_154.0.34+g14c5a08+chromium-154.0.8037.98_windows64_minimal.tar.bz2",
+      "version": "156.0.8+g426920c+chromium-156.0.8078.48",
+      "url": "https://cef-builds.spotifycdn.com/cef_binary_156.0.8+g426920c+chromium-156.0.8078.48_windows64_minimal.tar.bz2",
       "archive": "cef-windows64.tar.bz2",
-      "sha256": "c81c34d048d87276f4a18f0b000206710a1709bb67dd658948b87100e1a538da",
+      "sha256": "33990614bf58a2fd331a497967b9a810cb2036792d39464e9ed8d84287541814",
       "strip_root": true
     },
     "skia": {

@@ -824,3 +824,15 @@ commands-regression,settings-regression,extensions-regression}.log.
 Checkpoint 15 завершён. Все 15 функций реализованы в исходниках и проверены на Linux.
 Установщики и версия preview не менялись; перед новым релизом остаются Windows CI
 на последнем commit и обновление pinned CEF/Chromium.
+
+## Выпуск 0.4.0 Preview 1 — подготовка
+
+Windows CI ec74106 SUCCESS (39950272377): все 15 функций в исходниках собраны,
+unit/integration/portable/installer lifecycle проверены. Для публикации новых
+пакетов версия 0.4.0-preview.1, channel sequence 6. CEF обновляется с Chromium
+154.0.8037.98 до актуального stable 156.0.8078.48 (официальный index 23 октября).
+Архивы обеих платформ сверены с size/SHA-1 официального индекса; в dependency
+lock закреплены вычисленные SHA-256. Подписание канала остаётся локальным,
+закрытый ключ не передаётся в CI. До публикации: сборки и GUI после смены CEF,
+Debian ABI runtime + .deb/.rpm/.pkg.tar.gz + .run, Windows CI exact commit,
+подписанные хеши всех семи assets и проверка публичного канала.
