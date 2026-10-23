@@ -1155,7 +1155,7 @@ TEST(Exports, AtomicBinaryOverwriteAndFailurePreserveChosenFile) {
     size_t files = 0;
     for (const auto &entry : std::filesystem::directory_iterator(temp.path)) {
         ++files;
-        EXPECT_FALSE(entry.path().filename().string().starts_with(".aura-export-"));
+        EXPECT_FALSE(utf8_path(entry.path().filename()).starts_with(".aura-export-"));
     }
     EXPECT_EQ(files, 1);
     EXPECT_THROW(write_export("relative.html", "x"), std::exception);
