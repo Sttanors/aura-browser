@@ -25,7 +25,8 @@ class BrowserUi {
         Containers,
         Profiles,
         Commands,
-        Translation
+        Translation,
+        Permissions
     };
     BrowserUi(BrowserController &owner, const std::filesystem::path &font);
     ~BrowserUi();
@@ -67,6 +68,8 @@ class BrowserUi {
     void open_translation(bool selection = false, int source_tab = 0);
     std::string translation_report() const;
     std::string menu_report() const;
+    void open_permissions();
+    std::string permissions_report() const;
     std::string sidebar_report() const;
     void passwords_locked() {
         clear_password_fields();
@@ -85,6 +88,19 @@ class BrowserUi {
 
   private:
     BrowserController &app_;
+    struct PermissionSite {
+        std::string origin;
+        int container = 0;
+    };
+    std::string permissions_origin_, permissions_error_;
+    int permissions_container_ = 0, permissions_scroll_ = 0, permissions_pick_selected_ = 0;
+    bool permissions_private_ = false, permissions_picker_ = false,
+         permissions_search_focus_ = false;
+    TextEditor permissions_search_;
+    std::vector<PermissionSite> permission_sites() const;
+    void draw_permissions(SkCanvas &, Rect);
+    void permissions_pointer(Rect, int, int);
+    void choose_permission(const std::string &id);
     int translation_tab_ = 0;
     uint64_t translation_serial_ = 0;
     bool translation_selection_ = false;

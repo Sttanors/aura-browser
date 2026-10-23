@@ -68,6 +68,7 @@ class BrowserClient final : public DiagnosticClient,
     void OnAddressChange(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, const CefString &) override;
     void OnFaviconURLChange(CefRefPtr<CefBrowser>, const std::vector<CefString> &) override;
     void OnStatusMessage(CefRefPtr<CefBrowser>, const CefString &) override;
+    void OnMediaAccessChange(CefRefPtr<CefBrowser>, bool, bool) override;
     bool OnCursorChange(CefRefPtr<CefBrowser>, CefCursorHandle, cef_cursor_type_t,
                         const CefCursorInfo &) override;
     bool CanDownload(CefRefPtr<CefBrowser>, const CefString &, const CefString &) override;

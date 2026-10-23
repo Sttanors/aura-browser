@@ -21,6 +21,7 @@
 #include <set>
 namespace aura {
 std::string password_origin(const std::string &url);
+std::string permission_origin(const std::string &url);
 class BrowserUi;
 struct Tab {
     int id = 0;
@@ -29,6 +30,8 @@ struct Tab {
     int container = 0;
     uint64_t navigation_serial = 0;
     bool sleeping = false, sleep_pending = false, media_capture = false;
+    bool media_video = false, media_audio = false;
+    std::set<std::string> permission_origins;
     bool reader_active = false, reader_pending = false;
     int reader_context = 0;
     std::string reader_ui = "null";
@@ -77,6 +80,9 @@ struct BrowserDialog {
     TextEditor input;
     CefRefPtr<CefJSDialogCallback> callback;
     std::function<void(bool, const std::string &)> action;
+    std::function<void(bool)> user_decision;
+    std::vector<SitePermission> permission_rules;
+    bool permission_private = false;
     bool owned = false, permission = false, sensitive = false;
     uint64_t permission_id = ~uint64_t{0};
 };
@@ -100,6 +106,8 @@ struct BrowserState {
     explicit BrowserState(const std::filesystem::path &path);
     Profile profile;
     ProfileCatalog profiles;
+    std::vector<SitePermission> private_site_permissions;
+    bool private_permissions_initialized = false;
     ExtensionManager extensions;
     UpdateManager updates;
     BrowserImporter importer;
@@ -166,6 +174,17 @@ class BrowserController {
     CefRefPtr<CefRequestContext> request_context(int container, bool private_tab = false);
     bool container_in_use(int id) const;
     void remove_container(int id);
+    std::string permission_value(const Tab &, const std::string &requesting,
+                                 const std::string &id) const;
+    std::string permission_site(const Tab &, const std::string &requesting,
+                                const std::string &id) const;
+    bool change_site_permission(const std::string &origin, int container, bool private_mode,
+                                const std::string &id, const std::string &value,
+                                bool native = true);
+    void reset_site_permissions(const std::string &origin, int container, bool private_mode);
+    CefRefPtr<CefRequestContext> permission_context(int container, bool private_mode) const;
+    std::string native_permission_value(const std::string &origin, int container, bool private_mode,
+                                        const std::string &id) const;
     void open_profile(int id);
     std::string profile_name() const;
     void update_window_title();
@@ -265,7 +284,8 @@ class BrowserController {
                         bool sensitive = false);
     void cancel_permissions(int tab_id);
     void configure_permissions(CefRefPtr<CefRequestContext> context, const std::string &url = "",
-                               const std::string &top = "");
+                               const std::string &top = "", int container = 0,
+                               bool private_mode = false);
 
   private:
     std::vector<std::shared_ptr<ExtensionPopup>> closing_popups_;

@@ -126,6 +126,8 @@ Open **Settings** from the sidebar or the toolbar gear. There are **87 settings 
 searchable by English or Russian names/descriptions. **Ctrl F** focuses settings search.
 **General → Interface language** switches between English and Russian immediately; website text is unaffected.
 
+The **site permissions center** (Ctrl Alt I or the address-bar icon) manages camera, microphone, notifications, location, clipboard, MIDI, sensors and camera controls per site and container. Revoke stops active capture; private rules last until Aura closes.
+
 | Category | Options |
 |---|---|
 | General | Language, search engine, session restore, homepage, startup and new-tab behavior, site languages |

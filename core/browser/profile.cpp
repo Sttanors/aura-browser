@@ -253,6 +253,31 @@ void Profile::load() {
                 container_trash.push_back(id);
         }
     groups.clear();
+    site_permissions.clear();
+    if (auto rows = table["site_permissions"].as_array())
+        for (const auto &node : *rows) {
+            if (site_permissions.size() >= 4096)
+                break;
+            if (const auto row = node.as_table()) {
+                bool known = true;
+                for (const auto &[key, value] : *row) {
+                    const auto name = key.str();
+                    if (name != "origin" && name != "container" && name != "permission" &&
+                        name != "value")
+                        known = false;
+                }
+                if (!known)
+                    continue;
+                const auto identity = (*row)["container"].value<int>();
+                if (row->contains("container") && !identity)
+                    continue;
+                const int id = identity.value_or(0);
+                if (container(id))
+                    set_site_permission(site_permissions, (*row)["origin"].value_or(std::string{}),
+                                        id, (*row)["permission"].value_or(std::string{}),
+                                        (*row)["value"].value_or(std::string{}));
+            }
+        }
     if (auto entries = table["groups"].as_array())
         for (const auto &entry : *entries) {
             if (groups.size() >= 128)
@@ -358,7 +383,14 @@ void Profile::load() {
 }
 void Profile::save() const {
     toml::table root;
-    root.insert("schema", 10);
+    root.insert("schema", 11);
+    toml::array permissions;
+    for (const auto &rule : site_permissions)
+        permissions.push_back(toml::table{{"origin", rule.origin},
+                                          {"container", rule.container},
+                                          {"permission", rule.permission},
+                                          {"value", rule.value}});
+    root.insert("site_permissions", std::move(permissions));
     if (!profiles_root.empty())
         root.insert("profiles_root", profiles_root);
     toml::array container_rows;
@@ -716,6 +748,7 @@ bool Profile::remove_container(int id) {
     if (!id || !container(id))
         return false;
     std::erase_if(containers, [&](const auto &c) { return c.id == id; });
+    std::erase_if(site_permissions, [&](const auto &rule) { return rule.container == id; });
     container_trash.push_back(id);
     for (auto &w : windows)
         remove_container_tabs(w, id);

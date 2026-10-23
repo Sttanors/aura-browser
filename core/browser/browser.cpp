@@ -49,6 +49,8 @@ std::string tabs_json(const std::vector<std::unique_ptr<Tab>> &tabs) {
             << ",\"sleeping\":" << (t->sleeping ? "true" : "false")
             << ",\"creation_pending\":" << (t->creation_pending ? "true" : "false")
             << ",\"sleep_pending\":" << (t->sleep_pending ? "true" : "false")
+            << ",\"media_video\":" << (t->media_video ? "true" : "false")
+            << ",\"media_audio\":" << (t->media_audio ? "true" : "false")
             << ",\"reader_active\":" << (t->reader_active ? "true" : "false")
             << ",\"reader_pending\":" << (t->reader_pending ? "true" : "false")
             << ",\"reader_ui\":" << t->reader_ui
@@ -213,29 +215,6 @@ BrowserController::~BrowserController() {
 std::string BrowserController::tr(std::string_view english) const {
     return translate(profile.language, english);
 }
-void BrowserController::configure_permissions(CefRefPtr<CefRequestContext> context,
-                                              const std::string &url, const std::string &top) {
-    // Values and supported scopes follow Chromium's ContentSettingsRegistry.
-    // Private contexts are configured per origin; CEF ignores their empty default scope.
-    const struct {
-        cef_content_setting_types_t type;
-        const std::string *value;
-    } rules[] = {{CEF_CONTENT_SETTING_TYPE_NOTIFICATIONS, &profile.notifications},
-                 {CEF_CONTENT_SETTING_TYPE_GEOLOCATION, &profile.geolocation},
-                 {CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_CAMERA, &profile.camera},
-                 {CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_MIC, &profile.microphone},
-                 {CEF_CONTENT_SETTING_TYPE_CLIPBOARD_READ_WRITE, &profile.clipboard},
-                 {CEF_CONTENT_SETTING_TYPE_MIDI_SYSEX, &profile.midi},
-                 {CEF_CONTENT_SETTING_TYPE_SENSORS, &profile.sensors}};
-    for (const auto &rule : rules)
-        context->SetContentSetting(url, top, rule.type,
-                                   *rule.value == "block"   ? CEF_CONTENT_SETTING_VALUE_BLOCK
-                                   : *rule.value == "allow" ? CEF_CONTENT_SETTING_VALUE_ALLOW
-                                                            : CEF_CONTENT_SETTING_VALUE_ASK);
-    context->SetContentSetting(url, top, CEF_CONTENT_SETTING_TYPE_POPUPS,
-                               profile.block_popups ? CEF_CONTENT_SETTING_VALUE_BLOCK
-                                                    : CEF_CONTENT_SETTING_VALUE_ALLOW);
-}
 void BrowserController::apply_settings(bool update_zoom, bool propagate) {
     if (propagate)
         for (auto *other : state_->windows)
@@ -249,6 +228,11 @@ void BrowserController::apply_settings(bool update_zoom, bool propagate) {
     request_policy->send_referrer = profile.send_referrer;
     profile.prune_history();
     configure_permissions(CefRequestContext::GetGlobalContext());
+    for (const auto &[id, context] : state_->container_contexts)
+        if (state_->container_contexts_ready.contains(id))
+            configure_permissions(context, "", "", id, false);
+    if (private_context_)
+        configure_permissions(private_context_, "", "", 0, true);
     configure_font_preferences(CefRequestContext::GetGlobalContext());
     for (auto &t : tabs) {
         if (t->sleeping && site_exception(t->page.url, profile.tab_sleep_exceptions))
@@ -259,7 +243,7 @@ void BrowserController::apply_settings(bool update_zoom, bool propagate) {
         if (t->browser &&
             (t->page.url.starts_with("http://") || t->page.url.starts_with("https://")))
             configure_permissions(t->browser->GetHost()->GetRequestContext(), t->page.url,
-                                  t->page.url);
+                                  t->page.url, t->container, t->private_tab);
         if (t->ntp)
             t->page.title = tr(t->private_tab ? "Private tab" : "New tab");
         if (update_zoom) {
@@ -963,6 +947,8 @@ void BrowserController::answer_dialog(bool accept) {
     }
     if (!accept && dialog.before_unload)
         quit_confirmed_ = false;
+    if (dialog.user_decision)
+        dialog.user_decision(accept);
     if (dialog.callback)
         dialog.callback->Continue(accept, dialog.input.value);
     if (dialog.action)
@@ -1259,6 +1245,7 @@ std::string BrowserController::report() const {
         << ",\"tabs\":" << (quit_snapshot_.empty() ? tabs_json(tabs) : quit_snapshot_)
         << ",\"profile_name\":" << json_quote(profile_name())
         << ",\"profile_directory\":" << json_quote(utf8_path(profile.directory))
+        << ",\"permissions_ui\":" << ui->permissions_report()
         << ",\"translation_ui\":" << ui->translation_report()
         << ",\"menu_ui\":" << ui->menu_report() << ",\"commands_ui\":" << ui->commands_report()
         << ",\"profiles_ui\":" << ui->profiles_report() << ",\"settings\":{";
@@ -1314,6 +1301,10 @@ void BrowserController::browser_created(int id, CefRefPtr<CefBrowser> browser) {
         if (t->private_tab || t->container)
             configure_font_preferences(browser->GetHost()->GetRequestContext());
 
+        if (t->private_tab && !state_->private_permissions_initialized) {
+            configure_permissions(browser->GetHost()->GetRequestContext(), "", "", 0, true);
+            state_->private_permissions_initialized = true;
+        }
         t->devtools = new DevToolsSession(browser);
         t->devtools->attach();
         setup_site_tools(id, [this, id] {
@@ -1555,6 +1546,10 @@ void BrowserController::clear_data(const std::string &kind) {
     }
     if (kind == "reset") {
         static_cast<BrowserPreferences &>(profile) = BrowserPreferences{};
+        for (auto &rule : profile.site_permissions)
+            rule.value = "default";
+        for (auto &rule : state_->private_site_permissions)
+            rule.value = "default";
         apply_settings(true);
         ui->toast(tr("Settings reset"));
         return;

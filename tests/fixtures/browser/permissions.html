@@ -1,0 +1,26 @@
+<!doctype html><meta charset="utf-8"><title>Permissions fixture</title>
+<style>body{font:16px sans-serif;padding:20px}button,input{margin:8px;padding:12px}iframe{width:90%;height:170px}</style>
+<input id="form" value="retained form"><button id="camera">Camera</button><button id="microphone">Microphone</button><button id="both">Both</button><button id="stop">Stop</button><button id="notify">Notifications</button><button id="protect">Protect document</button>
+<button id="expire">Request then navigate</button>
+<script>
+const token=crypto.randomUUID(),streams=[],states={},children={};let error='',protectedDocument=false;
+const permissions=['camera','microphone','notifications','geolocation','clipboard-read','accelerometer'];
+for(const name of permissions)navigator.permissions.query({name}).then(s=>{states[name]=s.state;s.onchange=()=>{states[name]=s.state;publish()};publish()}).catch(()=>{states[name]='unsupported'});
+function publish(){
+ const buttons={};for(const id of ['camera','microphone','both','stop','notify','protect','form','expire']){const r=document.getElementById(id).getBoundingClientRect();buttons[id]=[r.x,r.y,r.width,r.height]}
+ const data={token,states,tracks:streams.flatMap(s=>s.getTracks().map(t=>({kind:t.kind,state:t.readyState,label:t.label}))),error,protected:protectedDocument,form:document.getElementById('form').value,buttons,children};
+ const title=JSON.stringify(data);if(document.title!==title)document.title=title;
+ if(parent!==window)parent.postMessage({permissionProbe:{origin:location.origin,states,token}},'*');
+}
+async function capture(video,audio){try{const s=await navigator.mediaDevices.getUserMedia({video,audio});streams.push(s);for(const t of s.getTracks())t.onended=publish;error=''}catch(e){error=e.name}publish()}
+document.getElementById('expire').onclick=()=>{setTimeout(()=>location.href=location.origin+'/permissions.html?expired=1',1000);capture(true,false)};
+document.getElementById('camera').onclick=()=>capture(true,false);
+document.getElementById('microphone').onclick=()=>capture(false,true);
+document.getElementById('both').onclick=()=>capture(true,true);
+document.getElementById('stop').onclick=()=>{for(const s of streams)for(const t of s.getTracks())t.stop();publish()};
+document.getElementById('notify').onclick=async()=>{await Notification.requestPermission();publish()};
+document.getElementById('protect').onclick=()=>{protectedDocument=!protectedDocument;window.onbeforeunload=protectedDocument?()=>true:null;publish()};
+addEventListener('message',e=>{if(e.data?.permissionProbe){children[e.origin]=e.data.permissionProbe;publish()}});
+const child=new URLSearchParams(location.search).get('child');if(child){const iframe=document.createElement('iframe');iframe.src=child;iframe.allow='camera *; microphone *; geolocation *';document.body.append(iframe)}
+setInterval(publish,200);publish();
+</script>

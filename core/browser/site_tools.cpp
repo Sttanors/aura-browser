@@ -100,6 +100,7 @@ void BrowserController::setup_site_tools(int id, std::function<void()> ready) {
             }
         } else if (method == "Runtime.executionContextsCleared") {
             t->protection_contexts.clear();
+            t->audio_contexts.clear();
             t->reader_active = t->reader_pending = false;
             t->reader_context = 0;
             t->reader_ui = "null";

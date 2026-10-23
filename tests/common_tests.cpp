@@ -953,3 +953,123 @@ TEST(Translation, EncodesTextAndPageAsDataAndRejectsUnsupportedModes) {
                  std::invalid_argument);
     EXPECT_NO_THROW(translation_url("google", "en", false, std::string(5000, 'a')));
 }
+
+TEST(Permissions, OriginsHaveExactSchemeHostPortAndNeverWildcardOrCredentials) {
+    for (const auto &origin :
+         {"https://example.com", "https://www.example.com:8443", "http://127.0.0.1:3030",
+          "http://localhost", "http://dev.localhost:8090", "https://[2001:db8::1]:444",
+          "http://[::1]", "http://127.0.0.2:9090"})
+        EXPECT_TRUE(valid_permission_origin(origin)) << origin;
+    for (const auto &origin : {"*",
+                               "https://*.example.com",
+                               "https://example.com/path",
+                               "https://example.com/",
+                               "https://user:pass@example.com",
+                               "https://example.com?x=1",
+                               "https://example.com#frag",
+                               "https://EXAMPLE.com",
+                               "http://localhost:80",
+                               "https://example.com:443",
+                               "https://example.com:65536",
+                               "https://example.com:0444",
+                               "https:///empty",
+                               "https://example..com",
+                               "https://999.999.999.999",
+                               "https://test.123",
+                               "https://[::::]",
+                               "file:///home/user",
+                               "data:text/plain,origin",
+                               "http://127.000.000.001",
+                               "https://example.com\\@bad.test"})
+        EXPECT_FALSE(valid_permission_origin(origin)) << origin;
+    for (const auto &origin :
+         {"https://example.com", "http://localhost:8080", "http://local.localhost",
+          "http://127.0.0.2:9000", "http://[::1]:9000"})
+        EXPECT_TRUE(trustworthy_permission_origin(origin)) << origin;
+    for (const auto &origin : {"http://example.com", "http://localhost.attacker.test",
+                               "http://127.example.com", "http://192.168.1.1", "http://[::2]"})
+        EXPECT_FALSE(trustworthy_permission_origin(origin)) << origin;
+}
+TEST(Permissions, NativeScopeAndContainerKeysDoNotBroadenExplicitGrants) {
+    BrowserPreferences preferences;
+    preferences.camera = "ask";
+    const std::string top = "https://main.test", child = "https://embedded.test";
+    EXPECT_EQ(permission_scope(child, top, "camera"), top);
+    EXPECT_EQ(permission_scope(child, top, "geolocation"), top);
+    EXPECT_EQ(permission_scope(child, top, "notifications"), child);
+    EXPECT_EQ(permission_scope(child, "", "microphone"), child);
+    EXPECT_TRUE(permission_scope(child, top, "unknown").empty());
+    std::vector<SitePermission> normal, private_rules;
+    ASSERT_TRUE(set_site_permission(normal, top, 0, "camera", "allow"));
+    EXPECT_EQ(effective_permission(preferences, normal, top, 0, "camera"), "allow");
+    EXPECT_EQ(effective_permission(preferences, normal, top, 1, "camera"), "ask");
+    EXPECT_EQ(effective_permission(preferences, private_rules, top, 0, "camera"), "ask");
+    EXPECT_EQ(effective_permission(preferences, normal, top + ":8443", 0, "camera"), "ask");
+    EXPECT_EQ(effective_permission(preferences, normal, child, 0, "camera"), "ask");
+    EXPECT_EQ(effective_permission(preferences, normal, top, 0, "camera_controls"), "ask");
+    EXPECT_EQ(effective_permission(preferences, normal, "http://main.test", 0, "camera"), "block");
+    EXPECT_FALSE(set_site_permission(normal, "http://main.test", 0, "camera", "allow"));
+    EXPECT_FALSE(set_site_permission(normal, top, -1, "camera", "allow"));
+    EXPECT_FALSE(set_site_permission(normal, top, 0, "filesystem", "allow"));
+    EXPECT_FALSE(set_site_permission(normal, top, 0, "camera", "ALLOW"));
+    EXPECT_TRUE(set_site_permission(normal, top, 0, "sensors", "ask"));
+    EXPECT_EQ(effective_permission(preferences, normal, top, 0, "sensors"), "ask");
+    EXPECT_TRUE(set_site_permission(normal, top, 0, "camera", "default"));
+    EXPECT_EQ(permission_override(normal, top, 0, "camera"), "default");
+    EXPECT_EQ(effective_permission(preferences, normal, top, 0, "camera"), "ask");
+}
+TEST(Permissions, ProfilePersistsResetMarkersAndDropsRemovedContainerRules) {
+    TemporaryProfile temporary;
+    int container = 0;
+    {
+        Profile profile(temporary.path);
+        container = profile.add_container("Work");
+        ASSERT_TRUE(set_site_permission(profile.site_permissions, "https://example.com", 0,
+                                        "camera", "allow"));
+        ASSERT_TRUE(set_site_permission(profile.site_permissions, "https://example.com", container,
+                                        "camera", "block"));
+        ASSERT_TRUE(set_site_permission(profile.site_permissions, "https://example.com", 0,
+                                        "microphone", "default"));
+        profile.save();
+    }
+    Profile restored(temporary.path);
+    ASSERT_EQ(restored.site_permissions.size(), 3u);
+    EXPECT_EQ(permission_override(restored.site_permissions, "https://example.com", 0, "camera"),
+              "allow");
+    EXPECT_EQ(
+        permission_override(restored.site_permissions, "https://example.com", container, "camera"),
+        "block");
+    EXPECT_EQ(
+        permission_override(restored.site_permissions, "https://example.com", 0, "microphone"),
+        "default");
+    ASSERT_TRUE(restored.remove_container(container));
+    restored.save();
+    Profile cleaned(temporary.path);
+    ASSERT_EQ(cleaned.site_permissions.size(), 2u);
+    EXPECT_EQ(permission_override(cleaned.site_permissions, "https://example.com", 0, "camera"),
+              "allow");
+    for (const auto &spec : permission_catalog())
+        EXPECT_NE(translate("ru", spec.title), spec.title) << spec.id;
+}
+TEST(Permissions, MalformedOrFutureNamespaceRowsCannotBecomeDefaultProfileGrants) {
+    TemporaryProfile temporary;
+    std::ofstream output(temporary.path / "profile.toml");
+    output << "schema=11\n"
+              "[[site_permissions]]\norigin='https://"
+              "good.test'\npermission='camera'\nvalue='block'\ncontainer=0\n"
+              "[[site_permissions]]\norigin='https://"
+              "bad-type.test'\npermission='camera'\nvalue='allow'\ncontainer='broken'\n"
+              "[[site_permissions]]\norigin='https://"
+              "removed.test'\npermission='camera'\nvalue='allow'\ncontainer=777\n"
+              "[[site_permissions]]\norigin='https://"
+              "private.test'\npermission='camera'\nvalue='allow'\ncontainer=0\nprivate=true\n"
+              "[[site_permissions]]\norigin='https://"
+              "future.test'\npermission='camera'\nvalue='allow'\ncontainer=0\nexpires=1\n"
+              "[[site_permissions]]\norigin='https://"
+              "*.all.test'\npermission='camera'\nvalue='allow'\ncontainer=0\n";
+    output.close();
+    Profile profile(temporary.path);
+    ASSERT_EQ(profile.site_permissions.size(), 1u);
+    EXPECT_EQ(profile.site_permissions[0].origin, "https://good.test");
+    EXPECT_EQ(profile.site_permissions[0].value, "block");
+}

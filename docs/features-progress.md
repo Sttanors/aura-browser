@@ -15,7 +15,7 @@
 | 7 | Палитра команд | Реализовано, Linux проверки PASS |
 | 8 | Режим чтения | Реализовано, Linux проверки PASS |
 | 9 | Перевод страниц и выделения | Реализовано, Linux/offline/live проверки PASS |
-| 10 | Центр разрешений сайта | В очереди |
+| 10 | Центр разрешений сайта | Реализовано, Linux проверки PASS |
 | 11 | Панель данных сайтов | В очереди |
 | 12 | Менеджер закладок | В очереди |
 | 13 | Снимки сессий | В очереди |
@@ -467,3 +467,64 @@ reader-regression,browser-regression}.log. Checkpoint 9 завершён. Window
 
 Microsoft Chinese target сопоставлен с zh-Hans по официальному language support:
 https://learn.microsoft.com/en-us/azure/ai-services/translator/language-support
+
+## 10. План центра разрешений
+
+Задача: видеть и отзывать доступ конкретного сайта, не меняя остальные сайты и
+контейнеры. Текущий сайт по умолчанию, searchable picker сохранённых site scopes;
+8 строк camera/microphone/notifications/location/clipboard/MIDI/sensors/controls, выбор
+Default/Ask/Allow/Block, отдельный Revoke и Reset site.
+Нормальные правила сохраняются в profile; private правила только в памяти Aura.
+
+Один site scope = canonical HTTP(S) origin + container. Scope следует Chromium:
+NOTIFICATIONS — requesting origin; остальные перечисленные типы — top origin.
+Схема/порт различаются, wildcard/userinfo/path запрещены. Browser callback и
+native ContentSettings используют один resolver. Камера/микрофон используют scoped native media callback CEF Alloy с собственным
+диалогом Aura; остальные запросы — OnShowPermissionPrompt. Actual capture status
+берётся из OnMediaAccessChange. PTZ имеет отдельную строку Camera controls и отдельное правило; Allow обычной
+камеры не предоставляет управление её положением. Неизвестные permission bits отклоняются.
+
+Native panel в tokens/Inter (dark #0D111B/#182033/#EDF3FF/#99A7C1/#A7B6FF), до
+900 px. Заголовок → site/context → список строк с dropdown и Revoke → reset/choose.
+Узкие окна прокручивают строки, Tab/focus и клавиши paging; picker имеет поиск и
+empty state. Default/explicit/native состояния подписаны. Reset-маркеры сохраняют
+удаление старых native exceptions для ещё не открытых container contexts.
+Private notification Allow не предлагается из-за ограничений Chrome incognito;
+insecure HTTP получает только Block/Default. Активный capture виден вне панели.
+
+Проверка: fake camera/audio, без --use-fake-ui-for-media-stream и без доступа к
+реальным устройствам; native queries и реальные MediaStream tracks, отзыв,
+origin/port/container/private isolation, prompt cancellation и restart.
+Источники: bundled CEF cef_request_context.h, cef_permission_handler.h,
+cef_display_handler.h; Точный tag подтверждён CEF 14c5a089 CHROMIUM_BUILD_COMPATIBILITY.txt:
+https://chromium.googlesource.com/chromium/src/+/refs/tags/154.0.8037.98/components/content_settings/core/browser/content_settings_registry.cc
+В этой ревизии Sensors также допускает Ask.
+
+### 10. Реализация и проверка
+
+Profile schema 11: нормальные origin/container exceptions сохраняются, private
+правила остаются в BrowserState. Поддерживаются Default/Ask/Allow/Block, отдельный
+Revoke и Reset, scope согласно pinned Chromium, строгая проверка canonical origin.
+Native ContentSettings обновляются в соответствующем request context; unknown
+permission bits блокируются. Private notifications не получают Allow/Ask.
+
+GUI выявил важную особенность windowless CEF Alloy: default media handling всегда
+отказывает, поэтому используется CefMediaAccessCallback с scoped решением Aura.
+Нативный MediaStream registrar сообщает actual video/audio через OnMediaAccessChange.
+Отзыв ContentSetting действительно завершает tracks; фиктивные флаги и перезагрузка
+страницы не используются. Навигация отменяет prompt без запоминания отказа.
+Native dropdown теперь обрабатывает Escape отдельно от parent panel, поддерживает
+стрелки/Home/End/Tab/Enter и пропускает disabled choices. Удалены лишние украшения;
+малые окна показывают scrollbar, подписи полностью RU/EN.
+
+104/104 CTest PASS. Изолированный Weston Pixman/Xwayland SHM GUI PASS с настоящими
+синтетическими MediaStream, без fake-ui и без физических устройств: camera/mic
+allow/revoke, Ask/accept, notification deny, отмена beforeunload сохраняет active
+capture, отзыв сохраняет DOM/form; navigation-dismiss не сохраняет отказ.
+Origin/port и top-origin iframe isolation, container/private isolation,
+private notification disabled choices, отсутствие private origin в profile/backup,
+restart/default reset, searchable site picker и keyboard dropdown, RU 900×620 PASS.
+Логи /tmp/aura-permissions-{build-final,ctest-final,gui-final}.log.
+Установщики не изменены; Windows проверка этого checkpoint ещё не выполнена.
+
+Базовая browser GUI regression и offline translation/menu regression — PASS.

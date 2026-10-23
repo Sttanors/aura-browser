@@ -3,6 +3,7 @@
 namespace aura {
 namespace {
 constexpr Translation catalog[] = {
+    {"Close", "Закрыть"},
     {"Profiles", "Профили"},
     {"Default profile", "Основной профиль"},
     {"Current profile", "Текущий профиль"},
@@ -1023,6 +1024,34 @@ constexpr Translation catalog[] = {
     {"Select a shorter passage to translate.", "Выделите для перевода фрагмент покороче."},
 
     {"Same as Aura", "Как в Aura"},
+
+    {"Site permissions", "Разрешения сайта"},
+    {"Camera movement and zoom", "Поворот и зум камеры"},
+    {"Camera in use", "Камера используется"},
+    {"Microphone in use", "Микрофон используется"},
+    {"Find a site in this permission context.", "Найдите сайт в этом контексте разрешений."},
+    {"Choose a permission or revoke access for this site.",
+     "Настройте или отзовите доступ для этого сайта."},
+    {"Search sites", "Поиск сайтов"},
+    {"No saved sites. Open a website to manage its permissions.",
+     "Сайтов нет. Откройте сайт, чтобы настроить его разрешения."},
+    {"Saved sites", "Сохранённые сайты"},
+    {"Current tab: camera and microphone active", "Вкладка: камера и микрофон активны"},
+    {"Current tab: camera active", "Вкладка: камера активна"},
+    {"Current tab: microphone active", "Вкладка: микрофон активен"},
+    {"Allowed", "Разрешено"},
+    {"Blocked", "Заблокировано"},
+    {"Applies when this site opens", "Применится при открытии сайта"},
+    {"Blocked in private mode", "Недоступно в приватном режиме"},
+    {"Requires HTTPS or localhost", "Нужен HTTPS или localhost"},
+    {"Default", "По умолчанию"},
+    {"Revoke", "Отозвать"},
+    {"Reset permissions", "Сбросить разрешения"},
+    {"Private rules are cleared when Aura closes.",
+     "Приватные правила очищаются при закрытии Aura."},
+    {"Permissions apply to this site in the selected container.",
+     "Разрешения действуют для сайта в выбранном контейнере."},
+    {"Could not save this site rule.", "Не удалось сохранить правило для сайта."},
 
 };
 } // namespace

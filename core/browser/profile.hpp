@@ -1,4 +1,5 @@
 #pragma once
+#include "core/browser/permissions.hpp"
 #include "core/browser/preferences.hpp"
 #include <array>
 #include <cstdint>
@@ -52,6 +53,7 @@ class Profile : public BrowserPreferences {
     explicit Profile(std::filesystem::path directory);
     std::filesystem::path directory;
     std::string profiles_root;
+    std::vector<SitePermission> site_permissions;
     std::vector<Visit> history, bookmarks;
     std::vector<SavedTab> session;
     std::vector<SavedWindow> windows;

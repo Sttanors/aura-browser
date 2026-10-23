@@ -120,9 +120,13 @@ bool BrowserClient::OnBeforeBrowse(CefRefPtr<CefBrowser> browser, CefRefPtr<CefF
                                    CefRefPtr<CefRequest> request, bool, bool) {
     const auto url = request->GetURL().ToString();
     if (url.starts_with("http://") || url.starts_with("https://"))
-        owner_.configure_permissions(
-            browser->GetHost()->GetRequestContext(), url,
-            frame->IsMain() ? url : browser->GetMainFrame()->GetURL().ToString());
+        owner_.configure_permissions(browser->GetHost()->GetRequestContext(), url,
+                                     frame->IsMain() ? url
+                                                     : browser->GetMainFrame()->GetURL().ToString(),
+                                     owner_.tab(id_) ? owner_.tab(id_)->container : 0,
+                                     owner_.tab(id_) && owner_.tab(id_)->private_tab);
+    // A document that navigates cannot retain a pending permission prompt.
+    owner_.cancel_permissions(id_);
     if (frame->IsMain()) {
         if (auto t = owner_.tab(id_)) {
             ++t->navigation_serial;
@@ -130,44 +134,83 @@ bool BrowserClient::OnBeforeBrowse(CefRefPtr<CefBrowser> browser, CefRefPtr<CefF
             t->reader_context = 0;
             t->reader_ui = "null";
             t->selected_text.clear();
-            t->media_capture = false;
-            t->audio_contexts.clear();
             owner_.wake_tab(id_);
         }
         if (owner_.current() && owner_.current()->id == id_)
             owner_.close_extension_popup();
-        owner_.cancel_permissions(id_);
     }
     return false;
 }
-bool BrowserClient::OnRequestMediaAccessPermission(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
-                                                   const CefString &origin, uint32_t permissions,
+bool BrowserClient::OnRequestMediaAccessPermission(CefRefPtr<CefBrowser> browser,
+                                                   CefRefPtr<CefFrame>, const CefString &origin,
+                                                   uint32_t permissions,
                                                    CefRefPtr<CefMediaAccessCallback> callback) {
+    auto tab = owner_.tab(id_);
     const uint32_t devices =
         CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE | CEF_MEDIA_PERMISSION_DEVICE_VIDEO_CAPTURE;
-    const bool audio = permissions & CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE;
-    const bool video = permissions & CEF_MEDIA_PERMISSION_DEVICE_VIDEO_CAPTURE;
-    if ((permissions & ~devices) || (!audio && !video) ||
-        (audio && owner_.profile.microphone == "block") ||
-        (video && owner_.profile.camera == "block")) {
+    const bool audio = permissions & CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE,
+               video = permissions & CEF_MEDIA_PERMISSION_DEVICE_VIDEO_CAPTURE;
+    if (!tab || (permissions & ~devices) || (!audio && !video) ||
+        (audio && owner_.permission_value(*tab, origin, "microphone") == "block") ||
+        (video && owner_.permission_value(*tab, origin, "camera") == "block")) {
         callback->Cancel();
         ++owner_.audit["permissions_denied"];
+        return true;
+    }
+    auto top = permission_origin(browser->GetMainFrame()->GetURL());
+    if (top.empty())
+        top = permission_origin(origin);
+    if (!top.empty() && tab->permission_origins.size() < 128)
+        tab->permission_origins.insert(top);
+    owner_.configure_permissions(browser->GetHost()->GetRequestContext(), origin, top,
+                                 tab->container, tab->private_tab);
+    // Windowless CEF uses Alloy: default media handling denies every request.
+    // Keep the native MediaStream registrar, but supply Aura's scoped decision.
+    std::vector<SitePermission> choices, scope;
+    std::string names;
+    for (const char *id : {"camera", "microphone"}) {
+        if ((std::string(id) == "camera" && !video) || (std::string(id) == "microphone" && !audio))
+            continue;
+        const auto site = owner_.permission_site(*tab, origin, id);
+        scope.push_back({site, id, "", tab->container});
+        if (owner_.permission_value(*tab, origin, id) == "ask") {
+            choices.push_back(scope.back());
+            if (!names.empty())
+                names += ", ";
+            names += owner_.tr(find_permission(id)->title);
+        }
+    }
+    if (choices.empty()) {
+        callback->Continue(permissions);
         return true;
     }
     BrowserDialog dialog;
     dialog.tab = id_;
     dialog.origin = origin;
     dialog.permission = true;
-    dialog.message =
-        owner_.tr("Allow access to: ") + owner_.tr(audio && video ? "Camera and microphone"
-                                                   : audio        ? "Microphone"
-                                                                  : "Camera");
-    dialog.action = [this, callback, permissions](bool allow, const std::string &) {
-        if (allow) {
-            if (auto t = owner_.tab(id_))
-                t->media_capture = true;
+    dialog.permission_private = tab->private_tab;
+    dialog.permission_rules = std::move(scope);
+    dialog.message = owner_.tr("Allow access to: ") + names;
+    const int id = id_, container = tab->container;
+    const bool private_mode = tab->private_tab;
+    const auto serial = tab->navigation_serial;
+    const auto weak = std::weak_ptr<void>(owner_.callback_lifetime);
+    auto *owner = &owner_;
+    dialog.user_decision = [owner, id, container, private_mode, serial, weak,
+                            choices](bool accept) {
+        if (weak.expired())
+            return;
+        const auto tab = owner->tab(id);
+        if (!tab || tab->closing || tab->navigation_serial != serial)
+            return;
+        for (const auto &rule : choices)
+            owner->change_site_permission(rule.origin, container, private_mode, rule.permission,
+                                          accept ? "allow" : "block");
+    };
+    dialog.action = [callback, permissions](bool accept, const std::string &) {
+        if (accept)
             callback->Continue(permissions);
-        } else
+        else
             callback->Cancel();
     };
     owner_.dialogs.push_back(std::move(dialog));
@@ -178,31 +221,39 @@ bool BrowserClient::OnRequestMediaAccessPermission(CefRefPtr<CefBrowser>, CefRef
 bool BrowserClient::OnShowPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t prompt,
                                            const CefString &origin, uint32_t permissions,
                                            CefRefPtr<CefPermissionPromptCallback> callback) {
-    struct Policy {
+    auto tab = owner_.tab(id_);
+    const struct {
         uint32_t bit;
-        const std::string *value;
-        const char *name;
+        const char *id;
+    } policies[] = {
+        {CEF_PERMISSION_TYPE_NOTIFICATIONS, "notifications"},
+        {CEF_PERMISSION_TYPE_GEOLOCATION, "geolocation"},
+        {CEF_PERMISSION_TYPE_CAMERA_STREAM, "camera"},
+        {CEF_PERMISSION_TYPE_CAMERA_PAN_TILT_ZOOM, "camera_controls"},
+        {CEF_PERMISSION_TYPE_MIC_STREAM, "microphone"},
+        {CEF_PERMISSION_TYPE_CLIPBOARD, "clipboard"},
+        {CEF_PERMISSION_TYPE_MIDI_SYSEX, "midi"},
+        {CEF_PERMISSION_TYPE_SENSORS, "sensors"},
     };
-    const auto &p = owner_.profile;
-    const Policy policies[] = {
-        {CEF_PERMISSION_TYPE_NOTIFICATIONS, &p.notifications, "Notifications"},
-        {CEF_PERMISSION_TYPE_GEOLOCATION, &p.geolocation, "Location"},
-        {CEF_PERMISSION_TYPE_CAMERA_STREAM | CEF_PERMISSION_TYPE_CAMERA_PAN_TILT_ZOOM, &p.camera,
-         "Camera"},
-        {CEF_PERMISSION_TYPE_MIC_STREAM, &p.microphone, "Microphone"},
-        {CEF_PERMISSION_TYPE_CLIPBOARD, &p.clipboard, "Clipboard"},
-        {CEF_PERMISSION_TYPE_MIDI_SYSEX, &p.midi, "MIDI devices"},
-        {CEF_PERMISSION_TYPE_SENSORS, &p.sensors, "Motion sensors"}};
     uint32_t known = 0;
-    bool blocked = false;
+    bool blocked = !tab;
     std::string names;
+    std::vector<SitePermission> choices, scope;
     for (const auto &policy : policies) {
         known |= policy.bit;
-        if (permissions & policy.bit) {
-            blocked |= *policy.value == "block";
+        if (!(permissions & policy.bit) || !tab)
+            continue;
+        const auto site = owner_.permission_site(*tab, origin, policy.id);
+        const auto value = owner_.permission_value(*tab, origin, policy.id);
+        blocked |= value == "block";
+        scope.push_back({site, policy.id, "", tab->container});
+        if (!site.empty() && tab->permission_origins.size() < 128)
+            tab->permission_origins.insert(site);
+        if (value == "ask") {
             if (!names.empty())
                 names += ", ";
-            names += owner_.tr(policy.name);
+            names += owner_.tr(find_permission(policy.id)->title);
+            choices.push_back(scope.back());
         }
     }
     if (!permissions || (permissions & ~known) || blocked) {
@@ -210,12 +261,35 @@ bool BrowserClient::OnShowPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t promp
         ++owner_.audit["permissions_denied"];
         return true;
     }
+    if (choices.empty()) {
+        callback->Continue(CEF_PERMISSION_RESULT_ACCEPT);
+        ++owner_.audit["permissions_allowed"];
+        return true;
+    }
     BrowserDialog dialog;
     dialog.tab = id_;
     dialog.origin = origin;
     dialog.permission = true;
     dialog.permission_id = prompt;
+    dialog.permission_private = tab->private_tab;
+    dialog.permission_rules = std::move(scope);
     dialog.message = owner_.tr("Allow access to: ") + names;
+    const int id = id_, container = tab->container;
+    const bool private_mode = tab->private_tab;
+    const auto serial = tab->navigation_serial;
+    const auto weak = std::weak_ptr<void>(owner_.callback_lifetime);
+    auto *owner = &owner_;
+    dialog.user_decision = [owner, id, container, private_mode, serial, weak,
+                            choices](bool accept) {
+        if (weak.expired())
+            return;
+        const auto tab = owner->tab(id);
+        if (!tab || tab->closing || tab->navigation_serial != serial)
+            return;
+        for (const auto &rule : choices)
+            owner->change_site_permission(rule.origin, container, private_mode, rule.permission,
+                                          accept ? "allow" : "block", false);
+    };
     dialog.action = [callback](bool allow, const std::string &) {
         callback->Continue(allow ? CEF_PERMISSION_RESULT_ACCEPT : CEF_PERMISSION_RESULT_DENY);
     };
@@ -223,6 +297,15 @@ bool BrowserClient::OnShowPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t promp
     ++owner_.audit["permission_prompts"];
     owner_.changed();
     return true;
+}
+void BrowserClient::OnMediaAccessChange(CefRefPtr<CefBrowser>, bool video, bool audio) {
+    if (auto tab = owner_.tab(id_)) {
+        tab->media_video = video;
+        tab->media_audio = audio;
+        tab->media_capture = video || audio;
+        ++owner_.audit["media_access_changes"];
+        owner_.changed();
+    }
 }
 void BrowserClient::OnDismissPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t prompt,
                                               cef_permission_request_result_t) {

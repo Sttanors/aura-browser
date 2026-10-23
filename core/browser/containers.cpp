@@ -9,9 +9,12 @@ class ContainerContextHandler final : public CefRequestContextHandler {
   public:
     ContainerContextHandler(std::weak_ptr<BrowserState> state, int id)
         : state_(std::move(state)), id_(id) {}
-    void OnRequestContextInitialized(CefRefPtr<CefRequestContext>) override {
-        if (auto state = state_.lock())
+    void OnRequestContextInitialized(CefRefPtr<CefRequestContext> context) override {
+        if (auto state = state_.lock()) {
+            if (!state->windows.empty())
+                state->windows.front()->configure_permissions(context, "", "", id_, false);
             state->container_contexts_ready.insert(id_);
+        }
     }
 
   private:

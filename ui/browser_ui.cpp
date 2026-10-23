@@ -294,6 +294,10 @@ void icon(SkCanvas &c, const std::string &name, float x, float y, float size, Sk
         {"download", "M12 3 L12 15 M7 10 L12 15 L17 10 M4 16 L4 21 L20 21 L20 16"},
         {"settings", "M12 8 A4 4 0 1 1 11.99 8 M12 2 L12 5 M12 19 L12 22 M2 12 L5 12 M19 12 L22 12 "
                      "M5 5 L7 7 M17 17 L19 19 M5 19 L7 17 M17 7 L19 5"},
+        {"camera",
+         "M3 7 L7 7 L9 4 L15 4 L17 7 L21 7 L21 20 L3 20 Z M16 13 A4 4 0 1 1 8 13 A4 4 0 1 1 16 13"},
+        {"microphone", "M12 2 A3 3 0 0 0 9 5 L9 11 A3 3 0 0 0 15 11 L15 5 A3 3 0 0 0 12 2 M5 10 L5 "
+                       "11 A7 7 0 0 0 19 11 L19 10 M12 18 L12 22 M8 22 L16 22"},
         {"lock", "M7 11 L7 7 A5 5 0 0 1 17 7 L17 11 M5 11 L19 11 L19 21 L5 21 Z M12 15 L12 17"},
         {"globe", "M12 2 A10 10 0 1 1 11.99 2 M2 12 L22 12 M12 2 C5 8 5 16 12 22 C19 16 19 8 12 2"},
         {"moon", "M20 15 A9 9 0 1 1 9 3 A7 7 0 0 0 20 15 Z"},
@@ -365,6 +369,7 @@ Rect BrowserUi::panel_bounds() const {
                            : panel_ == Groups      ? 900
                            : panel_ == Containers  ? 900
                            : panel_ == Commands    ? 900
+                           : panel_ == Permissions ? 900
                            : panel_ == Translation ? 900
                            : panel_ == Profiles    ? 900
                            : panel_ == Filters     ? 900
@@ -379,6 +384,7 @@ Rect BrowserUi::panel_bounds() const {
         : panel_ == Commands
             ? std::clamp(180 + int(std::min<std::size_t>(8, command_results().size())) * 52, 284,
                          596)
+        : panel_ == Permissions ? 700
         : panel_ == Translation ? 520
         : panel_ == Profiles    ? std::clamp(236 + int(listed_profiles().size()) * 84, 340, 700)
         : panel_ == Containers
@@ -607,6 +613,8 @@ void BrowserUi::draw(SkCanvas &c) {
                                                                            : std::sin(time * 4)))));
         } else if (tab.sleeping)
             label(c, medium_, "z", 30, y + 29, 17, muted);
+        else if (tab.media_capture)
+            icon(c, tab.media_video ? "camera" : "microphone", 26, y + 14, 19, t.accent);
         else if (tab.private_tab)
             icon(c, "private", 26, y + 14, 19, t.accent);
         else if (app_.profile.show_favicons && tab.favicon.generation())
@@ -618,7 +626,9 @@ void BrowserUi::draw(SkCanvas &c) {
               y + (app_.profile.show_tab_host ? 21 : 28), 12.5f, ink, 138);
         if (app_.profile.show_tab_host)
             label(c, regular_,
-                  tab.sleeping      ? app_.tr("Sleeping")
+                  tab.media_video   ? app_.tr("Camera in use")
+                  : tab.media_audio ? app_.tr("Microphone in use")
+                  : tab.sleeping    ? app_.tr("Sleeping")
                   : tab.private_tab ? app_.tr("Private browsing")
                   : tab.ntp
                       ? app_.tr("A fresh perspective")
@@ -667,11 +677,14 @@ void BrowserUi::draw(SkCanvas &c) {
     button({260, 37, 34, 36}, "back", current && current->back);
     button({298, 37, 34, 36}, "forward", current && current->forward);
     button({336, 37, 34, 36}, current && current->loading ? "close" : "reload");
-    focus_target(addr);
+    focus_target({addr.x + 5, addr.y + 4, 30, 30});
+    focus_target({addr.x + 40, addr.y, addr.width - 40, addr.height});
     fill(c, addr, 12, SkColorSetA(t.surface, light ? 230 : 185));
     border(c, addr, 12, SkColorSetA(muted, 190));
     icon(c,
-         current && current->private_tab ? "private"
+         current && current->media_video   ? "camera"
+         : current && current->media_audio ? "microphone"
+         : current && current->private_tab ? "private"
          : current && current->page.loaded && !current->page.failed &&
                  current->page.url.starts_with("https://")
              ? "lock"
@@ -783,7 +796,8 @@ void BrowserUi::draw(SkCanvas &c) {
                                       app_.tr("Site containers"),
                                       app_.tr("Profiles"),
                                       app_.tr("Command palette"),
-                                      app_.tr("Translate")};
+                                      app_.tr("Translate"),
+                                      app_.tr("Site permissions")};
         label(c, medium_, titles[panel_], r.x + 28, r.y + 47, 23, ink);
         icon(c, "close", r.x + r.width - 43, r.y + 26, 19, muted);
         if (panel_ == History || panel_ == Bookmarks) {
@@ -891,6 +905,8 @@ void BrowserUi::draw(SkCanvas &c) {
             draw_commands(c, r);
         if (panel_ == Translation)
             draw_translation(c, r);
+        if (panel_ == Permissions)
+            draw_permissions(c, r);
     }
 
     if (editing) {
@@ -934,6 +950,7 @@ void BrowserUi::draw(SkCanvas &c) {
     if (!app_.extension_popup && panel_ == None && !editing && app_.dialogs.empty() &&
         !app_.menu_callback && !app_.menu_action) {
         const std::pair<Rect, std::string> tips[] = {
+            {{addr.x + 5, addr.y + 4, 30, 30}, app_.tr("Site permissions") + " (Ctrl+Alt+I)"},
             {{260, 37, 34, 36}, app_.tr("Back") + " (Alt+←)"},
             {{298, 37, 34, 36}, app_.tr("Forward") + " (Alt+→)"},
             {{336, 37, 34, 36}, app_.tr("Reload") + " (Ctrl+R)"},
@@ -2395,6 +2412,7 @@ void BrowserUi::focus_address(bool select) {
     app_.close_extension_popup();
     editing = true;
     panel_ = None;
+    permissions_search_focus_ = false;
     translation_text_.clear();
     translation_source_.clear();
     translation_tab_ = 0;
@@ -2418,6 +2436,8 @@ void BrowserUi::panel(Panel value) {
     clear_password_fields();
     password_mode_ = 0;
     panel_ = value;
+    if (value != Permissions)
+        permissions_search_focus_ = false;
     if (value != Translation) {
         translation_text_.clear();
         translation_source_.clear();
@@ -2458,6 +2478,7 @@ void BrowserUi::dismiss() {
     clear_password_fields();
     editing = false;
     panel_ = None;
+    permissions_search_focus_ = false;
     translation_text_.clear();
     translation_source_.clear();
     translation_tab_ = 0;
@@ -2507,6 +2528,9 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
                 live = &filter_input_;
             else if (panel_ == Workspaces && target == &workspace_input_ && workspace_input_focus_)
                 live = &workspace_input_;
+            else if (panel_ == Permissions && permissions_picker_ && permissions_search_focus_ &&
+                     target == &permissions_search_)
+                live = &permissions_search_;
             else if (panel_ == Commands && target == &command_query_)
                 live = &command_query_;
             else if (panel_ == Profiles && target == &profile_input_ && profile_input_focus_)
@@ -2531,9 +2555,12 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
                 (live != &workspace_input_ || live->value.size() + text.size() <= 120) &&
                 (live != &group_input_ || live->value.size() + text.size() <= 120) &&
                 (live != &container_input_ || live->value.size() + text.size() <= 120) &&
+                (live != &permissions_search_ || live->value.size() + text.size() <= 512) &&
                 (live != &command_query_ || live->value.size() + text.size() <= 512) &&
                 (live != &profile_input_ || live->value.size() + text.size() <= 120))
                 live->insert(text);
+            if (live == &permissions_search_)
+                permissions_pick_selected_ = permissions_scroll_ = 0;
             if (live == &command_query_)
                 command_selected_ = command_scroll_ = 0;
             if (live == &find)
@@ -2580,6 +2607,47 @@ bool BrowserUi::key(const CefKeyEvent &key) {
         last_key_ = key;
     if (down && ctrl && !alt && code == 'K' && app_.dialogs.empty()) {
         open_commands();
+        return true;
+    }
+    if (app_.dialogs.empty() && (app_.menu_action || app_.menu_callback)) {
+        if (!down)
+            return true;
+        if (code == 0x1B) {
+            app_.close_menu();
+            keyboard_focus_ = -1;
+            app_.changed();
+            return true;
+        }
+        std::vector<int> enabled;
+        for (int i = 0; i < int(app_.menu.size()); ++i)
+            if (app_.menu[i].enabled && !app_.menu[i].label.empty())
+                enabled.push_back(i);
+        if (code == 0x26 || code == 0x28 || code == 0x09 || code == 0x24 || code == 0x23) {
+            if (!enabled.empty()) {
+                const int n = int(enabled.size()),
+                          direction = code == 0x26 || (code == 0x09 && shift) ? -1 : 1;
+                keyboard_focus_ = code == 0x24          ? 0
+                                  : code == 0x23        ? n - 1
+                                  : keyboard_focus_ < 0 ? (direction < 0 ? n - 1 : 0)
+                                                        : (keyboard_focus_ + direction + n) % n;
+                app_.changed();
+            }
+            return true;
+        }
+        if ((code == 0x0D || code == 0x20) && !enabled.empty()) {
+            const auto item =
+                app_.menu[enabled[std::clamp(keyboard_focus_, 0, int(enabled.size()) - 1)]];
+            auto action = std::move(app_.menu_action);
+            auto callback = std::move(app_.menu_callback);
+            app_.menu.clear();
+            keyboard_focus_ = -1;
+            if (action)
+                action(item.id);
+            else if (callback)
+                callback->Continue(item.id, static_cast<cef_event_flags_t>(key.modifiers));
+            app_.changed();
+            return true;
+        }
         return true;
     }
     if (panel_ == Commands && app_.dialogs.empty() && !app_.menu_action && !app_.menu_callback) {
@@ -2630,6 +2698,7 @@ bool BrowserUi::key(const CefKeyEvent &key) {
         group_input_focus_ = false;
         container_input_focus_ = false;
         profile_input_focus_ = false;
+        permissions_search_focus_ = false;
         if (auto tab = app_.current(); tab && tab->browser)
             tab->browser->GetHost()->SetFocus(false);
         if (!focus_targets_.empty()) {
@@ -2647,7 +2716,8 @@ bool BrowserUi::key(const CefKeyEvent &key) {
         !settings_search_focus_ && settings_edit_.empty() && !extension_input_focus_ &&
         !import_input_focus_ && !filter_input_focus_ && shortcut_focus_ < 0 &&
         password_focus_ < 0 && !workspace_input_focus_ && !group_input_focus_ &&
-        !container_input_focus_ && !profile_input_focus_ && !editing) {
+        !container_input_focus_ && !profile_input_focus_ && !permissions_search_focus_ &&
+        !editing) {
         const auto r = focus_targets_[keyboard_focus_];
         const int previous = keyboard_focus_;
         const auto previous_panel = panel_;
@@ -2682,6 +2752,10 @@ bool BrowserUi::key(const CefKeyEvent &key) {
         }
     }
     if (down) {
+        if (ctrl && alt && code == 'I' && app_.dialogs.empty() && !editing) {
+            open_permissions();
+            return true;
+        }
         if (ctrl && alt && code == 'T' && app_.dialogs.empty() && !editing) {
             open_translation(app_.current() && !app_.current()->selected_text.empty());
             return true;
@@ -2726,6 +2800,71 @@ bool BrowserUi::key(const CefKeyEvent &key) {
                 app_.changed();
                 return code < 0x20 || ctrl || (code >= 0x21 && code <= 0x2E);
             }
+            return true;
+        }
+        if (panel_ == Permissions && ctrl && code == 'F') {
+            permissions_picker_ = true;
+            permissions_search_focus_ = true;
+            permissions_search_.select_all();
+            permissions_scroll_ = 0;
+            app_.changed();
+            return true;
+        }
+        if (panel_ == Permissions && permissions_picker_ && permissions_search_focus_) {
+            if (code == 0x26 || code == 0x28 || code == 0x21 || code == 0x22) {
+                const int count = int(permission_sites().size()),
+                          capacity = std::max(1, (panel_bounds().height - 274) / 52);
+                const int direction = code == 0x26 || code == 0x21 ? -1 : 1;
+                permissions_pick_selected_ =
+                    std::clamp(permissions_pick_selected_ +
+                                   direction * (code == 0x21 || code == 0x22 ? capacity : 1),
+                               0, std::max(0, count - 1));
+                permissions_scroll_ = std::clamp(
+                    permissions_scroll_, std::max(0, permissions_pick_selected_ - capacity + 1),
+                    permissions_pick_selected_);
+                app_.changed();
+                return true;
+            }
+            if (code == 0x1B) {
+                permissions_picker_ = false;
+                permissions_search_focus_ = false;
+                permissions_scroll_ = 0;
+                app_.changed();
+                return true;
+            }
+            if (code == 0x0D) {
+                const auto sites = permission_sites();
+                if (!sites.empty()) {
+                    const auto &site =
+                        sites[std::clamp(permissions_pick_selected_, 0, int(sites.size()) - 1)];
+                    permissions_origin_ = site.origin;
+                    permissions_container_ = site.container;
+                    permissions_picker_ = false;
+                    permissions_search_focus_ = false;
+                    permissions_scroll_ = 0;
+                    app_.changed();
+                }
+                return true;
+            }
+            if (!ctrl || (code != 'L' && code != 'T' && code != 'W' && code != 'Q')) {
+                editor_key(permissions_search_, key);
+                permissions_pick_selected_ = permissions_scroll_ = 0;
+                app_.changed();
+                return code < 0x20 || ctrl || (code >= 0x21 && code <= 0x2E);
+            }
+        }
+        if (panel_ == Permissions &&
+            (code == 0x21 || code == 0x22 || code == 0x24 || code == 0x23)) {
+            const int count = permissions_picker_ ? int(permission_sites().size())
+                                                  : int(permission_catalog().size());
+            const int capacity = std::max(1, (panel_bounds().height - 274) / 52),
+                      maximum = std::max(0, count - capacity);
+            permissions_scroll_ = std::clamp(
+                code == 0x24   ? 0
+                : code == 0x23 ? maximum
+                               : permissions_scroll_ + (code == 0x22 ? capacity : -capacity),
+                0, maximum);
+            app_.changed();
             return true;
         }
         if (panel_ == Profiles && profile_input_focus_) {
@@ -3233,6 +3372,10 @@ void BrowserUi::text(const std::string &value) {
     if (!app_.dialogs.empty()) {
         if (app_.dialogs.front().prompt)
             app_.dialogs.front().input.insert(clean);
+    } else if (panel_ == Permissions && permissions_picker_ && permissions_search_focus_) {
+        if (permissions_search_.value.size() + clean.size() <= 512)
+            permissions_search_.insert(clean);
+        permissions_pick_selected_ = permissions_scroll_ = 0;
     } else if (panel_ == Commands) {
         if (command_query_.value.size() + clean.size() <= 512)
             command_query_.insert(clean);
@@ -3379,6 +3522,19 @@ void BrowserUi::pointer(const PointerInput &input) {
         else
             start_scroll_ = std::clamp(start_scroll_ + (input.dy < 0 ? 64 : -64), 0,
                                        start_page_layout().maximum);
+        return;
+    }
+    if (input.kind == PointerInput::Wheel && panel_ == Permissions) {
+        const int count =
+            permissions_picker_ ? int(permission_sites().size()) : int(permission_catalog().size());
+        const int capacity = std::max(1, (panel_bounds().height - 274) / 52);
+        permissions_scroll_ = std::clamp(permissions_scroll_ + (input.dy < 0 ? 1 : -1), 0,
+                                         std::max(0, count - capacity));
+        if (permissions_picker_ && count > 0)
+            permissions_pick_selected_ =
+                std::clamp(permissions_pick_selected_, permissions_scroll_,
+                           std::min(count - 1, permissions_scroll_ + capacity - 1));
+        app_.changed();
         return;
     }
     if (input.kind == PointerInput::Wheel && panel_ == Commands) {
@@ -3610,6 +3766,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                 commands_pointer(r, x, y);
             else if (panel_ == Translation)
                 translation_pointer(r, x, y);
+            else if (panel_ == Permissions)
+                permissions_pointer(r, x, y);
         }
         return;
     }
@@ -3648,7 +3806,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                 {11, app_.tr("Command palette"), true, "Ctrl+K"},
                 {12, app_.tr(t && t->reader_active ? "Exit reader" : "Reader mode"),
                  t && t->browser && !t->ntp, "Ctrl+Alt+R"},
-                {13, app_.tr("Translate"), t && t->browser && !t->ntp, "Ctrl+Alt+T"}};
+                {13, app_.tr("Translate"), t && t->browser && !t->ntp, "Ctrl+Alt+T"},
+                {14, app_.tr("Site permissions"), true, "Ctrl+Alt+I"}};
             app_.menu_width = 320;
             app_.menu_x = 16;
             app_.menu_y = 76;
@@ -3675,6 +3834,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                     app_.toggle_reader();
                 else if (command == 13)
                     open_translation(app_.current() && !app_.current()->selected_text.empty());
+                else if (command == 14)
+                    open_permissions();
                 else
                     app_.request_exit();
             };
@@ -3784,6 +3945,10 @@ void BrowserUi::pointer(const PointerInput &input) {
                 open_containers();
                 return;
             }
+        }
+        if (inside({address_bounds().x + 5, address_bounds().y + 4, 30, 30}, x, y)) {
+            open_permissions();
+            return;
         }
         if (inside(address_bounds(), x, y)) {
             focus_address();
@@ -5821,6 +5986,7 @@ std::vector<BrowserUi::CommandResult> BrowserUi::command_results() const {
          page},
         {"translate_page", "Translate page", "Ctrl+Alt+T", page},
         {"translate_selection", "Translate selection", "", page && !current->selected_text.empty()},
+        {"permissions", "Site permissions", "Ctrl+Alt+I", true},
         {"devtools", "Developer tools", "F12", page},
     };
     for (const auto &action : actions)
@@ -5977,6 +6143,8 @@ void BrowserUi::run_command(int index) {
         open_translation(false);
     else if (id == "translate_selection")
         open_translation(true);
+    else if (id == "permissions")
+        open_permissions();
     else if (id == "devtools")
         app_.devtools();
     app_.changed();
@@ -6186,5 +6354,344 @@ std::string BrowserUi::menu_report() const {
                "," + std::to_string(app_.menu_width - 10) + ",31]}";
     }
     return out + "]";
+}
+
+std::vector<BrowserUi::PermissionSite> BrowserUi::permission_sites() const {
+    std::vector<PermissionSite> result;
+    std::set<std::pair<int, std::string>> seen;
+    const auto query = fold_settings(permissions_search_.value);
+    auto add = [&](const std::string &origin, int container) {
+        if (!valid_permission_origin(origin) || !app_.profile.container(container) ||
+            result.size() >= 4096)
+            return;
+        if (!query.empty() &&
+            fold_settings(origin + " " + app_.profile.container_label(container)).find(query) ==
+                std::string::npos)
+            return;
+        if (seen.insert({container, origin}).second)
+            result.push_back({origin, container});
+    };
+    if (auto tab = app_.current(); tab && tab->private_tab == permissions_private_) {
+        auto origin = permission_origin(
+            tab->browser ? tab->browser->GetMainFrame()->GetURL().ToString() : tab->page.url);
+        if (origin.empty() && !tab->media_capture)
+            origin = permission_origin(tab->page.url);
+        add(origin, tab->container);
+    }
+    const auto &rules = permissions_private_ ? app_.state()->private_site_permissions
+                                             : app_.profile.site_permissions;
+    for (const auto &rule : rules)
+        add(rule.origin, rule.container);
+    for (const auto *window : app_.state()->windows)
+        for (const auto &tab : window->tabs)
+            if (tab->private_tab == permissions_private_ && !tab->closing)
+                for (const auto &origin : tab->permission_origins)
+                    add(origin, tab->container);
+    return result;
+}
+void BrowserUi::open_permissions() {
+    permissions_error_.clear();
+    permissions_pick_selected_ = permissions_scroll_ = 0;
+    permissions_search_.set("");
+    permissions_search_focus_ = false;
+    permissions_origin_.clear();
+    permissions_container_ = 0;
+    auto tab = app_.current();
+    permissions_private_ = tab && tab->private_tab;
+    if (tab) {
+        permissions_container_ = tab->container;
+        permissions_origin_ = permission_origin(
+            tab->browser ? tab->browser->GetMainFrame()->GetURL().ToString() : tab->page.url);
+        if (permissions_origin_.empty() && !tab->media_capture)
+            permissions_origin_ = permission_origin(tab->page.url);
+    }
+    permissions_picker_ = permissions_origin_.empty();
+    permissions_search_focus_ = permissions_picker_;
+    app_.close_menu();
+    panel(Permissions);
+    if (tab && tab->browser)
+        tab->browser->GetHost()->SetFocus(false);
+    app_.changed();
+}
+void BrowserUi::draw_permissions(SkCanvas &c, Rect r) {
+    const auto &theme = interface_theme(app_.profile);
+    const int capacity = std::max(1, (r.height - 274) / 52);
+    auto button = [&](Rect b, const std::string &title, bool enabled = true, bool primary = false) {
+        if (enabled)
+            focus_target(b);
+        fill(c, b, 8,
+             SkColorSetA(theme.accent, primary                                    ? 30
+                                       : enabled && inside(b, hover_x_, hover_y_) ? 24
+                                                                                  : 8));
+        border(c, b, 8, SkColorSetA(enabled ? theme.accent : theme.muted, enabled ? 140 : 55));
+        centered_label(c, medium_, app_.tr(title), b, 12, enabled ? theme.text : theme.muted, 7, 7);
+    };
+    label(c, regular_,
+          app_.tr(permissions_picker_ ? "Find a site in this permission context."
+                                      : "Choose a permission or revoke access for this site."),
+          r.x + 28, r.y + 73, 11, theme.muted, r.width - 56);
+    if (permissions_picker_) {
+        label(c, regular_, app_.tr("Search sites"), r.x + 28, r.y + 101, 11, theme.muted);
+        Rect input{r.x + 28, r.y + 112, r.width - 56, 36};
+        focus_target(input);
+        fill(c, input, 8, theme.background);
+        border(c, input, 8, SkColorSetA(theme.accent, permissions_search_focus_ ? 255 : 110));
+        draw_editor(c, permissions_search_, {input.x + 10, input.y + 2, input.width - 20, 32}, 13,
+                    permissions_search_focus_);
+        const auto sites = permission_sites();
+        permissions_scroll_ =
+            std::clamp(permissions_scroll_, 0, std::max(0, int(sites.size()) - capacity));
+        if (sites.empty())
+            label(c, regular_, app_.tr("No saved sites. Open a website to manage its permissions."),
+                  r.x + 28, r.y + 200, 13, theme.muted, r.width - 56);
+        for (int i = permissions_scroll_;
+             i < int(sites.size()) && i < permissions_scroll_ + capacity; i++) {
+            const auto &site = sites[i];
+            Rect row{r.x + 20, r.y + 174 + (i - permissions_scroll_) * 52, r.width - 40, 48};
+            focus_target(row);
+            if (permissions_search_focus_ && i == permissions_pick_selected_) {
+                fill(c, row, 8, SkColorSetA(theme.accent, 20));
+                border(c, row, 8, theme.accent);
+            } else if (inside(row, hover_x_, hover_y_))
+                fill(c, row, 8, SkColorSetA(theme.accent, 16));
+            label(c, medium_, site.origin, row.x + 8, row.y + 19, 13, theme.text, row.width - 24);
+            label(c, regular_, app_.profile.container_label(site.container), row.x + 8, row.y + 38,
+                  10, theme.muted, row.width - 24);
+        }
+        button({r.x + 28, r.y + r.height - 68, 140, 34},
+               permissions_origin_.empty() ? "Close" : "Back");
+    } else {
+        label(c, medium_, permissions_origin_, r.x + 28, r.y + 102, 13, theme.text, r.width - 56);
+        label(c, regular_,
+              app_.profile.container_label(permissions_container_) +
+                  (permissions_private_ ? " · " + app_.tr("Private browsing") : ""),
+              r.x + 28, r.y + 123, 10, theme.muted, r.width - 56);
+        button({r.x + 28, r.y + 134, 180, 30}, "Saved sites");
+        if (auto tab = app_.current(); tab && tab->media_capture)
+            label(c, regular_,
+                  app_.tr(tab->media_video && tab->media_audio
+                              ? "Current tab: camera and microphone active"
+                          : tab->media_video ? "Current tab: camera active"
+                                             : "Current tab: microphone active"),
+                  r.x + 224, r.y + 154, 10, theme.accent, r.width - 252);
+        const auto specs = permission_catalog();
+        permissions_scroll_ =
+            std::clamp(permissions_scroll_, 0, std::max(0, int(specs.size()) - capacity));
+        const auto &rules = permissions_private_ ? app_.state()->private_site_permissions
+                                                 : app_.profile.site_permissions;
+        for (int i = permissions_scroll_;
+             i < int(specs.size()) && i < permissions_scroll_ + capacity; i++) {
+            const auto &spec = specs[i];
+            const int y = r.y + 174 + (i - permissions_scroll_) * 52;
+            const auto override =
+                permission_override(rules, permissions_origin_, permissions_container_, spec.id);
+            const auto native = app_.native_permission_value(
+                permissions_origin_, permissions_container_, permissions_private_, spec.id);
+            const std::string state = native == "allow"   ? "Allowed"
+                                      : native == "block" ? "Blocked"
+                                      : native == "ask"   ? "Ask"
+                                                          : "Applies when this site opens";
+            label(c, medium_, app_.tr(spec.title), r.x + 28, y + 18, 13, theme.text, r.width - 340);
+            label(c, regular_,
+                  app_.tr(permissions_private_ && std::string(spec.id) == "notifications"
+                              ? "Blocked in private mode"
+                          : !trustworthy_permission_origin(permissions_origin_)
+                              ? "Requires HTTPS or localhost"
+                              : state),
+                  r.x + 28, y + 37, 10, theme.muted, r.width - 340);
+            button({r.x + r.width - 304, y + 7, 180, 32}, override == "allow"   ? "Allow"
+                                                          : override == "block" ? "Block"
+                                                          : override == "ask"   ? "Ask"
+                                                                                : "Default");
+            button({r.x + r.width - 116, y + 7, 88, 32}, "Revoke", native != "block");
+        }
+        button({r.x + 28, r.y + r.height - 68, 132, 34}, "Close");
+        button({r.x + r.width - 228, r.y + r.height - 68, 200, 34}, "Reset permissions", true,
+               true);
+    }
+    const int total =
+        permissions_picker_ ? int(permission_sites().size()) : int(permission_catalog().size());
+    if (total > capacity) {
+        const int track = capacity * 52 - 4, thumb = std::max(24, track * capacity / total);
+        fill(c, {r.x + r.width - 13, r.y + 174, 3, track}, 1, SkColorSetA(theme.muted, 35));
+        fill(c,
+             {r.x + r.width - 13,
+              r.y + 174 + (track - thumb) * permissions_scroll_ / (total - capacity), 3, thumb},
+             1, SkColorSetA(theme.accent, 180));
+    }
+    label(c, regular_,
+          permissions_error_.empty()
+              ? app_.tr(permissions_private_
+                            ? "Private rules are cleared when Aura closes."
+                            : "Permissions apply to this site in the selected container.")
+              : permissions_error_,
+          r.x + 28, r.y + r.height - 92, 10, theme.muted, r.width - 56);
+}
+void BrowserUi::choose_permission(const std::string &id) {
+    const auto spec = find_permission(id);
+    if (!spec)
+        return;
+    const auto r = panel_bounds();
+    const auto specs = permission_catalog();
+    const int index = int(spec - specs.data());
+    const int y = r.y + 174 + (index - permissions_scroll_) * 52;
+    const auto &rules = permissions_private_ ? app_.state()->private_site_permissions
+                                             : app_.profile.site_permissions;
+    const auto current =
+        permission_override(rules, permissions_origin_, permissions_container_, id);
+    app_.close_menu();
+    app_.menu.clear();
+    const char *values[] = {"default", "ask", "allow", "block"},
+               *labels[] = {"Default", "Ask", "Allow", "Block"};
+    for (int i = 0; i < 4; i++) {
+        bool enabled = true;
+        if (i == 1 && !spec->ask)
+            enabled = false;
+        if ((i == 1 || i == 2) && (!trustworthy_permission_origin(permissions_origin_) ||
+                                   (permissions_private_ && id == "notifications")))
+            enabled = false;
+        app_.menu.push_back(
+            {i, app_.tr(labels[i]), enabled, current == values[i] ? app_.tr("Current") : ""});
+    }
+    app_.menu_width = 280;
+    app_.menu_x = std::clamp(r.x + r.width - 304, 8, width_ - 288);
+    app_.menu_y = std::clamp(y + 42, 32, std::max(32, height_ - 152));
+    const auto origin = permissions_origin_;
+    const int container = permissions_container_;
+    const bool private_mode = permissions_private_;
+    app_.menu_action = [this, id, origin, container, private_mode](int choice) {
+        const char *values[] = {"default", "ask", "allow", "block"};
+        if (choice >= 0 && choice < 4) {
+            permissions_error_ =
+                app_.change_site_permission(origin, container, private_mode, id, values[choice])
+                    ? ""
+                    : app_.tr("Could not save this site rule.");
+            app_.changed();
+        }
+    };
+    app_.changed();
+}
+void BrowserUi::permissions_pointer(Rect r, int x, int y) {
+    if (permissions_picker_) {
+        if (inside({r.x + 28, r.y + 112, r.width - 56, 36}, x, y)) {
+            permissions_search_focus_ = true;
+            permissions_search_.select_all();
+            return;
+        }
+        if (inside({r.x + 28, r.y + r.height - 68, 140, 34}, x, y)) {
+            if (permissions_origin_.empty())
+                dismiss();
+            else {
+                permissions_picker_ = false;
+                permissions_search_focus_ = false;
+                permissions_scroll_ = 0;
+                app_.changed();
+            }
+            return;
+        }
+        const auto sites = permission_sites();
+        const int index = permissions_scroll_ + (y - r.y - 174) / 52;
+        if (y >= r.y + 174 && y < r.y + 174 + std::max(1, (r.height - 274) / 52) * 52 &&
+            index >= 0 && index < int(sites.size())) {
+            permissions_origin_ = sites[index].origin;
+            permissions_container_ = sites[index].container;
+            permissions_picker_ = false;
+            permissions_search_focus_ = false;
+            permissions_scroll_ = 0;
+            permissions_error_.clear();
+            app_.changed();
+        }
+        return;
+    }
+    if (inside({r.x + 28, r.y + 134, 180, 30}, x, y)) {
+        permissions_picker_ = true;
+        permissions_search_focus_ = true;
+        permissions_search_.set("");
+        permissions_pick_selected_ = permissions_scroll_ = 0;
+        app_.changed();
+        return;
+    }
+    if (inside({r.x + 28, r.y + r.height - 68, 132, 34}, x, y)) {
+        dismiss();
+        return;
+    }
+    if (inside({r.x + r.width - 228, r.y + r.height - 68, 200, 34}, x, y)) {
+        app_.reset_site_permissions(permissions_origin_, permissions_container_,
+                                    permissions_private_);
+        permissions_error_.clear();
+        app_.changed();
+        return;
+    }
+    const auto specs = permission_catalog();
+    const int capacity = std::max(1, (r.height - 274) / 52);
+    for (int i = permissions_scroll_; i < int(specs.size()) && i < permissions_scroll_ + capacity;
+         i++) {
+        const int top = r.y + 174 + (i - permissions_scroll_) * 52;
+        if (inside({r.x + r.width - 304, top + 7, 180, 32}, x, y)) {
+            choose_permission(specs[i].id);
+            return;
+        }
+        if (inside({r.x + r.width - 116, top + 7, 88, 32}, x, y)) {
+            permissions_error_ =
+                app_.change_site_permission(permissions_origin_, permissions_container_,
+                                            permissions_private_, specs[i].id, "block")
+                    ? ""
+                    : app_.tr("Could not save this site rule.");
+            app_.changed();
+            return;
+        }
+    }
+}
+std::string BrowserUi::permissions_report() const {
+    if (panel_ != Permissions)
+        return "null";
+    const auto r = panel_bounds();
+    const int capacity = std::max(1, (r.height - 274) / 52);
+    auto rect = [](Rect b) {
+        return "[" + std::to_string(b.x) + "," + std::to_string(b.y) + "," +
+               std::to_string(b.width) + "," + std::to_string(b.height) + "]";
+    };
+    std::string out = "{\"origin\":" + json_quote(permissions_origin_) +
+                      ",\"container\":" + std::to_string(permissions_container_) +
+                      ",\"private\":" + (permissions_private_ ? "true" : "false") +
+                      ",\"picker\":" + (permissions_picker_ ? "true" : "false") +
+                      ",\"query\":" + json_quote(permissions_search_.value) +
+                      ",\"sites_button\":" + rect({r.x + 28, r.y + 134, 180, 30}) +
+                      ",\"search\":" + rect({r.x + 28, r.y + 112, r.width - 56, 36}) +
+                      ",\"reset\":" + rect({r.x + r.width - 228, r.y + r.height - 68, 200, 34}) +
+                      ",\"error\":" + json_quote(permissions_error_) + ",\"rows\":[";
+    const auto &rules = permissions_private_ ? app_.state()->private_site_permissions
+                                             : app_.profile.site_permissions;
+    const auto specs = permission_catalog();
+    if (!permissions_picker_)
+        for (int i = permissions_scroll_;
+             i < int(specs.size()) && i < permissions_scroll_ + capacity; i++) {
+            if (i != permissions_scroll_)
+                out += ",";
+            const auto &spec = specs[i];
+            const int y = r.y + 174 + (i - permissions_scroll_) * 52;
+            out +=
+                "{\"id\":" + json_quote(spec.id) + ",\"value\":" +
+                json_quote(permission_override(rules, permissions_origin_, permissions_container_,
+                                               spec.id)) +
+                ",\"native\":" +
+                json_quote(app_.native_permission_value(permissions_origin_, permissions_container_,
+                                                        permissions_private_, spec.id)) +
+                ",\"choice\":" + rect({r.x + r.width - 304, y + 7, 180, 32}) +
+                ",\"revoke\":" + rect({r.x + r.width - 116, y + 7, 88, 32}) + "}";
+        }
+    out += "],\"sites\":[";
+    const auto sites = permission_sites();
+    if (permissions_picker_)
+        for (int i = permissions_scroll_;
+             i < int(sites.size()) && i < permissions_scroll_ + capacity; i++) {
+            if (i != permissions_scroll_)
+                out += ",";
+            out += "{\"origin\":" + json_quote(sites[i].origin) +
+                   ",\"container\":" + std::to_string(sites[i].container) + ",\"bounds\":" +
+                   rect({r.x + 20, r.y + 174 + (i - permissions_scroll_) * 52, r.width - 40, 48}) +
+                   "}";
+        }
+    return out + "]}";
 }
 } // namespace aura
