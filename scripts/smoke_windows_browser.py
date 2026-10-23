@@ -170,7 +170,10 @@ def main():
                     user.SendMessageW(window, 0x100, 27, 1)
                     user.SendMessageW(window, 0x101, 27, 1)
                 wait(lambda s: s.get('panel') == 0, 'Settings must close before opening the window menu')
-                click(80, 35); click(100, 97)
+                click(80, 35)
+                menu = wait(lambda s: any(item['id'] == 1 for item in (s.get('menu_ui') or [])), 'Aura menu must expose New window')
+                bounds = next(item['bounds'] for item in menu['menu_ui'] if item['id'] == 1)
+                click(bounds[0]+bounds[2]//2, bounds[1]+bounds[3]//2)
                 group = wait(lambda s: len(s.get('windows', [])) == 2, 'New window must be a second native window')
                 child = next(w for w in group['windows'] if w['window'] != window)
                 assert user.IsWindow(child['window']) and not child['private_window']
@@ -185,7 +188,10 @@ def main():
                 assert child['pid'] == group['pid']
                 user.SendMessageW(child['window'], 0x10, 0, 0)
                 wait(lambda s: len(s.get('windows', [])) == 1, 'Forwarded window must close independently')
-                click(80, 35); click(100, 129)
+                click(80, 35)
+                menu = wait(lambda s: any(item['id'] == 2 for item in (s.get('menu_ui') or [])), 'Aura menu must expose New private window')
+                bounds = next(item['bounds'] for item in menu['menu_ui'] if item['id'] == 2)
+                click(bounds[0]+bounds[2]//2, bounds[1]+bounds[3]//2)
                 group = wait(lambda s: len(s.get('windows', [])) == 2, 'Private native window must open')
                 private = next(w for w in group['windows'] if w['window'] != window)
                 assert private['private_window'] and all(t['private'] for t in private['tabs'])
