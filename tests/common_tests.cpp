@@ -1160,3 +1160,124 @@ TEST(Exports, AtomicBinaryOverwriteAndFailurePreserveChosenFile) {
     EXPECT_EQ(files, 1);
     EXPECT_THROW(write_export("relative.html", "x"), std::exception);
 }
+
+TEST(Sessions, RoundTripRestoresPinnedActiveSplitAndOrganization) {
+    TemporaryProfile temp;
+    Profile p(temp.path);
+    const int space = p.add_workspace("Study"), group = p.add_group(space, "Sources", 2),
+              identity = p.add_container("Accounts", 1);
+    SavedWindow window;
+    window.workspace = space;
+    window.active = 1;
+    window.split_left = 1;
+    window.split_right = 2;
+    window.tabs = {{"aura://newtab", false, 0, true, 0, 0},
+                   {"https://one.test/", true, space, true, group, 0},
+                   {"https://two.test/", false, space, false, group, identity}};
+    const int id = p.save_named_session("Research", {window});
+    ASSERT_GT(id, 0);
+    p.save();
+    Profile restored(temp.path);
+    ASSERT_EQ(restored.named_sessions.size(), 1);
+    ASSERT_TRUE(restored.named_session_available(id));
+    const auto snapshot = restored.named_session(id);
+    ASSERT_NE(snapshot, nullptr);
+    EXPECT_EQ(snapshot->windows[0].tabs[1].pinned, true);
+    EXPECT_EQ(snapshot->windows[0].split_right, 2);
+    ASSERT_TRUE(restored.remove_workspace(space));
+    ASSERT_FALSE(restored.has_workspace(space));
+    const auto prepared = restored.prepare_named_session(id);
+    ASSERT_TRUE(prepared);
+    ASSERT_EQ(prepared->size(), 1);
+    EXPECT_EQ((*prepared)[0].active, 1);
+    EXPECT_EQ((*prepared)[0].split_left, 1);
+    EXPECT_EQ((*prepared)[0].split_right, 2);
+    const auto &tab = (*prepared)[0].tabs[1];
+    EXPECT_TRUE(restored.has_workspace(tab.workspace));
+    ASSERT_NE(restored.group(tab.group), nullptr);
+    EXPECT_EQ(restored.group(tab.group)->name, "Sources");
+    EXPECT_EQ((*prepared)[0].tabs[2].container, identity);
+    const auto revision = restored.named_session(id)->revision;
+    EXPECT_TRUE(restored.rename_named_session(id, "Renamed"));
+    EXPECT_GT(restored.named_session(id)->revision, revision);
+}
+TEST(Sessions, MissingContainerNeverFallsBackOrReusesAnIdentity) {
+    TemporaryProfile temp;
+    Profile p(temp.path);
+    const int identity = p.add_container("Old account");
+    SavedWindow w;
+    w.tabs = {{"https://account.test/", false, 0, true, 0, identity}};
+    const int id = p.save_named_session("Account", {w});
+    ASSERT_GT(id, 0);
+    ASSERT_TRUE(p.remove_container(identity));
+    p.container_trash.clear();
+    EXPECT_FALSE(p.named_session_available(id));
+    EXPECT_FALSE(p.prepare_named_session(id));
+    EXPECT_GT(p.add_container("Another account"), identity);
+    p.save();
+    Profile restored(temp.path);
+    ASSERT_EQ(restored.named_sessions.size(), 1);
+    EXPECT_FALSE(restored.named_session_available(id));
+    EXPECT_EQ(restored.named_session(id)->windows[0].tabs[0].container, identity);
+}
+TEST(Sessions, OrganizationLimitFailureRollsBackAndExistingGroupsArePreserved) {
+    TemporaryProfile temp;
+    Profile p(temp.path);
+    const int space = p.add_workspace("Original"), group = p.add_group(space, "Source", 2);
+    SavedWindow w;
+    w.workspace = space;
+    w.tabs = {{"https://example.test/", false, space, true, group, 0}};
+    const int id = p.save_named_session("Copy", {w});
+    ASSERT_GT(id, 0);
+    p.group(group)->color = 1;
+    auto prepared = p.prepare_named_session(id);
+    ASSERT_TRUE(prepared);
+    EXPECT_EQ(p.group(group)->color, 1);
+    EXPECT_NE((*prepared)[0].tabs[0].group, group);
+    p.groups.clear();
+    p.workspaces = {{0, "Personal space"}};
+    for (int i = 0; i < 30; ++i)
+        ASSERT_GT(p.add_workspace("Other " + std::to_string(i)), 0);
+    for (int i = 0; i < 128; ++i)
+        ASSERT_GT(p.add_group(0, "Group " + std::to_string(i)), 0);
+    const auto spaces = p.workspaces.size(), groups = p.groups.size();
+    EXPECT_FALSE(p.prepare_named_session(id));
+    EXPECT_EQ(p.workspaces.size(), spaces);
+    EXPECT_EQ(p.groups.size(), groups);
+    EXPECT_TRUE(std::none_of(p.workspaces.begin(), p.workspaces.end(),
+                             [](const auto &s) { return s.name == "Original"; }));
+}
+TEST(Sessions, LimitsNamesUnsupportedUrlsAndMalformedPrivateMetadataAreRejected) {
+    TemporaryProfile temp;
+    Profile p(temp.path);
+    SavedWindow w;
+    w.tabs = {{"https://normal.test/"}};
+    EXPECT_LT(p.save_named_session("", {w}), 0);
+    SavedWindow huge = w;
+    huge.tabs.resize(201, huge.tabs.front());
+    EXPECT_LT(p.save_named_session("Huge", {huge}), 0);
+    auto bad = w;
+    bad.tabs[0].url = "javascript:alert(1)";
+    EXPECT_LT(p.save_named_session("Bad", {bad}), 0);
+    for (int i = 0; i < 32; ++i)
+        ASSERT_GT(p.save_named_session("Snapshot " + std::to_string(i), {w}), 0);
+    EXPECT_LT(p.save_named_session("One more", {w}), 0);
+    EXPECT_LT(p.save_named_session("snapshot 1", {w}), 0);
+    ASSERT_TRUE(p.remove_named_session(1));
+    EXPECT_GT(p.save_named_session("New", {w}), 32);
+    p.save();
+    auto file = temp.path / "profile.toml";
+    std::ifstream in(file);
+    std::string text((std::istreambuf_iterator<char>(in)), {});
+    in.close();
+    const auto start = text.find("[[named_sessions.windows.tabs]]");
+    ASSERT_NE(start, std::string::npos);
+    text.insert(start + std::string("[[named_sessions.windows.tabs]]").size(),
+                "\nprivate_tab = true\n");
+    {
+        std::ofstream out(file);
+        out << text;
+    }
+    Profile filtered(temp.path);
+    EXPECT_EQ(filtered.named_sessions.size(), 31);
+}

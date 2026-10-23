@@ -55,6 +55,16 @@ struct SiteContainer {
     std::string name;
     int color = 0;
 };
+struct NamedSession {
+    int id = 0;
+    std::string name;
+    long long created = 0, updated = 0;
+    uint64_t revision = 1;
+    std::vector<SavedWindow> windows;
+    std::vector<Workspace> workspaces;
+    std::vector<TabGroup> groups;
+};
+bool valid_named_session(const NamedSession &);
 void remove_container_tabs(SavedWindow &window, int container);
 class Profile : public BrowserPreferences {
   public:
@@ -74,6 +84,14 @@ class Profile : public BrowserPreferences {
                        const std::string &tags);
     std::vector<SavedTab> session;
     std::vector<SavedWindow> windows;
+    std::vector<NamedSession> named_sessions;
+    int next_named_session = 1;
+    const NamedSession *named_session(int id) const;
+    int save_named_session(std::string name, std::vector<SavedWindow> windows, int replace = 0);
+    bool rename_named_session(int id, std::string name);
+    bool remove_named_session(int id);
+    bool named_session_available(int id) const;
+    std::optional<std::vector<SavedWindow>> prepare_named_session(int id);
     std::vector<Workspace> workspaces{{0, "Personal space"}};
     bool has_workspace(int id) const;
     std::string workspace_label(int id) const;

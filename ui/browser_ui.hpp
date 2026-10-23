@@ -27,7 +27,8 @@ class BrowserUi {
         Commands,
         Translation,
         Permissions,
-        SiteData
+        SiteData,
+        Sessions
     };
     BrowserUi(BrowserController &owner, const std::filesystem::path &font);
     ~BrowserUi();
@@ -75,6 +76,8 @@ class BrowserUi {
     std::string site_data_report() const;
     void save_export(std::string payload, const std::string &filename, const std::string &filter);
     std::string bookmarks_report() const;
+    void open_sessions();
+    std::string sessions_report() const;
     std::string sidebar_report() const;
     void passwords_locked() {
         clear_password_fields();
@@ -93,6 +96,15 @@ class BrowserUi {
 
   private:
     BrowserController &app_;
+    TextEditor session_name_;
+    bool session_input_focus_ = false;
+    int session_edit_ = 0, session_scroll_ = 0;
+    std::string session_error_;
+    std::optional<NamedSession> session_undo_;
+    void draw_sessions(SkCanvas &, Rect);
+    void sessions_pointer(Rect, int, int);
+    void save_named_session();
+    std::array<Rect, 4> session_buttons(Rect, int top) const;
     TextEditor bookmark_search_, bookmark_title_, bookmark_url_, bookmark_tags_,
         bookmark_folder_name_;
     int bookmark_mode_ = 0, bookmark_focus_ = -1, bookmark_filter_ = -1, bookmark_edit_folder_ = 0;
@@ -242,6 +254,7 @@ class BrowserUi {
     Rect address_bounds() const;
     Rect panel_bounds() const;
     Rect dialog_bounds() const;
+    std::array<Rect, 2> dialog_buttons() const;
     void draw_extension_popup(SkCanvas &canvas);
     bool popup_pointer(const PointerInput &input);
     void draw_extensions(SkCanvas &canvas, Rect panel);

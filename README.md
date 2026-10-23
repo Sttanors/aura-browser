@@ -215,6 +215,8 @@ pages have been exercised. CEF OSR/Alloy does not provide Chrome's full toolbar 
 partially. Full Chrome Web Store compatibility is not claimed. MV2 is rejected with an explanation.
 Extensions are available only to the regular profile.
 
+**Session snapshots** (Ctrl Alt E) save named sets of normal windows: URLs, order, active/pinned tabs, workspaces, groups, containers and split pairs. Restore opens new windows and keeps current pages. Cookies and unsaved forms are excluded; missing containers block restoration. Private tabs are never captured.
+
 Normal windows share a profile; private windows share temporary storage until the last private tab/window closes.
 The Aura logo menu includes window commands and restoration of the previous normal session. After an interrupted
 exit, Aura offers recovery. Sessions preserve window/tab order, selection and pinning, and exclude private URLs.

@@ -3,6 +3,41 @@
 namespace aura {
 namespace {
 constexpr Translation catalog[] = {
+    {"Restore", "Восстановить"},
+    {"Session snapshots", "Снимки сессий"},
+    {"Snapshot name", "Название снимка"},
+    {"Save snapshot", "Сохранить снимок"},
+    {"Update snapshot", "Обновить"},
+    {"Restore snapshot?", "Восстановить снимок?"},
+    {"Save URLs and layout of normal windows. Private tabs are excluded.",
+     "Сохранение адресов и расположения обычных окон. Приватные вкладки исключены."},
+    {"Use a short unique name and normal windows. Limits: 32 snapshots, 200 tabs per snapshot.",
+     "Введите короткое уникальное название и откройте обычные окна. Не более 32 снимков и 200 "
+     "вкладок в снимке."},
+    {"No snapshots yet. Enter a name to save your normal windows.",
+     "Снимков пока нет. Введите название, чтобы сохранить обычные окна."},
+    {"Windows", "Окна"},
+    {"Missing container", "Контейнер удалён"},
+    {"Undo deletion", "Отменить удаление"},
+    {"Replace this snapshot?", "Заменить снимок?"},
+    {"Replaces its saved URLs and layout with your current normal windows. Private tabs are "
+     "excluded.",
+     "Заменяет адреса и расположение в снимке текущими обычными окнами. Приватные вкладки "
+     "исключены."},
+    {"Could not update this snapshot. Check the tab limit.",
+     "Не удалось обновить снимок. Проверьте количество вкладок."},
+    {"A snapshot with this name already exists, or the list is full.",
+     "Снимок с таким названием уже есть или список заполнен."},
+    {"A container used by this snapshot is missing.", "Контейнер, используемый в снимке, удалён."},
+    {"Opens new normal windows. Current pages stay open. Cookies and unsaved forms are not part of "
+     "a snapshot.",
+     "Откроет новые обычные окна. Текущие страницы останутся открытыми. Cookies и несохранённые "
+     "формы не входят в снимок."},
+    {"The snapshot changed. Open it again.", "Снимок изменился. Откройте его заново."},
+    {"Close some windows before restoring this snapshot.",
+     "Перед восстановлением закройте несколько окон."},
+    {"Could not restore this snapshot. Check containers and workspace limits.",
+     "Не удалось восстановить снимок. Проверьте контейнеры и лимиты рабочих пространств."},
     {"Use a short unique folder name. Up to 128 folders.",
      "Введите короткое уникальное название. Максимум 128 папок."},
     {"Use up to 32 short tags separated by commas.", "Введите до 32 коротких тегов через запятую."},

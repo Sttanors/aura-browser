@@ -407,6 +407,99 @@ void Profile::load() {
                 }
             }
         }
+    named_sessions.clear();
+    next_named_session = 1;
+    if (auto rows = table["named_sessions"].as_array())
+        for (const auto &node : *rows) {
+            if (named_sessions.size() >= 32)
+                break;
+            const auto row = node.as_table();
+            if (!row)
+                continue;
+            auto keys = [](const toml::table &value,
+                           std::initializer_list<std::string_view> allowed) {
+                for (const auto &[key, item] : value)
+                    if (std::find(allowed.begin(), allowed.end(), key.str()) == allowed.end())
+                        return false;
+                return true;
+            };
+            if (!keys(*row, {"id", "name", "created", "updated", "revision", "windows",
+                             "workspaces", "groups"}))
+                continue;
+            NamedSession snapshot;
+            snapshot.id = (*row)["id"].value_or(0);
+            snapshot.name = (*row)["name"].value_or(std::string{});
+            snapshot.created = (*row)["created"].value_or(0LL);
+            snapshot.updated = (*row)["updated"].value_or(0LL);
+            snapshot.revision = (*row)["revision"].value_or(0LL);
+            bool valid = snapshot.created >= 0 && snapshot.updated >= 0;
+            if (auto spaces = (*row)["workspaces"].as_array())
+                for (const auto &item : *spaces) {
+                    const auto w = item.as_table();
+                    if (!w || !keys(*w, {"id", "name"}) || snapshot.workspaces.size() >= 32) {
+                        valid = false;
+                        break;
+                    }
+                    snapshot.workspaces.push_back(
+                        {(*w)["id"].value_or(-1), (*w)["name"].value_or(std::string{})});
+                }
+            if (auto groups = (*row)["groups"].as_array())
+                for (const auto &item : *groups) {
+                    const auto g = item.as_table();
+                    if (!g || !keys(*g, {"id", "workspace", "name", "color", "collapsed"}) ||
+                        snapshot.groups.size() >= 128) {
+                        valid = false;
+                        break;
+                    }
+                    snapshot.groups.push_back(
+                        {(*g)["id"].value_or(0), (*g)["workspace"].value_or(-1),
+                         (*g)["name"].value_or(std::string{}), (*g)["color"].value_or(-1),
+                         (*g)["collapsed"].value_or(false)});
+                }
+            size_t total = 0;
+            if (auto windows = (*row)["windows"].as_array())
+                for (const auto &item : *windows) {
+                    const auto w = item.as_table();
+                    if (!w ||
+                        !keys(*w, {"active", "workspace", "split_left", "split_right", "tabs"}) ||
+                        snapshot.windows.size() >= 32) {
+                        valid = false;
+                        break;
+                    }
+                    SavedWindow window;
+                    window.active = (*w)["active"].value_or(-1);
+                    window.workspace = (*w)["workspace"].value_or(-1);
+                    window.split_left = (*w)["split_left"].value_or(-1);
+                    window.split_right = (*w)["split_right"].value_or(-1);
+                    if (auto tabs = (*w)["tabs"].as_array())
+                        for (const auto &tab : *tabs) {
+                            const auto t = tab.as_table();
+                            if (!t ||
+                                !keys(*t, {"url", "pinned", "workspace", "workspace_active",
+                                           "group", "container"}) ||
+                                !(*t)["container"].is_integer() ||
+                                !(*t)["workspace"].is_integer() || ++total > 200) {
+                                valid = false;
+                                break;
+                            }
+                            window.tabs.push_back(
+                                {(*t)["url"].value_or(std::string{}),
+                                 (*t)["pinned"].value_or(false), (*t)["workspace"].value_or(-1),
+                                 (*t)["workspace_active"].value_or(false),
+                                 (*t)["group"].value_or(0), (*t)["container"].value_or(-1)});
+                        }
+                    snapshot.windows.push_back(std::move(window));
+                }
+            if (valid && valid_named_session(snapshot) && !named_session(snapshot.id) &&
+                std::none_of(named_sessions.begin(), named_sessions.end(), [&](const auto &entry) {
+                    return lower(entry.name) == lower(snapshot.name);
+                })) {
+                next_named_session = std::max(next_named_session, snapshot.id + 1);
+                named_sessions.push_back(std::move(snapshot));
+            }
+        }
+    next_named_session = std::max(next_named_session,
+                                  std::clamp(table["next_named_session"].value_or(1), 1, 1000001));
     auto validate_group = [this](SavedTab &t) {
         const auto g = group(t.group);
         if (!g || g->workspace != t.workspace)
@@ -420,7 +513,7 @@ void Profile::load() {
 }
 void Profile::save() const {
     toml::table root;
-    root.insert("schema", 12);
+    root.insert("schema", 13);
     toml::array folders;
     for (const auto &f : bookmark_folders)
         folders.push_back(toml::table{{"id", f.id}, {"name", f.name}});
@@ -491,23 +584,48 @@ void Profile::save() const {
                                    {"group", t.group},
                                    {"container", t.container}});
     root.insert("session", std::move(tabs));
-    toml::array saved_windows;
-    for (const auto &window : windows) {
-        toml::array saved_tabs;
-        for (const auto &t : window.tabs)
-            saved_tabs.push_back(toml::table{{"url", t.url},
-                                             {"pinned", t.pinned},
-                                             {"workspace", t.workspace},
-                                             {"workspace_active", t.workspace_active},
-                                             {"group", t.group},
-                                             {"container", t.container}});
-        saved_windows.push_back(toml::table{{"active", window.active},
-                                            {"workspace", window.workspace},
-                                            {"split_left", window.split_left},
-                                            {"split_right", window.split_right},
-                                            {"tabs", std::move(saved_tabs)}});
+    auto window_rows = [](const std::vector<SavedWindow> &windows) {
+        toml::array saved_windows;
+        for (const auto &window : windows) {
+            toml::array saved_tabs;
+            for (const auto &t : window.tabs)
+                saved_tabs.push_back(toml::table{{"url", t.url},
+                                                 {"pinned", t.pinned},
+                                                 {"workspace", t.workspace},
+                                                 {"workspace_active", t.workspace_active},
+                                                 {"group", t.group},
+                                                 {"container", t.container}});
+            saved_windows.push_back(toml::table{{"active", window.active},
+                                                {"workspace", window.workspace},
+                                                {"split_left", window.split_left},
+                                                {"split_right", window.split_right},
+                                                {"tabs", std::move(saved_tabs)}});
+        }
+        return saved_windows;
+    };
+    root.insert("windows", window_rows(windows));
+    toml::array snapshots;
+    for (const auto &snapshot : named_sessions) {
+        toml::array spaces, groups;
+        for (const auto &w : snapshot.workspaces)
+            spaces.push_back(toml::table{{"id", w.id}, {"name", w.name}});
+        for (const auto &g : snapshot.groups)
+            groups.push_back(toml::table{{"id", g.id},
+                                         {"workspace", g.workspace},
+                                         {"name", g.name},
+                                         {"color", g.color},
+                                         {"collapsed", g.collapsed}});
+        snapshots.push_back(toml::table{{"id", snapshot.id},
+                                        {"name", snapshot.name},
+                                        {"created", snapshot.created},
+                                        {"updated", snapshot.updated},
+                                        {"revision", static_cast<int64_t>(snapshot.revision)},
+                                        {"windows", window_rows(snapshot.windows)},
+                                        {"workspaces", std::move(spaces)},
+                                        {"groups", std::move(groups)}});
     }
-    root.insert("windows", std::move(saved_windows));
+    root.insert("named_sessions", std::move(snapshots));
+    root.insert("next_named_session", next_named_session);
     const auto temporary = directory / "profile.toml.tmp";
     {
         std::ofstream file(temporary);
@@ -759,6 +877,10 @@ int Profile::add_container(std::string name, int color) {
         id = std::max(id, c.id + 1);
     for (int removed : container_trash)
         id = std::max(id, removed + 1);
+    for (const auto &s : named_sessions)
+        for (const auto &w : s.windows)
+            for (const auto &t : w.tabs)
+                id = std::max(id, t.container + 1);
     if (id > 1000000)
         return -1;
     containers.push_back({id, std::move(name), std::clamp(color, 0, 5)});

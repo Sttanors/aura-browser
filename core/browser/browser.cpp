@@ -1132,6 +1132,55 @@ void BrowserController::restore_previous_session() {
     for (size_t i = first; i < state_->previous_windows.size(); ++i)
         state_->pending_windows.push_back({false, state_->previous_windows[i], ""});
 }
+void BrowserController::restore_named_session(int id) {
+    const auto snapshot = profile.named_session(id);
+    if (!snapshot || !profile.named_session_available(id) || state_->exiting) {
+        ui->toast(tr("A container used by this snapshot is missing."));
+        return;
+    }
+    const auto revision = snapshot->revision;
+    const auto name = snapshot->name;
+    size_t count = 0;
+    for (const auto &w : snapshot->windows)
+        count += w.tabs.size();
+    BrowserDialog dialog;
+    dialog.owned = true;
+    dialog.origin = tr("Restore snapshot?");
+    dialog.accept_label = "Restore";
+    dialog.message = name + " / " + tr("Windows") + ": " +
+                     std::to_string(snapshot->windows.size()) + ", " + tr("Tabs") + ": " +
+                     std::to_string(count) + "\n" +
+                     tr("Opens new normal windows. Current pages stay open. Cookies and unsaved "
+                        "forms are not part of a snapshot.");
+    const auto weak = std::weak_ptr<void>(callback_lifetime);
+    dialog.action = [this, id, revision, weak](bool accept, const std::string &) {
+        if (!accept || weak.expired() || state_->exiting)
+            return;
+        const auto snapshot = profile.named_session(id);
+        if (!snapshot || snapshot->revision != revision) {
+            ui->toast(tr("The snapshot changed. Open it again."));
+            return;
+        }
+        const auto open = std::count_if(state_->windows.begin(), state_->windows.end(),
+                                        [](const auto *w) { return !w->quitting; });
+        if (open + state_->pending_windows.size() + snapshot->windows.size() > 32) {
+            ui->toast(tr("Close some windows before restoring this snapshot."));
+            return;
+        }
+        auto saved = profile.prepare_named_session(id);
+        if (!saved) {
+            ui->toast(
+                tr("Could not restore this snapshot. Check containers and workspace limits."));
+            return;
+        }
+        for (auto &w : *saved)
+            state_->pending_windows.push_back({false, std::move(w), ""});
+        ++audit["named_sessions_restored"];
+        changed(true);
+    };
+    dialogs.push_back(std::move(dialog));
+    changed();
+}
 void BrowserController::request_exit(bool force) {
     if (!force && profile.confirm_quit) {
         confirm_action(tr("Close Aura?"),
@@ -1159,40 +1208,52 @@ void BrowserController::request_exit(bool force) {
             other->request_quit(false);
         }
 }
+std::vector<SavedWindow> BrowserController::capture_session() const {
+    std::vector<SavedWindow> saved;
+    for (const auto *other : state_->windows) {
+        if (other->private_window || other->quitting)
+            continue;
+        SavedWindow window;
+        window.workspace = other->workspace;
+        const auto current = other->active >= 0 && other->active < int(other->tabs.size())
+                                 ? other->tabs[other->active].get()
+                                 : nullptr;
+        for (const auto &t : other->tabs)
+            if (!t->private_tab && !t->closing) {
+                const auto remembered = other->workspace_selection_.find(t->workspace);
+                const bool selected =
+                    t->workspace == other->workspace && current && !current->private_tab
+                        ? t.get() == current
+                        : remembered != other->workspace_selection_.end() &&
+                              remembered->second == t->id;
+                if (selected && t->workspace == window.workspace)
+                    window.active = int(window.tabs.size());
+                if (t->id == other->split_tabs[0])
+                    window.split_left = int(window.tabs.size());
+                if (t->id == other->split_tabs[1])
+                    window.split_right = int(window.tabs.size());
+                window.tabs.push_back({restorable_url(*t), t->pinned, t->workspace, selected,
+                                       t->group, t->container});
+            }
+        if (!window.tabs.empty() && window.tabs[window.active].workspace != window.workspace) {
+            auto selected =
+                std::find_if(window.tabs.begin(), window.tabs.end(),
+                             [&](const auto &t) { return t.workspace == window.workspace; });
+            window.active = selected == window.tabs.end() ? 0 : int(selected - window.tabs.begin());
+            window.workspace = window.tabs[window.active].workspace;
+        }
+        if (window.split_left < 0 || window.split_right < 0 ||
+            (window.active != window.split_left && window.active != window.split_right))
+            window.split_left = window.split_right = -1;
+        if (!window.tabs.empty())
+            saved.push_back(std::move(window));
+    }
+
+    return saved;
+}
 void BrowserController::save_session() {
     if (!state_->session_frozen && !state_->recovery_pending) {
-        std::vector<SavedWindow> saved;
-        for (const auto *other : state_->windows) {
-            if (other->private_window || other->quitting)
-                continue;
-            SavedWindow window;
-            window.workspace = other->workspace;
-            const auto current = other->active >= 0 && other->active < int(other->tabs.size())
-                                     ? other->tabs[other->active].get()
-                                     : nullptr;
-            for (const auto &t : other->tabs)
-                if (!t->private_tab && !t->closing) {
-                    const auto remembered = other->workspace_selection_.find(t->workspace);
-                    const bool selected =
-                        t->workspace == other->workspace && current && !current->private_tab
-                            ? t.get() == current
-                            : remembered != other->workspace_selection_.end() &&
-                                  remembered->second == t->id;
-                    if (selected && t->workspace == window.workspace)
-                        window.active = int(window.tabs.size());
-                    if (t->id == other->split_tabs[0])
-                        window.split_left = int(window.tabs.size());
-                    if (t->id == other->split_tabs[1])
-                        window.split_right = int(window.tabs.size());
-                    window.tabs.push_back({restorable_url(*t), t->pinned, t->workspace, selected,
-                                           t->group, t->container});
-                }
-            if (window.split_left < 0 || window.split_right < 0 ||
-                (window.active != window.split_left && window.active != window.split_right))
-                window.split_left = window.split_right = -1;
-            if (!window.tabs.empty())
-                saved.push_back(std::move(window));
-        }
+        auto saved = capture_session();
         // A private-only remainder must not erase the last normal session.
         if (!saved.empty()) {
             profile.windows = std::move(saved);
@@ -1246,6 +1307,7 @@ std::string BrowserController::report() const {
         << ",\"tabs\":" << (quit_snapshot_.empty() ? tabs_json(tabs) : quit_snapshot_)
         << ",\"profile_name\":" << json_quote(profile_name())
         << ",\"profile_directory\":" << json_quote(utf8_path(profile.directory))
+        << ",\"sessions_ui\":" << ui->sessions_report()
         << ",\"bookmarks_ui\":" << ui->bookmarks_report()
         << ",\"site_data_ui\":" << ui->site_data_report()
         << ",\"permissions_ui\":" << ui->permissions_report()

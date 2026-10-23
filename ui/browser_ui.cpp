@@ -382,6 +382,7 @@ Rect BrowserUi::panel_bounds() const {
                            : panel_ == Groups      ? 900
                            : panel_ == Containers  ? 900
                            : panel_ == Commands    ? 900
+                           : panel_ == Sessions    ? 900
                            : panel_ == Bookmarks   ? 900
                            : panel_ == SiteData    ? 900
                            : panel_ == Permissions ? 900
@@ -404,6 +405,8 @@ Rect BrowserUi::panel_bounds() const {
                                         app_.site_data.types.begin(), app_.site_data.types.end(),
                                         [](const auto &item) { return item.second > 0; })),
                          512, 620)
+        : panel_ == Sessions
+            ? std::clamp(268 + int(app_.profile.named_sessions.size()) * 90, 390, 700)
         : panel_ == Permissions ? 700
         : panel_ == Translation ? 520
         : panel_ == Profiles    ? std::clamp(236 + int(listed_profiles().size()) * 84, 340, 700)
@@ -435,6 +438,19 @@ Rect BrowserUi::dialog_bounds() const {
         h = std::min(std::max(230, 148 + lines * 18), std::max(230, height_ - 140));
     }
     return {std::max(260, (width_ - 490) / 2), std::max(110, (height_ - h) / 2), 490, h};
+}
+std::array<Rect, 2> BrowserUi::dialog_buttons() const {
+    const auto r = dialog_bounds();
+    const auto &d = app_.dialogs.front();
+    const auto accept = app_.tr(!d.accept_label.empty() ? d.accept_label.c_str()
+                                : d.permission          ? "Allow"
+                                : d.before_unload       ? "Leave"
+                                                        : "OK");
+    const auto cancel = app_.tr(d.permission ? "Deny" : "Cancel");
+    const int a = std::clamp(int(std::ceil(measure(font(medium_, 12), accept))) + 24, 90, 180),
+              b = std::clamp(int(std::ceil(measure(font(medium_, 12), cancel))) + 24, 90, 180);
+    return {{{r.x + r.width - 24 - a - 13 - b, r.y + r.height - 60, b, 35},
+             {r.x + r.width - 24 - a, r.y + r.height - 60, a, 35}}};
 }
 void BrowserUi::focus_target(Rect r) {
     if (r.x >= 0 && r.y >= 0 && r.x + r.width <= width_ && r.y + r.height <= height_)
@@ -824,7 +840,8 @@ void BrowserUi::draw(SkCanvas &c) {
                                       app_.tr("Command palette"),
                                       app_.tr("Translate"),
                                       app_.tr("Site permissions"),
-                                      app_.tr("Site data")};
+                                      app_.tr("Site data"),
+                                      app_.tr("Session snapshots")};
         label(c, medium_, titles[panel_], r.x + 28, r.y + 47, 23, ink);
         icon(c, "close", r.x + r.width - 43, r.y + 26, 19, muted);
         if (panel_ == Bookmarks)
@@ -938,6 +955,8 @@ void BrowserUi::draw(SkCanvas &c) {
             draw_permissions(c, r);
         if (panel_ == SiteData)
             draw_site_data(c, r);
+        if (panel_ == Sessions)
+            draw_sessions(c, r);
     }
 
     if (editing) {
@@ -1030,8 +1049,9 @@ void BrowserUi::draw(SkCanvas &c) {
         focus_targets_.clear();
         auto &dialog = app_.dialogs.front();
         const auto r = dialog_bounds();
-        focus_target({r.x + r.width - 217, r.y + r.height - 60, 90, 35});
-        focus_target({r.x + r.width - 114, r.y + r.height - 60, 90, 35});
+        const auto buttons = dialog_buttons();
+        focus_target(buttons[0]);
+        focus_target(buttons[1]);
         fill(c, {240, 30, width_ - 240, height_ - 30}, 0, 0x99050712);
         shadow(c, r, 18);
         fill(c, r, 18, t.surface);
@@ -1055,17 +1075,15 @@ void BrowserUi::draw(SkCanvas &c) {
             fill(c, {r.x + 25, r.y + 101, r.width - 50, 37}, 8, t.background);
             draw_editor(c, dialog.input, {r.x + 37, r.y + 104, r.width - 74, 31}, 13, true);
         }
-        fill(c, {r.x + r.width - 217, r.y + r.height - 60, 90, 35}, 9, SkColorSetA(ink, 14));
+        fill(c, buttons[0], 9, SkColorSetA(ink, 14));
         const auto cancel = app_.tr(dialog.permission ? "Deny" : "Cancel");
-        centered_label(c, medium_, cancel, {r.x + r.width - 217, r.y + r.height - 60, 90, 35}, 12,
-                       ink);
-        fill(c, {r.x + r.width - 114, r.y + r.height - 60, 90, 35}, 9, t.accent);
+        centered_label(c, medium_, cancel, buttons[0], 12, ink);
+        fill(c, buttons[1], 9, t.accent);
         const auto accept = app_.tr(!dialog.accept_label.empty() ? dialog.accept_label.c_str()
                                     : dialog.permission          ? "Allow"
                                     : dialog.before_unload       ? "Leave"
                                                                  : "OK");
-        centered_label(c, medium_, accept, {r.x + r.width - 114, r.y + r.height - 60, 90, 35}, 12,
-                       t.background);
+        centered_label(c, medium_, accept, buttons[1], 12, t.background);
     }
     if (keyboard_focus_ >= 0 && keyboard_focus_ < int(focus_targets_.size()) &&
         !app_.extension_popup) {
@@ -2553,6 +2571,7 @@ std::vector<Visit> BrowserUi::suggestions() const {
         address.value, std::min(app_.profile.suggestion_limit, std::max(1, (height_ - 205) / 54)));
 }
 void BrowserUi::focus_address(bool select) {
+    session_input_focus_ = false;
     data_search_focus_ = false;
     clear_password_fields();
     app_.close_extension_popup();
@@ -2576,6 +2595,8 @@ void BrowserUi::toast(std::string message) {
     app_.changed();
 }
 void BrowserUi::panel(Panel value) {
+    if (value != Sessions)
+        session_input_focus_ = false;
     bookmark_focus_ = -1;
     if (value == Bookmarks) {
         bookmark_mode_ = 0;
@@ -2633,6 +2654,7 @@ void BrowserUi::commit_address() {
     app_.navigate(value);
 }
 void BrowserUi::dismiss() {
+    session_input_focus_ = false;
     data_search_focus_ = false;
     clear_password_fields();
     editing = false;
@@ -2691,6 +2713,8 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
             else if (panel_ == Permissions && permissions_picker_ && permissions_search_focus_ &&
                      target == &permissions_search_)
                 live = &permissions_search_;
+            else if (panel_ == Sessions && session_input_focus_ && target == &session_name_)
+                live = target;
             else if (panel_ == Bookmarks && bookmark_focus_ >= 0 &&
                      target == (bookmark_focus_ == 0   ? &bookmark_search_
                                 : bookmark_focus_ == 1 ? &bookmark_title_
@@ -2728,6 +2752,7 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
                 (live != &permissions_search_ || live->value.size() + text.size() <= 512) &&
                 (live != &data_search_ || live->value.size() + text.size() <= 512) &&
                 (panel_ != Bookmarks || live->value.size() + text.size() <= 16384) &&
+                (live != &session_name_ || live->value.size() + text.size() <= 4096) &&
                 (live != &command_query_ || live->value.size() + text.size() <= 512) &&
                 (live != &profile_input_ || live->value.size() + text.size() <= 120))
                 live->insert(text);
@@ -2877,6 +2902,7 @@ bool BrowserUi::key(const CefKeyEvent &key) {
         permissions_search_focus_ = false;
         data_search_focus_ = false;
         bookmark_focus_ = -1;
+        session_input_focus_ = false;
         if (auto tab = app_.current(); tab && tab->browser)
             tab->browser->GetHost()->SetFocus(false);
         if (!focus_targets_.empty()) {
@@ -2895,7 +2921,7 @@ bool BrowserUi::key(const CefKeyEvent &key) {
         !import_input_focus_ && !filter_input_focus_ && shortcut_focus_ < 0 &&
         password_focus_ < 0 && !workspace_input_focus_ && !group_input_focus_ &&
         !container_input_focus_ && !profile_input_focus_ && !permissions_search_focus_ &&
-        !data_search_focus_ && bookmark_focus_ < 0 && !editing) {
+        !data_search_focus_ && bookmark_focus_ < 0 && !session_input_focus_ && !editing) {
         const auto r = focus_targets_[keyboard_focus_];
         const int previous = keyboard_focus_;
         const auto previous_panel = panel_;
@@ -2930,6 +2956,10 @@ bool BrowserUi::key(const CefKeyEvent &key) {
         }
     }
     if (down) {
+        if (ctrl && alt && code == 'E' && app_.dialogs.empty() && !editing) {
+            open_sessions();
+            return true;
+        }
         if (ctrl && alt && code == 'D' && app_.dialogs.empty() && !editing) {
             open_site_data();
             return true;
@@ -2982,6 +3012,39 @@ bool BrowserUi::key(const CefKeyEvent &key) {
                 app_.changed();
                 return code < 0x20 || ctrl || (code >= 0x21 && code <= 0x2E);
             }
+            return true;
+        }
+        if (panel_ == Sessions && session_input_focus_) {
+            if (code == 0x1B) {
+                if (session_edit_) {
+                    session_edit_ = 0;
+                    session_name_.set("");
+                    session_error_.clear();
+                    app_.changed();
+                } else
+                    dismiss();
+                return true;
+            }
+            if (code == 0x0D) {
+                save_named_session();
+                return true;
+            }
+            if (!ctrl ||
+                (code != 'L' && code != 'T' && code != 'W' && code != 'Q' && code != 'N')) {
+                editor_key(session_name_, key);
+                app_.changed();
+                return code < 0x20 || ctrl || (code >= 0x21 && code <= 0x2E);
+            }
+        }
+        if (panel_ == Sessions && (code == 0x21 || code == 0x22 || code == 0x24 || code == 0x23)) {
+            const int cap = std::max(1, (panel_bounds().height - 268) / 90),
+                      maximum = std::max(0, int(app_.profile.named_sessions.size()) - cap);
+            session_scroll_ =
+                std::clamp(code == 0x24   ? 0
+                           : code == 0x23 ? maximum
+                                          : session_scroll_ + (code == 0x21 ? -cap : cap),
+                           0, maximum);
+            app_.changed();
             return true;
         }
         if (panel_ == Bookmarks) {
@@ -3670,6 +3733,9 @@ void BrowserUi::text(const std::string &value) {
     if (!app_.dialogs.empty()) {
         if (app_.dialogs.front().prompt)
             app_.dialogs.front().input.insert(clean);
+    } else if (panel_ == Sessions && session_input_focus_) {
+        if (session_name_.value.size() + clean.size() <= 4096)
+            session_name_.insert(clean);
     } else if (panel_ == Bookmarks && bookmark_focus_ >= 0) {
         auto &editor = bookmark_focus_ == 0   ? bookmark_search_
                        : bookmark_focus_ == 1 ? bookmark_title_
@@ -3858,6 +3924,13 @@ void BrowserUi::pointer(const PointerInput &input) {
                                        start_page_layout().maximum);
         return;
     }
+    if (input.kind == PointerInput::Wheel && panel_ == Sessions) {
+        const int cap = std::max(1, (panel_bounds().height - 268) / 90);
+        session_scroll_ = std::clamp(session_scroll_ + (input.dy < 0 ? 1 : -1), 0,
+                                     std::max(0, int(app_.profile.named_sessions.size()) - cap));
+        app_.changed();
+        return;
+    }
     if (input.kind == PointerInput::Wheel && panel_ == Bookmarks) {
         const int n = bookmark_mode_ == 5 ? int(bookmark_folder_results().size())
                                           : int(bookmark_results().size());
@@ -3976,10 +4049,10 @@ void BrowserUi::pointer(const PointerInput &input) {
     }
     if (!app_.dialogs.empty()) {
         if (down) {
-            auto r = dialog_bounds();
-            if (inside({r.x + r.width - 114, r.y + r.height - 60, 90, 35}, x, y))
+            const auto buttons = dialog_buttons();
+            if (inside(buttons[1], x, y))
                 app_.answer_dialog(true);
-            else if (inside({r.x + r.width - 217, r.y + r.height - 60, 90, 35}, x, y))
+            else if (inside(buttons[0], x, y))
                 app_.answer_dialog(false);
         }
         return;
@@ -4127,6 +4200,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                 site_data_pointer(r, x, y);
             else if (panel_ == Bookmarks)
                 bookmarks_pointer(r, x, y);
+            else if (panel_ == Sessions)
+                sessions_pointer(r, x, y);
         }
         return;
     }
@@ -4167,10 +4242,12 @@ void BrowserUi::pointer(const PointerInput &input) {
                  t && t->browser && !t->ntp, "Ctrl+Alt+R"},
                 {13, app_.tr("Translate"), t && t->browser && !t->ntp, "Ctrl+Alt+T"},
                 {14, app_.tr("Site permissions"), true, "Ctrl+Alt+I"},
-                {15, app_.tr("Site data"), true, "Ctrl+Alt+D"}};
+                {15, app_.tr("Site data"), true, "Ctrl+Alt+D"},
+                {16, app_.tr("Session snapshots"), true, "Ctrl+Alt+E"}};
             app_.menu_width = 320;
             app_.menu_x = 16;
-            app_.menu_y = 76;
+            app_.menu_y =
+                std::clamp(76, 32, std::max(32, height_ - int(app_.menu.size()) * 32 - 20));
             app_.menu_action = [this](int command) {
                 if (command == 1 || command == 2)
                     app_.new_window(command == 2);
@@ -4198,6 +4275,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                     open_permissions();
                 else if (command == 15)
                     open_site_data();
+                else if (command == 16)
+                    open_sessions();
                 else
                     app_.request_exit();
             };
@@ -6350,6 +6429,7 @@ std::vector<BrowserUi::CommandResult> BrowserUi::command_results() const {
         {"translate_selection", "Translate selection", "", page && !current->selected_text.empty()},
         {"permissions", "Site permissions", "Ctrl+Alt+I", true},
         {"site_data", "Site data", "Ctrl+Alt+D", true},
+        {"sessions", "Session snapshots", "Ctrl+Alt+E", true},
         {"devtools", "Developer tools", "F12", page},
     };
     for (const auto &action : actions)
@@ -6510,6 +6590,8 @@ void BrowserUi::run_command(int index) {
         open_permissions();
     else if (id == "site_data")
         open_site_data();
+    else if (id == "sessions")
+        open_sessions();
     else if (id == "devtools")
         app_.devtools();
     app_.changed();
@@ -7803,6 +7885,237 @@ std::string BrowserUi::bookmarks_report() const {
                    rect({r.x + 28, r.y + 160 + (i - bookmark_scroll_) * 44, r.width - 56, 38}) +
                    "}";
         }
+    }
+    return out + "]}";
+}
+void BrowserUi::open_sessions() {
+    app_.close_menu();
+    panel(Sessions);
+    session_edit_ = session_scroll_ = 0;
+    session_name_.set("");
+    session_error_.clear();
+    session_input_focus_ = true;
+    if (auto t = app_.current(); t && t->browser)
+        t->browser->GetHost()->SetFocus(false);
+    app_.changed();
+}
+std::array<Rect, 4> BrowserUi::session_buttons(Rect r, int top) const {
+    const int widths[] = {120, 136, 112, 96};
+    const double factor = std::min(1., double(r.width - 80) / 464);
+    std::array<Rect, 4> result;
+    int x = r.x + 28;
+    for (int i = 0; i < 4; ++i) {
+        result[i] = {x, top, int(widths[i] * factor), 30};
+        x += result[i].width + 8;
+    }
+    return result;
+}
+void BrowserUi::save_named_session() {
+    bool ok = false;
+    if (session_edit_)
+        ok = app_.profile.rename_named_session(session_edit_, session_name_.value);
+    else
+        ok = app_.profile.save_named_session(session_name_.value, app_.capture_session()) > 0;
+    if (!ok) {
+        session_error_ = app_.tr("Use a short unique name and normal windows. Limits: 32 "
+                                 "snapshots, 200 tabs per snapshot.");
+        app_.changed();
+        return;
+    }
+    session_name_.set("");
+    session_edit_ = 0;
+    session_error_.clear();
+    session_input_focus_ = true;
+    ++app_.audit["named_sessions_saved"];
+    app_.changed(true);
+}
+void BrowserUi::draw_sessions(SkCanvas &c, Rect r) {
+    const auto &theme = interface_theme(app_.profile);
+    auto button = [&](Rect b, const std::string &text, bool enabled = true, bool primary = false) {
+        if (enabled)
+            focus_target(b);
+        fill(c, b, 8,
+             SkColorSetA(theme.accent, primary                                    ? 30
+                                       : enabled && inside(b, hover_x_, hover_y_) ? 24
+                                                                                  : 8));
+        border(c, b, 8, SkColorSetA(theme.accent, enabled ? 140 : 45));
+        centered_label(c, medium_, app_.tr(text), b, 12, enabled ? theme.text : theme.muted, 8, 8);
+    };
+    label(c, regular_,
+          app_.tr("Save URLs and layout of normal windows. Private tabs are excluded."), r.x + 28,
+          r.y + 73, 11, theme.muted, r.width - 56);
+    label(c, regular_, app_.tr("Snapshot name"), r.x + 28, r.y + 101, 11, theme.muted);
+    Rect input{r.x + 28, r.y + 112, r.width - 240, 36};
+    focus_target(input);
+    fill(c, input, 8, theme.background);
+    border(c, input, 8, SkColorSetA(theme.accent, session_input_focus_ ? 255 : 110));
+    draw_editor(c, session_name_, {input.x + 10, input.y + 2, input.width - 20, 32}, 13,
+                session_input_focus_);
+    button({r.x + r.width - 200, r.y + 112, 172, 36},
+           session_edit_ ? "Save changes" : "Save snapshot", !session_name_.value.empty(), true);
+    const auto &items = app_.profile.named_sessions;
+    const int cap = std::max(1, (r.height - 268) / 90);
+    session_scroll_ = std::clamp(session_scroll_, 0, std::max(0, int(items.size()) - cap));
+    if (items.empty())
+        label(c, regular_, app_.tr("No snapshots yet. Enter a name to save your normal windows."),
+              r.x + 28, r.y + 200, 13, theme.muted, r.width - 56);
+    for (int i = session_scroll_; i < int(items.size()) && i < session_scroll_ + cap; ++i) {
+        const auto &item = items[i];
+        const int top = r.y + 176 + (i - session_scroll_) * 90;
+        size_t tabs = 0;
+        for (const auto &w : item.windows)
+            tabs += w.tabs.size();
+        const auto time = local_time(std::time_t(item.updated));
+        char date[40]{};
+        std::strftime(date, sizeof(date), "%Y-%m-%d %H:%M", &time);
+        label(c, medium_, item.name, r.x + 28, top + 18, 13, theme.text, r.width - 230);
+        label(c, regular_, date, r.x + r.width - 184, top + 18, 10, theme.muted, 156);
+        const bool available = app_.profile.named_session_available(item.id);
+        const auto detail = app_.tr("Windows") + ": " + std::to_string(item.windows.size()) +
+                            " / " + app_.tr("Tabs") + ": " + std::to_string(tabs) +
+                            (available ? "" : " / " + app_.tr("Missing container"));
+        label(c, regular_, detail, r.x + 28, top + 36, 10, theme.muted, r.width - 56);
+        const auto buttons = session_buttons(r, top + 44);
+        button(buttons[0], "Restore", available);
+        button(buttons[1], "Rename");
+        button(buttons[2], "Update snapshot");
+        button(buttons[3], "Delete");
+    }
+    if (int(items.size()) > cap) {
+        const int h = cap * 90, thumb = std::max(24, h * cap / int(items.size()));
+        fill(c, {r.x + r.width - 13, r.y + 176, 3, h}, 1, SkColorSetA(theme.muted, 35));
+        fill(c,
+             {r.x + r.width - 13,
+              r.y + 176 + (h - thumb) * session_scroll_ / (int(items.size()) - cap), 3, thumb},
+             1, theme.accent);
+    }
+    const auto lines = wrap_text(font(regular_, 11), session_error_, r.width - 56, 2);
+    for (size_t i = 0; i < lines.size(); ++i)
+        label(c, regular_, lines[i], r.x + 28, r.y + r.height - 98 + int(i) * 15, 11, theme.muted,
+              r.width - 56);
+    button({r.x + 28, r.y + r.height - 56, 172, 32}, "Undo deletion", session_undo_.has_value());
+    button({r.x + r.width - 160, r.y + r.height - 56, 132, 32}, "Close");
+}
+void BrowserUi::sessions_pointer(Rect r, int x, int y) {
+    if (inside({r.x + 28, r.y + 112, r.width - 240, 36}, x, y)) {
+        session_input_focus_ = true;
+        session_name_.select_all();
+        return;
+    }
+    if (inside({r.x + r.width - 200, r.y + 112, 172, 36}, x, y)) {
+        if (!session_name_.value.empty())
+            save_named_session();
+        return;
+    }
+    if (inside({r.x + r.width - 160, r.y + r.height - 56, 132, 32}, x, y)) {
+        dismiss();
+        return;
+    }
+    if (inside({r.x + 28, r.y + r.height - 56, 172, 32}, x, y) && session_undo_) {
+        const auto &old = *session_undo_;
+        const bool duplicate = std::any_of(
+            app_.profile.named_sessions.begin(), app_.profile.named_sessions.end(),
+            [&](const auto &item) {
+                return item.id == old.id || fold_settings(item.name) == fold_settings(old.name);
+            });
+        if (!duplicate && app_.profile.named_sessions.size() < 32) {
+            app_.profile.named_sessions.push_back(old);
+            app_.profile.next_named_session = std::max(app_.profile.next_named_session, old.id + 1);
+            session_undo_.reset();
+            session_error_.clear();
+            app_.changed(true);
+        } else {
+            session_error_ =
+                app_.tr("A snapshot with this name already exists, or the list is full.");
+            app_.changed();
+        }
+        return;
+    }
+    const int cap = std::max(1, (r.height - 268) / 90),
+              index = session_scroll_ + (y - r.y - 176) / 90;
+    if (y < r.y + 176 || y >= r.y + 176 + cap * 90 || index < 0 ||
+        index >= int(app_.profile.named_sessions.size()))
+        return;
+    const auto item = app_.profile.named_sessions[index];
+    const auto buttons = session_buttons(r, r.y + 176 + (index - session_scroll_) * 90 + 44);
+    if (inside(buttons[0], x, y)) {
+        if (app_.profile.named_session_available(item.id))
+            app_.restore_named_session(item.id);
+    } else if (inside(buttons[1], x, y)) {
+        session_edit_ = item.id;
+        session_name_.set(item.name, true);
+        session_input_focus_ = true;
+        session_error_.clear();
+        app_.changed();
+    } else if (inside(buttons[2], x, y)) {
+        BrowserDialog dialog;
+        dialog.owned = true;
+        dialog.origin = app_.tr("Replace this snapshot?");
+        dialog.accept_label = "Update snapshot";
+        dialog.message = item.name + "\n" +
+                         app_.tr("Replaces its saved URLs and layout with your current normal "
+                                 "windows. Private tabs are excluded.");
+        const auto weak = std::weak_ptr<void>(app_.callback_lifetime);
+        dialog.action = [this, weak, id = item.id, revision = item.revision](bool accept,
+                                                                             const std::string &) {
+            if (!accept || weak.expired())
+                return;
+            const auto current = app_.profile.named_session(id);
+            if (!current || current->revision != revision) {
+                session_error_ = app_.tr("The snapshot changed. Open it again.");
+                app_.changed();
+                return;
+            }
+            session_error_ =
+                app_.profile.save_named_session(current->name, app_.capture_session(), id) > 0
+                    ? ""
+                    : app_.tr("Could not update this snapshot. Check the tab limit.");
+            app_.changed(true);
+        };
+        app_.dialogs.push_back(std::move(dialog));
+        app_.changed();
+    } else if (inside(buttons[3], x, y)) {
+        session_undo_ = item;
+        app_.profile.remove_named_session(item.id);
+        session_error_.clear();
+        if (session_edit_ == item.id) {
+            session_edit_ = 0;
+            session_name_.set("");
+        }
+        app_.changed(true);
+    }
+}
+std::string BrowserUi::sessions_report() const {
+    if (panel_ != Sessions)
+        return "null";
+    const auto r = panel_bounds();
+    auto rect = [](Rect b) {
+        return "[" + std::to_string(b.x) + "," + std::to_string(b.y) + "," +
+               std::to_string(b.width) + "," + std::to_string(b.height) + "]";
+    };
+    std::string out = "{\"name\":" + json_quote(session_name_.value) +
+                      ",\"editing\":" + std::to_string(session_edit_) +
+                      ",\"error\":" + json_quote(session_error_) +
+                      ",\"input\":" + rect({r.x + 28, r.y + 112, r.width - 240, 36}) +
+                      ",\"save\":" + rect({r.x + r.width - 200, r.y + 112, 172, 36}) +
+                      ",\"undo\":" + rect({r.x + 28, r.y + r.height - 56, 172, 32}) +
+                      ",\"can_undo\":" + (session_undo_ ? "true" : "false") + ",\"items\":[";
+    const int cap = std::max(1, (r.height - 268) / 90);
+    const auto &items = app_.profile.named_sessions;
+    for (int i = session_scroll_; i < int(items.size()) && i < session_scroll_ + cap; ++i) {
+        if (i != session_scroll_)
+            out += ",";
+        const auto &item = items[i];
+        size_t count = 0;
+        for (const auto &w : item.windows)
+            count += w.tabs.size();
+        const auto buttons = session_buttons(r, r.y + 176 + (i - session_scroll_) * 90 + 44);
+        out += "{\"id\":" + std::to_string(item.id) + ",\"name\":" + json_quote(item.name) +
+               ",\"windows\":" + std::to_string(item.windows.size()) +
+               ",\"tabs\":" + std::to_string(count) + ",\"available\":" +
+               (app_.profile.named_session_available(item.id) ? "true" : "false") +
+               ",\"restore\":" + rect(buttons[0]) + ",\"rename\":" + rect(buttons[1]) +
+               ",\"update\":" + rect(buttons[2]) + ",\"delete\":" + rect(buttons[3]) + "}";
     }
     return out + "]}";
 }

@@ -18,7 +18,7 @@
 | 10 | Центр разрешений сайта | Реализовано, Linux проверки PASS |
 | 11 | Панель данных сайтов | Реализовано, Linux проверки PASS |
 | 12 | Менеджер закладок | Реализовано, Linux проверки PASS |
-| 13 | Снимки сессий | В очереди |
+| 13 | Снимки сессий | Реализовано, Linux проверки PASS |
 | 14 | Скриншоты страницы | В очереди |
 | 15 | Настраиваемые горячие клавиши | В очереди |
 
@@ -652,3 +652,70 @@ PASS. Логи /tmp/aura-bookmarks-{build-final,ctest-final,gui-final,import-reg
 browser-regression,commands-regression}.log. Checkpoint 12 завершён. README RU/EN
 описывают менеджер; устаревшее точное число настроек заменено описанием разделов.
 Установщики не заменялись; Windows проверка пункта 12 ожидается после push.
+
+## 13. План именованных снимков сессий
+
+Задача: вручную сохранить набор обычных окон и восстановить его позже, оставив
+текущие окна открытыми. Снимок хранит URL и layout (порядок, pinned, active,
+workspace/group/container, split pair), а не DOM/формы/cookies. Private исключён.
+Именование, rename/update/delete и Undo удаления; restore показывает точное число
+окон/вкладок и требует явной команды. Не более 32 снимков, 32 окон и 200 вкладок
+на снимок; превышение — ошибка целиком, без тихого усечения.
+
+GUI-genius: theme tokens background #0D111B / surface #182033 / text #EDF3FF /
+muted #99A7C1 / accent #A7B6FF, Inter 24/13/11, шаг 8/16/24. Native panel 900 px:
+[Название] [Сохранить] → name / windows+tabs+date → Restore/Rename/Update/Delete.
+Footer — Undo и Close. Loading/empty/error, disabled restore при удалённом container,
+keyboard/scroll и RU/EN. Не добавлять декоративную timeline: важны состав и действие.
+
+Schema 13 хранит снимки с metadata workspace/group. Restore сопоставляет или создаёт
+организационные definitions, не изменяя существующие живые группы. Удалённый
+container запрещает restore, без fallback в default identity; id контейнера из
+снимка не переиспользуется при создании другого container. Profile atomic save и
+backup распространяются на снимки. Проверка: round trip/limits/missing container,
+настоящие дополнительные окна, исходный DOM сохранён, private отсутствует на диске,
+restart, active/pinned/group/workspace/split и удаление/Undo.
+
+### 13. Реализация (финальная проверка впереди)
+
+Schema 13, named_sessions с monotonic ids/revisions, датами и metadata только
+используемых workspace/group. Общий capture_session используется и для auto-save,
+и для снимков; private-only остаток не стирает обычную сессию. Если активна private
+вкладка смешанного окна, выбирается обычная вкладка того же workspace.
+
+Restore открывает дополнительные нормальные окна, проверяет revision после
+подтверждения, общий лимит окон и все container ids. Metadata подготавливается
+транзакционно с rollback, без копирования больших history/bookmark vectors.
+Существующие группы не переименовываются и не меняют цвет/сворачивание; при
+несовместимых definitions создаётся отдельная группа. Удалённые container ids,
+оставшиеся в снимках, учитываются генератором новых container ids.
+
+Native Ctrl+Alt+E / Aura / command palette. Rename, подтверждённый Update,
+Delete/Undo, disabled Restore и подпись missing container, private-only ошибка.
+Границы/типы/unknown private metadata проверяются при чтении, без тихого усечения
+или подмены identity. 114/114 CTest и первый 3-launch real-window GUI PASS: layout,
+private window + mixed private tab, DOM/form сохранены, missing identity blocked,
+restart и private-only save/update reject. Визуальная проверка выявила отсутствующий
+перевод Restore: добавлен. Ширина кнопок confirmation вычисляется по надписи,
+пустая высота панели убрана; финальные регрессии впереди.
+
+Windows CI 39912982714 для 6111f3d — SUCCESS (пункт 11). CI 39913557829 собрал пункт
+12, но unit test преобразовывал UTF-8 export filename через Windows code page;
+4d30e7a исправляет только тест через utf8_path. Повторный Windows CI запущен.
+
+### 13. Финальная проверка
+
+114/114 CTest PASS. Итоговый 3-launch GUI PASS: реальные новые окна с active/pinned/
+workspace/group/container/split; исходный DOM token и защищённая форма сохранены.
+Private window и private tab смешанного окна исключены; приватные URL отсутствуют
+в profile и backup. Cancel restore/update не меняет снимок/окна; rename/update/
+delete/Undo сохраняются. После удаления container Restore disabled, после restart
+старый id не выдаётся новому container; явный Update заменяет снимок текущими
+окнами. Private-only save/update отклоняются, прежний снимок остаётся.
+
+RU/EN screenshots просмотрены; чёрный снимок перекрытого окна в QA устранён
+windowraise только на приватном display. Русские Restore/Update помещаются целиком,
+неиспользуемая высота панели убрана. Split, workspaces и permissions regressions
+PASS. Логи /tmp/aura-sessions-{build-final,ctest-final,gui-final,split-regression,
+workspaces-regression,permissions-regression}.log. Checkpoint 13 завершён.
+Windows CI пункта 13 ожидается после push; установщики не обновлялись.

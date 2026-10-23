@@ -253,6 +253,8 @@ class BrowserController {
     void prepare_shutdown();
     void detach_window();
     void save_session();
+    std::vector<SavedWindow> capture_session() const;
+    void restore_named_session(int id);
     int created_count() const {
         return created_;
     }
