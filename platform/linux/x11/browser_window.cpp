@@ -46,6 +46,8 @@ int cef_modifiers(unsigned mask) {
         flags |= EVENTFLAG_ALT_DOWN;
     if (mask & Mod4Mask)
         flags |= EVENTFLAG_COMMAND_DOWN;
+    if (mask & Mod5Mask)
+        flags |= EVENTFLAG_ALTGR_DOWN;
     if (mask & LockMask)
         flags |= EVENTFLAG_CAPS_LOCK_ON;
     if (mask & Button1Mask)

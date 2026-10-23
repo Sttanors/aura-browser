@@ -407,6 +407,20 @@ void Profile::load() {
                 }
             }
         }
+    hotkeys.clear();
+    if (auto entries = table["hotkeys"].as_array())
+        for (const auto &node : *entries) {
+            auto row = node.as_table();
+            if (!row || hotkeys.size() > hotkey_catalog().size() || !(*row)["key"].is_integer() ||
+                !(*row)["modifiers"].is_integer()) {
+                hotkeys = {{"invalid", {}}};
+                break;
+            }
+            hotkeys.push_back({(*row)["action"].value_or(std::string{}),
+                               {(*row)["key"].value_or(-1), (*row)["modifiers"].value_or(-1)}});
+        }
+    if (!valid_hotkeys(hotkeys))
+        hotkeys.clear();
     named_sessions.clear();
     next_named_session = 1;
     if (auto rows = table["named_sessions"].as_array())
@@ -513,7 +527,13 @@ void Profile::load() {
 }
 void Profile::save() const {
     toml::table root;
-    root.insert("schema", 13);
+    root.insert("schema", 14);
+    toml::array keys;
+    for (const auto &entry : hotkeys)
+        keys.push_back(toml::table{{"action", entry.action},
+                                   {"key", entry.chord.key},
+                                   {"modifiers", entry.chord.modifiers}});
+    root.insert("hotkeys", std::move(keys));
     toml::array folders;
     for (const auto &f : bookmark_folders)
         folders.push_back(toml::table{{"id", f.id}, {"name", f.name}});

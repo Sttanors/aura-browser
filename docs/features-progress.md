@@ -20,7 +20,7 @@
 | 12 | Менеджер закладок | Реализовано, Linux проверки PASS |
 | 13 | Снимки сессий | Реализовано, Linux проверки PASS |
 | 14 | Скриншоты страницы | Реализовано, Linux проверки PASS |
-| 15 | Настраиваемые горячие клавиши | В очереди |
+| 15 | Настраиваемые горячие клавиши | Реализовано, Linux проверки PASS |
 
 ## Дизайн и правила взаимодействия
 
@@ -771,3 +771,56 @@ RU UI просмотрен: укорочена обрезанная кнопка
 и reader GUI regressions PASS. Протоколы /tmp/aura-screenshot-{build-final,
 ctest-final,gui-final,browser-regression,reader-regression}.log, PNG/UI —
 artifacts/screenshot-smoke. Checkpoint 14 завершён. Windows CI после push.
+
+## 15. План настраиваемых горячих клавиш
+
+Задача экрана: найти команду, нажать сочетание и сразу понять, принято ли оно.
+Native panel: поиск → список «команда / сочетание / сброс / отключить» →
+восстановить стандартные / закрыть. Отдельный режим записи перехватывает клавиши;
+Escape отменяет запись, конфликт/системное сочетание оставляет старое назначение.
+GUI-genius: текущие 5 theme tokens, Inter 24/13/11, шаг 8/16/24, без карточек на
+каждую команду. Состояния focus/hover/recording/error/disabled/empty, RU/EN/scale.
+Сочетания — настройка профиля, общая для его окон; private не меняет область настроек.
+Системные/редакторские клавиши, AltGr, IME и modal dialogs защищены. Стандартные
+альтернативы F5/F3 и Ctrl+Tab/цифры сохраняются и зарезервированы от конфликтов.
+Проверка: модель конфликтов/reserved/persistence и реальные remap/old binding off,
+restart/несколько окон/поиск RU/keyboard capture/modal/редакторский clipboard.
+
+## 15. Реализация и первая проверка
+
+Общий каталог 34 команд, Primary bindings + overrides (включая disable), schema14.
+Проверка конфликтов учитывает все эффективные назначения; reset одной команды тоже
+может конфликтовать и тогда не меняет настройки. Некорректный импорт overrides
+возвращает стандартные сочетания; clipboard/undo/redo, Ctrl+цифры/Tab, Alt+F4,
+Ctrl+Alt+F1…F12, UI reset и F3/F5/F6/F7/F10 защищены. AltGr/Super не записываются.
+Native panel с поиском RU/EN/id/key, capture/cancel, disable/reset/reset-all;
+обработчик переводит сочетание в существующий dispatcher, сохраняя dialog/editor
+и приватные ограничения. Перезапись обновляется сразу во всех окнах профиля.
+Меню/палитра/address/tooltips показывают актуальные сочетания.
+
+122/122 CTest PASS (conflict atomicity, reset conflict, reserved keys, disable all,
+roundtrip и invalid persisted config). Реальный GUI: новое/старое сочетание,
+conflict/reserved/cancel, disable/reuse/reset-conflict, restart RU, общие окна,
+защищённый beforeunload и native clipboard editing, reset-all PASS.
+Визуальная проверка выявила обрезанную RU кнопку «Отключить»: увеличена ширина;
+высота панели теперь зависит от результатов, без пустой декоративной области.
+
+Windows CI 0456b9a: сборка/unit PASS, GUI упал на прежних фиксированных координатах
+меню New window (после роста меню выбиралось Private window). В 1340687 тест
+переведён на menu_ui item id/bounds для обычного и private окон; повтор ожидается.
+Предыдущие ca665b1 и 4d30e7a Windows CI SUCCESS.
+
+Финальная проверка пункта 15: 122/122 CTest PASS; hotkeys GUI PASS, включая
+RU uppercase clipboard search, Tab→record→Escape, Mod5 AltGr/Super не вызывают
+команду. Native X11 Mod5 и Windows RightAlt+Ctrl теперь передают флаг AltGr;
+Super/Win тоже отделён от пользовательского сочетания. Переназначения действуют
+при открытом popup расширения, сохраняя редакторские клавиши самого расширения.
+Скриншоты, палитра команд, настройки (content/permissions/downloads/data/reset/
+small RU/restart) и upgrade/restart расширений — GUI regressions PASS.
+RU 900×620 UI просмотрен: кнопки/надписи не обрезаны, длинный inline hint в sidebar
+скрывается вместо выхода за кнопку. Все GUI — isolated CPU Weston/Xwayland.
+Логи /tmp/aura-hotkeys-{build-final,ctest-final,gui-final,screenshot-regression,
+commands-regression,settings-regression,extensions-regression}.log.
+Checkpoint 15 завершён. Все 15 функций реализованы в исходниках и проверены на Linux.
+Установщики и версия preview не менялись; перед новым релизом остаются Windows CI
+на последнем commit и обновление pinned CEF/Chromium.

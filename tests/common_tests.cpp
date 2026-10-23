@@ -1345,3 +1345,56 @@ TEST(Screenshots, PngHeaderDimensionsAreBoundedBeforeExport) {
     EXPECT_FALSE(screenshot_png_size(bytes));
     EXPECT_FALSE(screenshot_png_size("not a png"));
 }
+
+TEST(Hotkeys, DefaultsAreUniqueAndAllPrimaryActionsCanBeDisabled) {
+    EXPECT_TRUE(valid_hotkeys({}));
+    std::vector<HotkeyOverride> keys;
+    for (const auto &s : hotkey_catalog()) {
+        EXPECT_EQ(assign_hotkey(keys, s.id, {}), "");
+    }
+    EXPECT_TRUE(valid_hotkeys(keys));
+    for (const auto &s : hotkey_catalog())
+        EXPECT_EQ(effective_hotkey(keys, s.id).key, 0);
+}
+TEST(Hotkeys, ConflictNeverOverwritesEitherActionAndResetCanConflict) {
+    std::vector<HotkeyOverride> keys;
+    EXPECT_EQ(assign_hotkey(keys, "new_tab", {'B', 1}), "bookmarks");
+    EXPECT_TRUE(keys.empty());
+    EXPECT_EQ(assign_hotkey(keys, "new_tab", {'U', 3}), "");
+    EXPECT_EQ(assign_hotkey(keys, "bookmarks", {'T', 1}), "");
+    EXPECT_EQ(assign_hotkey(keys, "new_tab", {'T', 1}), "bookmarks");
+    EXPECT_EQ(effective_hotkey(keys, "new_tab"), (Hotkey{'U', 3}));
+    EXPECT_EQ(assign_hotkey(keys, "bookmarks", {}), "");
+    EXPECT_EQ(assign_hotkey(keys, "new_tab", {'T', 1}), "");
+    EXPECT_TRUE(valid_hotkeys(keys));
+}
+TEST(Hotkeys, SystemClipboardAndNavigationKeysCannotBeStolen) {
+    for (auto chord :
+         {Hotkey{'C', 1}, Hotkey{'V', 1}, Hotkey{'A', 1}, Hotkey{'Z', 3}, Hotkey{'0', 3},
+          Hotkey{'1', 1}, Hotkey{0x73, 4}, Hotkey{0x70, 5}, Hotkey{0x74, 0}, Hotkey{0x09, 1},
+          Hotkey{'U', 0}, Hotkey{'U', 8}, Hotkey{0, 1}})
+        EXPECT_FALSE(allowed_hotkey(chord));
+    EXPECT_TRUE(allowed_hotkey({'U', 3}));
+    EXPECT_TRUE(allowed_hotkey({0x78, 0}));
+    EXPECT_FALSE(valid_hotkeys({{"unknown", {'U', 3}}}));
+    EXPECT_FALSE(valid_hotkeys({{"new_tab", {'U', 3}}, {"new_tab", {'I', 3}}}));
+}
+TEST(Hotkeys, ProfileRoundtripKeepsDisabledActionsAndRejectsConflictingConfiguration) {
+    TemporaryProfile temp;
+    Profile p(temp.path);
+    p.load();
+    EXPECT_EQ(assign_hotkey(p.hotkeys, "new_tab", {'U', 3}), "");
+    EXPECT_EQ(assign_hotkey(p.hotkeys, "bookmarks", {}), "");
+    p.save();
+    Profile restored(temp.path);
+    restored.load();
+    EXPECT_EQ(effective_hotkey(restored.hotkeys, "new_tab"), (Hotkey{'U', 3}));
+    EXPECT_EQ(effective_hotkey(restored.hotkeys, "bookmarks").key, 0);
+    {
+        std::ofstream file(temp.path / "profile.toml");
+        file << "[[hotkeys]]\naction='new_tab'\nkey=66\nmodifiers=1\n";
+    }
+    restored.load();
+    EXPECT_TRUE(restored.hotkeys.empty());
+    EXPECT_EQ(effective_hotkey(restored.hotkeys, "new_tab"), (Hotkey{'T', 1}));
+}

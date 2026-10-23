@@ -382,6 +382,7 @@ Rect BrowserUi::panel_bounds() const {
                            : panel_ == Groups      ? 900
                            : panel_ == Containers  ? 900
                            : panel_ == Commands    ? 900
+                           : panel_ == Hotkeys     ? 900
                            : panel_ == Screenshot  ? 900
                            : panel_ == Sessions    ? 900
                            : panel_ == Bookmarks   ? 900
@@ -406,6 +407,8 @@ Rect BrowserUi::panel_bounds() const {
                                         app_.site_data.types.begin(), app_.site_data.types.end(),
                                         [](const auto &item) { return item.second > 0; })),
                          512, 620)
+        : panel_ == Hotkeys
+            ? std::clamp(280 + int(std::min<size_t>(7, hotkey_results().size())) * 56, 392, 700)
         : panel_ == Screenshot ? 520
         : panel_ == Sessions
             ? std::clamp(268 + int(app_.profile.named_sessions.size()) * 90, 390, 700)
@@ -580,7 +583,8 @@ void BrowserUi::draw(SkCanvas &c) {
     icon(c, "plus", 29, 99, 18, t.accent);
     focus_target({16, 12, 208, 62});
     label(c, medium_, app_.tr("New tab"), 59, 113, 13, ink);
-    label(c, regular_, "Ctrl T", 170, 112, 10, muted);
+    if (shortcut_hint("new_tab").size() <= 6)
+        label(c, regular_, shortcut_hint("new_tab"), 170, 112, 10, muted, 50);
     label(c, regular_, app_.tr("Tabs"), 24, 161, 12, muted);
     const auto visible = sidebar_rows();
     int visible_active =
@@ -743,7 +747,7 @@ void BrowserUi::draw(SkCanvas &c) {
           addr.x + 40, addr.y + 24, 12, current && !current->ntp ? ink : muted,
           addr.width - (current && current->container
                             ? std::min(84, std::max(48, addr.width / 3)) + 64
-                            : 110));
+                            : 150));
     if (current && current->container) {
         const auto container = app_.profile.container(current->container);
         const int width = std::min(84, std::max(48, addr.width / 3));
@@ -755,7 +759,8 @@ void BrowserUi::draw(SkCanvas &c) {
         centered_label(c, medium_, app_.profile.container_label(current->container), badge, 10,
                        color, 5, 5);
     } else
-        label(c, regular_, "Ctrl L", addr.x + addr.width - 48, addr.y + 24, 9, muted);
+        label(c, regular_, shortcut_hint("focus_address"), addr.x + addr.width - 100, addr.y + 24,
+              9, muted, 88);
     button({width_ - 150, 37, 34, 36}, "star", true,
            current && app_.profile.bookmarked(current->page.url));
     button({width_ - 110, 37, 34, 36}, "download", true, panel_ == Downloads);
@@ -848,7 +853,8 @@ void BrowserUi::draw(SkCanvas &c) {
                                       app_.tr("Site permissions"),
                                       app_.tr("Site data"),
                                       app_.tr("Session snapshots"),
-                                      app_.tr("Screenshot")};
+                                      app_.tr("Screenshot"),
+                                      app_.tr("Keyboard shortcuts")};
         label(c, medium_, titles[panel_], r.x + 28, r.y + 47, 23, ink);
         icon(c, "close", r.x + r.width - 43, r.y + 26, 19, muted);
         if (panel_ == Bookmarks)
@@ -862,7 +868,7 @@ void BrowserUi::draw(SkCanvas &c) {
             if (list.empty())
                 label(c, regular_,
                       panel_ == History ? app_.tr("Your history starts with your first page.")
-                                        : app_.tr("Press Ctrl D on a page to save it here."),
+                                        : app_.tr("Save a page using the star button."),
                       r.x + 28, r.y + 140, 14, muted);
             c.save();
             c.clipRect(
@@ -964,6 +970,8 @@ void BrowserUi::draw(SkCanvas &c) {
             draw_site_data(c, r);
         if (panel_ == Sessions)
             draw_sessions(c, r);
+        if (panel_ == Hotkeys)
+            draw_hotkeys(c, r);
         if (panel_ == Screenshot)
             draw_screenshot(c, r);
     }
@@ -1009,14 +1017,24 @@ void BrowserUi::draw(SkCanvas &c) {
     if (!app_.extension_popup && panel_ == None && !editing && app_.dialogs.empty() &&
         !app_.menu_callback && !app_.menu_action) {
         const std::pair<Rect, std::string> tips[] = {
-            {{addr.x + 5, addr.y + 4, 30, 30}, app_.tr("Site permissions") + " (Ctrl+Alt+I)"},
+            {{addr.x + 5, addr.y + 4, 30, 30},
+             app_.tr("Site permissions") + (shortcut_hint("permissions").empty()
+                                                ? ""
+                                                : " (" + shortcut_hint("permissions") + ")")},
             {{260, 37, 34, 36}, app_.tr("Back") + " (Alt+←)"},
             {{298, 37, 34, 36}, app_.tr("Forward") + " (Alt+→)"},
-            {{336, 37, 34, 36}, app_.tr("Reload") + " (Ctrl+R)"},
+            {{336, 37, 34, 36},
+             app_.tr("Reload") +
+                 (shortcut_hint("reload").empty() ? "" : " (" + shortcut_hint("reload") + ")")},
             {{width_ - 230, 37, 34, 36}, app_.tr("Protection")},
             {{width_ - 190, 37, 34, 36}, app_.tr("Extensions")},
-            {{width_ - 150, 37, 34, 36}, app_.tr("Bookmarks") + " (Ctrl+D)"},
-            {{width_ - 110, 37, 34, 36}, app_.tr("Downloads") + " (Ctrl+J)"},
+            {{width_ - 150, 37, 34, 36},
+             app_.tr("Bookmarks") +
+                 (shortcut_hint("bookmark").empty() ? "" : " (" + shortcut_hint("bookmark") + ")")},
+            {{width_ - 110, 37, 34, 36},
+             app_.tr("Downloads") + (shortcut_hint("downloads").empty()
+                                         ? ""
+                                         : " (" + shortcut_hint("downloads") + ")")},
             {{width_ - 70, 37, 34, 36}, app_.tr("Settings")}};
         for (const auto &[b, text] : tips)
             if (inside(b, hover_x_, hover_y_)) {
@@ -2608,11 +2626,14 @@ void BrowserUi::toast(std::string message) {
     app_.changed();
 }
 void BrowserUi::panel(Panel value) {
+    if (value != Hotkeys)
+        hotkey_recording_.clear();
     if (value != Screenshot &&
         (panel_ == Screenshot || app_.screenshot.pending || app_.screenshot.selecting))
         app_.cancel_screenshot();
     if (value != Sessions)
         session_input_focus_ = false;
+    hotkey_search_focus_ = false;
     bookmark_focus_ = -1;
     if (value == Bookmarks) {
         bookmark_mode_ = 0;
@@ -2670,6 +2691,7 @@ void BrowserUi::commit_address() {
     app_.navigate(value);
 }
 void BrowserUi::dismiss() {
+    hotkey_recording_.clear();
     if (panel_ == Screenshot || app_.screenshot.pending || app_.screenshot.selecting)
         app_.cancel_screenshot();
     session_input_focus_ = false;
@@ -2731,6 +2753,9 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
             else if (panel_ == Permissions && permissions_picker_ && permissions_search_focus_ &&
                      target == &permissions_search_)
                 live = &permissions_search_;
+            else if (panel_ == Hotkeys && hotkey_search_focus_ && target == &hotkey_search_ &&
+                     text.size() + hotkey_search_.value.size() <= 512)
+                live = target;
             else if (panel_ == Sessions && session_input_focus_ && target == &session_name_)
                 live = target;
             else if (panel_ == Bookmarks && bookmark_focus_ >= 0 &&
@@ -2809,7 +2834,107 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
         return false;
     return true;
 }
-bool BrowserUi::key(const CefKeyEvent &key) {
+bool BrowserUi::key(const CefKeyEvent &incoming) {
+    const bool down = incoming.type != KEYEVENT_KEYUP;
+    const int code = incoming.windows_key_code;
+    const int mods = ((incoming.modifiers & EVENTFLAG_CONTROL_DOWN) ? 1 : 0) |
+                     ((incoming.modifiers & EVENTFLAG_SHIFT_DOWN) ? 2 : 0) |
+                     ((incoming.modifiers & EVENTFLAG_ALT_DOWN) ? 4 : 0);
+    if (panel_ == Hotkeys && !hotkey_recording_.empty() && app_.dialogs.empty()) {
+        if (!down)
+            return true;
+        if (code == 0x1B) {
+            hotkey_recording_.clear();
+            hotkey_error_.clear();
+            app_.changed();
+            return true;
+        }
+        if (code == 0x10 || code == 0x11 || code == 0x12 || code == 0x5B || code == 0x5C)
+            return true;
+        if (incoming.modifiers & (EVENTFLAG_ALTGR_DOWN | EVENTFLAG_COMMAND_DOWN)) {
+            hotkey_error_ = app_.tr("This combination is reserved. Choose another.");
+            app_.changed();
+            return true;
+        }
+        save_hotkey(hotkey_recording_, {code, mods});
+        return true;
+    }
+    if (app_.screenshot.selecting || !app_.dialogs.empty() || app_.menu_action ||
+        app_.menu_callback)
+        return key_default(incoming);
+    if (incoming.modifiers & (EVENTFLAG_ALTGR_DOWN | EVENTFLAG_COMMAND_DOWN)) {
+        if (auto t = app_.current(); t && t->browser && panel_ == None && !editing)
+            t->browser->GetHost()->SendKeyEvent(incoming);
+        return false;
+    }
+    if (panel_ == Hotkeys) {
+        if (!down)
+            return true;
+        if (code == 0x1B) {
+            dismiss();
+            return true;
+        }
+        if (mods == 1 && code == 'F') {
+            hotkey_search_focus_ = true;
+            hotkey_search_.select_all();
+            app_.changed();
+            return true;
+        }
+        if (code == 0x21 || code == 0x22 ||
+            ((code == 0x24 || code == 0x23) && !hotkey_search_focus_)) {
+            const int cap = std::max(1, (panel_bounds().height - 280) / 56),
+                      maximum = std::max(0, int(hotkey_results().size()) - cap);
+            hotkey_scroll_ =
+                std::clamp(code == 0x24   ? 0
+                           : code == 0x23 ? maximum
+                                          : hotkey_scroll_ + (code == 0x21 ? -cap : cap),
+                           0, maximum);
+            app_.changed();
+            return true;
+        }
+        if (hotkey_search_focus_ && code == 0x09)
+            keyboard_focus_ = 1;
+        if (hotkey_search_focus_ && code != 0x09 && code != 0x79) {
+            editor_key(hotkey_search_, incoming);
+            hotkey_scroll_ = 0;
+            app_.changed();
+            return code < 0x20 || (mods & 1) || (code >= 0x21 && code <= 0x2E);
+        }
+    }
+    // Remap to the existing context-aware dispatcher: modal/editor/page guards remain intact.
+    const Hotkey chord{code, mods};
+    for (const auto &spec : hotkey_catalog())
+        if (effective_hotkey(app_.profile.hotkeys, spec.id) == chord && code) {
+            if (!down)
+                return true;
+            if (app_.extension_popup)
+                app_.close_extension_popup();
+            if (std::string_view(spec.id) == "settings") {
+                panel(Settings);
+                return true;
+            }
+            if (std::string_view(spec.id) == "hotkeys") {
+                open_hotkeys();
+                return true;
+            }
+            auto mapped = incoming;
+            mapped.windows_key_code = spec.standard.key;
+            mapped.modifiers &=
+                ~(EVENTFLAG_CONTROL_DOWN | EVENTFLAG_SHIFT_DOWN | EVENTFLAG_ALT_DOWN);
+            if (spec.standard.modifiers & 1)
+                mapped.modifiers |= EVENTFLAG_CONTROL_DOWN;
+            if (spec.standard.modifiers & 2)
+                mapped.modifiers |= EVENTFLAG_SHIFT_DOWN;
+            if (spec.standard.modifiers & 4)
+                mapped.modifiers |= EVENTFLAG_ALT_DOWN;
+            return key_default(mapped);
+        }
+    for (const auto &spec : hotkey_catalog())
+        if (spec.standard == chord && code)
+            return true;
+    return key_default(incoming);
+}
+bool BrowserUi::key_default(const CefKeyEvent &key) {
     const bool down = key.type != KEYEVENT_KEYUP;
     const auto code = key.windows_key_code;
     const bool ctrl = key.modifiers & EVENTFLAG_CONTROL_DOWN,
@@ -2973,6 +3098,7 @@ bool BrowserUi::key(const CefKeyEvent &key) {
         data_search_focus_ = false;
         bookmark_focus_ = -1;
         session_input_focus_ = false;
+        hotkey_search_focus_ = false;
         if (auto tab = app_.current(); tab && tab->browser)
             tab->browser->GetHost()->SetFocus(false);
         if (!focus_targets_.empty()) {
@@ -2991,7 +3117,8 @@ bool BrowserUi::key(const CefKeyEvent &key) {
         !import_input_focus_ && !filter_input_focus_ && shortcut_focus_ < 0 &&
         password_focus_ < 0 && !workspace_input_focus_ && !group_input_focus_ &&
         !container_input_focus_ && !profile_input_focus_ && !permissions_search_focus_ &&
-        !data_search_focus_ && bookmark_focus_ < 0 && !session_input_focus_ && !editing) {
+        !data_search_focus_ && bookmark_focus_ < 0 && !session_input_focus_ &&
+        !hotkey_search_focus_ && !editing) {
         const auto r = focus_targets_[keyboard_focus_];
         const int previous = keyboard_focus_;
         const auto previous_panel = panel_;
@@ -3752,7 +3879,7 @@ bool BrowserUi::key(const CefKeyEvent &key) {
     return false;
 }
 void BrowserUi::text(const std::string &value) {
-    if (app_.screenshot.selecting)
+    if (app_.screenshot.selecting || !hotkey_recording_.empty())
         return;
     if (auto p = app_.extension_popup; p && p->browser && app_.dialogs.empty()) {
         for (auto ch : CefString(value).ToString16()) {
@@ -3805,6 +3932,10 @@ void BrowserUi::text(const std::string &value) {
     if (!app_.dialogs.empty()) {
         if (app_.dialogs.front().prompt)
             app_.dialogs.front().input.insert(clean);
+    } else if (panel_ == Hotkeys && hotkey_search_focus_) {
+        if (hotkey_search_.value.size() + clean.size() <= 512)
+            hotkey_search_.insert(clean);
+        hotkey_scroll_ = 0;
     } else if (panel_ == Sessions && session_input_focus_) {
         if (session_name_.value.size() + clean.size() <= 4096)
             session_name_.insert(clean);
@@ -4026,6 +4157,13 @@ void BrowserUi::pointer(const PointerInput &input) {
         else
             start_scroll_ = std::clamp(start_scroll_ + (input.dy < 0 ? 64 : -64), 0,
                                        start_page_layout().maximum);
+        return;
+    }
+    if (input.kind == PointerInput::Wheel && panel_ == Hotkeys) {
+        const int cap = std::max(1, (panel_bounds().height - 280) / 56),
+                  maximum = std::max(0, int(hotkey_results().size()) - cap);
+        hotkey_scroll_ = std::clamp(hotkey_scroll_ + (input.dy < 0 ? 1 : -1), 0, maximum);
+        app_.changed();
         return;
     }
     if (input.kind == PointerInput::Wheel && panel_ == Sessions) {
@@ -4306,6 +4444,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                 bookmarks_pointer(r, x, y);
             else if (panel_ == Sessions)
                 sessions_pointer(r, x, y);
+            else if (panel_ == Hotkeys)
+                hotkeys_pointer(r, x, y);
             else if (panel_ == Screenshot)
                 screenshot_pointer(r, x, y);
         }
@@ -4350,11 +4490,21 @@ void BrowserUi::pointer(const PointerInput &input) {
                 {14, app_.tr("Site permissions"), true, "Ctrl+Alt+I"},
                 {15, app_.tr("Site data"), true, "Ctrl+Alt+D"},
                 {16, app_.tr("Session snapshots"), true, "Ctrl+Alt+E"},
-                {17, app_.tr("Screenshot"), true, "Ctrl+Shift+S"}};
+                {17, app_.tr("Screenshot"), true, "Ctrl+Shift+S"},
+                {18, app_.tr("Keyboard shortcuts"), true}};
+            const std::map<int, std::string> actions = {
+                {1, "new_window"},   {2, "private_window"}, {3, "close_window"},
+                {4, "quit"},         {6, "workspaces"},     {7, "groups"},
+                {8, "split"},        {9, "containers"},     {10, "profiles"},
+                {11, "commands"},    {12, "reader"},        {13, "translate_page"},
+                {14, "permissions"}, {15, "site_data"},     {16, "sessions"},
+                {17, "screenshot"},  {18, "hotkeys"}};
+            for (auto &item : app_.menu)
+                if (auto found = actions.find(item.id); found != actions.end())
+                    item.shortcut = shortcut_hint(found->second);
             app_.menu_width = 320;
             app_.menu_x = 16;
-            app_.menu_y =
-                std::clamp(76, 32, std::max(32, height_ - int(app_.menu.size()) * 32 - 20));
+            app_.menu_y = std::clamp(76, 8, std::max(8, height_ - int(app_.menu.size()) * 32 - 20));
             app_.menu_action = [this](int command) {
                 if (command == 1 || command == 2)
                     app_.new_window(command == 2);
@@ -4386,6 +4536,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                     open_sessions();
                 else if (command == 17)
                     open_screenshot();
+                else if (command == 18)
+                    open_hotkeys();
                 else
                     app_.request_exit();
             };
@@ -6519,6 +6671,7 @@ std::vector<BrowserUi::CommandResult> BrowserUi::command_results() const {
         {"history", "History", "Ctrl+H", true},
         {"downloads", "Downloads", "Ctrl+J", true},
         {"settings", "Settings", "", true},
+        {"hotkeys", "Keyboard shortcuts", "", true},
         {"workspaces", "Workspaces", "Ctrl+Shift+E", !app_.private_window},
         {"groups", "Tab groups", "Ctrl+Alt+G", !app_.private_window},
         {"containers", "Site containers", "Ctrl+Alt+C", !private_mode},
@@ -6543,8 +6696,8 @@ std::vector<BrowserUi::CommandResult> BrowserUi::command_results() const {
         {"devtools", "Developer tools", "F12", page},
     };
     for (const auto &action : actions)
-        add({"action", action.id, app_.tr(action.title), app_.tr("Action"), action.shortcut, 0, 0,
-             action.enabled},
+        add({"action", action.id, app_.tr(action.title), app_.tr("Action"),
+             shortcut_hint(action.id), 0, 0, action.enabled},
             action.title);
     for (const auto &spec : settings_catalog())
         add({"setting", spec.id, app_.tr(spec.title),
@@ -6704,6 +6857,8 @@ void BrowserUi::run_command(int index) {
         open_sessions();
     else if (id == "screenshot")
         open_screenshot();
+    else if (id == "hotkeys")
+        open_hotkeys();
     else if (id == "devtools")
         app_.devtools();
     app_.changed();
@@ -7728,9 +7883,8 @@ void BrowserUi::draw_bookmarks(SkCanvas &c, Rect r) {
     const int capacity = std::max(1, (r.height - 320) / 52);
     bookmark_scroll_ = std::clamp(bookmark_scroll_, 0, std::max(0, int(matches.size()) - capacity));
     if (matches.empty())
-        label(c, regular_,
-              app_.tr("No bookmarks here. Save a page with Ctrl+D or change the search."), r.x + 28,
-              r.y + 210, 13, theme.muted, r.width - 56);
+        label(c, regular_, app_.tr("No bookmarks here. Save a page or change the search."),
+              r.x + 28, r.y + 210, 13, theme.muted, r.width - 56);
     for (int i = bookmark_scroll_; i < int(matches.size()) && i < bookmark_scroll_ + capacity;
          ++i) {
         const auto &b = app_.profile.bookmarks[matches[i]];
@@ -8514,6 +8668,167 @@ std::string BrowserUi::screenshot_report() const {
             out += ",";
         out += "{\"id\":" + std::to_string(i) +
                ",\"bounds\":" + rect({r.x + 28, r.y + 140 + i * 72, r.width - 56, 60}) + "}";
+    }
+    return out + "]}";
+}
+void BrowserUi::open_hotkeys() {
+    app_.close_menu();
+    panel(Hotkeys);
+    hotkey_search_.set("");
+    hotkey_search_focus_ = true;
+    hotkey_recording_.clear();
+    hotkey_error_.clear();
+    hotkey_scroll_ = 0;
+    keyboard_focus_ = -1;
+    if (auto t = app_.current(); t && t->browser)
+        t->browser->GetHost()->SetFocus(false);
+    app_.changed();
+}
+std::string BrowserUi::shortcut_hint(const std::string &id) const {
+    if (id == "back")
+        return "Alt+Left";
+    if (id == "forward")
+        return "Alt+Right";
+    auto h = effective_hotkey(app_.profile.hotkeys, id);
+    return h.key ? hotkey_label(h) : "";
+}
+std::vector<int> BrowserUi::hotkey_results() const {
+    std::vector<int> result;
+    const auto query = fold_settings(hotkey_search_.value);
+    auto specs = hotkey_catalog();
+    for (int i = 0; i < int(specs.size()); ++i)
+        if (query.empty() ||
+            fold_settings(std::string(specs[i].id) + " " + specs[i].title + " " +
+                          app_.tr(specs[i].title) + " " + shortcut_hint(specs[i].id))
+                    .find(query) != std::string::npos)
+            result.push_back(i);
+    return result;
+}
+void BrowserUi::save_hotkey(const std::string &id, Hotkey chord) {
+    const auto error = assign_hotkey(app_.profile.hotkeys, id, chord);
+    if (error.empty()) {
+        hotkey_recording_.clear();
+        hotkey_error_.clear();
+        app_.changed(true);
+        return;
+    }
+    if (error == "reserved" || error == "unknown")
+        hotkey_error_ = app_.tr("This combination is reserved. Choose another.");
+    else {
+        hotkey_error_ = app_.tr("Already used by:") + " ";
+        for (const auto &s : hotkey_catalog())
+            if (error == s.id)
+                hotkey_error_ += app_.tr(s.title);
+    }
+    app_.changed();
+}
+void BrowserUi::draw_hotkeys(SkCanvas &c, Rect r) {
+    const auto &t = interface_theme(app_.profile);
+    auto button = [&](Rect b, const std::string &title, bool enabled = true) {
+        if (enabled)
+            focus_target(b);
+        fill(c, b, 8, SkColorSetA(t.accent, enabled && inside(b, hover_x_, hover_y_) ? 24 : 8));
+        border(c, b, 8, SkColorSetA(t.accent, enabled ? 140 : 45));
+        centered_label(c, medium_, title, b, 12, enabled ? t.text : t.muted, 8, 8);
+    };
+    label(c, regular_, app_.tr("Choose a command, then press a new combination."), r.x + 28,
+          r.y + 73, 11, t.muted, r.width - 56);
+    label(c, medium_, app_.tr("Search commands"), r.x + 28, r.y + 98, 11, t.muted, r.width - 56);
+    Rect search{r.x + 28, r.y + 108, r.width - 56, 36};
+    focus_target(search);
+    fill(c, search, 8, t.background);
+    border(c, search, 8, hotkey_search_focus_ ? t.accent : SkColorSetA(t.accent, 80));
+    draw_editor(c, hotkey_search_, search, 13, hotkey_search_focus_);
+    const std::string status = !hotkey_recording_.empty()
+                                   ? app_.tr("Press a combination. Escape cancels.")
+                                   : app_.tr("System and text editing shortcuts stay reserved.");
+    label(c, regular_, status, r.x + 28, r.y + 166, 11, t.muted, r.width - 56);
+    label(c, regular_, hotkey_error_, r.x + 28, r.y + 184, 11, t.text, r.width - 56);
+    const auto rows = hotkey_results();
+    const int cap = std::max(1, (r.height - 280) / 56);
+    hotkey_scroll_ = std::clamp(hotkey_scroll_, 0, std::max(0, int(rows.size()) - cap));
+    if (rows.empty())
+        label(c, regular_, app_.tr("No matching commands. Change the search."), r.x + 28, r.y + 227,
+              13, t.muted, r.width - 56);
+    for (int i = hotkey_scroll_; i < int(rows.size()) && i < hotkey_scroll_ + cap; ++i) {
+        const auto &s = hotkey_catalog()[rows[i]];
+        const int y = r.y + 204 + (i - hotkey_scroll_) * 56;
+        const bool recording = hotkey_recording_ == s.id;
+        if (recording)
+            fill(c, {r.x + 20, y - 4, r.width - 40, 48}, 6, SkColorSetA(t.accent, 16));
+        label(c, medium_, app_.tr(s.title), r.x + 28, y + 22, 13, t.text, r.width - 438);
+        const auto h = effective_hotkey(app_.profile.hotkeys, s.id);
+        button({r.x + r.width - 398, y, 164, 34},
+               recording ? app_.tr("Press keys...") : app_.tr(hotkey_label(h).c_str()));
+        button({r.x + r.width - 226, y, 88, 34}, app_.tr("Reset"), h != s.standard);
+        button({r.x + r.width - 130, y, 102, 34}, app_.tr("Disable"), h.key != 0);
+    }
+    button({r.x + 28, r.y + r.height - 56, 232, 34}, app_.tr("Restore default shortcuts"));
+    button({r.x + r.width - 148, r.y + r.height - 56, 120, 34}, app_.tr("Close"));
+}
+void BrowserUi::hotkeys_pointer(Rect r, int x, int y) {
+    if (inside({r.x + 28, r.y + 108, r.width - 56, 36}, x, y)) {
+        hotkey_search_focus_ = true;
+        hotkey_recording_.clear();
+        hotkey_search_.select_all();
+        app_.changed();
+        return;
+    }
+    hotkey_search_focus_ = false;
+    keyboard_focus_ = -1;
+    if (inside({r.x + 28, r.y + r.height - 56, 232, 34}, x, y)) {
+        app_.profile.hotkeys.clear();
+        hotkey_recording_.clear();
+        hotkey_error_.clear();
+        app_.changed(true);
+        return;
+    }
+    if (inside({r.x + r.width - 148, r.y + r.height - 56, 120, 34}, x, y)) {
+        dismiss();
+        return;
+    }
+    auto rows = hotkey_results();
+    int index = (y - r.y - 204) / 56 + hotkey_scroll_;
+    if (y < r.y + 204 || y >= r.y + r.height - 76 || index < 0 || index >= int(rows.size()))
+        return;
+    const auto &s = hotkey_catalog()[rows[index]];
+    const int top = r.y + 204 + (index - hotkey_scroll_) * 56;
+    if (inside({r.x + r.width - 398, top, 164, 34}, x, y)) {
+        hotkey_recording_ = s.id;
+        hotkey_error_.clear();
+        app_.changed();
+    } else if (inside({r.x + r.width - 226, top, 88, 34}, x, y))
+        save_hotkey(s.id, s.standard);
+    else if (inside({r.x + r.width - 130, top, 102, 34}, x, y))
+        save_hotkey(s.id, {});
+}
+std::string BrowserUi::hotkeys_report() const {
+    if (panel_ != Hotkeys)
+        return "null";
+    auto rect = [](Rect b) {
+        return "[" + std::to_string(b.x) + "," + std::to_string(b.y) + "," +
+               std::to_string(b.width) + "," + std::to_string(b.height) + "]";
+    };
+    const auto r = panel_bounds();
+    const auto rows = hotkey_results();
+    const int cap = std::max(1, (r.height - 280) / 56);
+    std::string out = "{\"query\":" + json_quote(hotkey_search_.value) +
+                      ",\"recording\":" + json_quote(hotkey_recording_) +
+                      ",\"error\":" + json_quote(hotkey_error_) +
+                      ",\"search\":" + rect({r.x + 28, r.y + 108, r.width - 56, 36}) +
+                      ",\"reset_all\":" + rect({r.x + 28, r.y + r.height - 56, 232, 34}) +
+                      ",\"items\":[";
+    for (int i = hotkey_scroll_; i < int(rows.size()) && i < hotkey_scroll_ + cap; ++i) {
+        if (i != hotkey_scroll_)
+            out += ",";
+        const auto &s = hotkey_catalog()[rows[i]];
+        const int y = r.y + 204 + (i - hotkey_scroll_) * 56;
+        const auto h = effective_hotkey(app_.profile.hotkeys, s.id);
+        out += "{\"id\":" + json_quote(s.id) + ",\"key\":" + std::to_string(h.key) +
+               ",\"modifiers\":" + std::to_string(h.modifiers) +
+               ",\"bind\":" + rect({r.x + r.width - 398, y, 164, 34}) +
+               ",\"reset\":" + rect({r.x + r.width - 226, y, 88, 34}) +
+               ",\"disable\":" + rect({r.x + r.width - 130, y, 102, 34}) + "}";
     }
     return out + "]}";
 }

@@ -29,7 +29,8 @@ class BrowserUi {
         Permissions,
         SiteData,
         Sessions,
-        Screenshot
+        Screenshot,
+        Hotkeys
     };
     BrowserUi(BrowserController &owner, const std::filesystem::path &font);
     ~BrowserUi();
@@ -38,6 +39,9 @@ class BrowserUi {
     void resize(int width, int height);
     void pointer(const PointerInput &input);
     bool key(const CefKeyEvent &event);
+    bool key_default(const CefKeyEvent &event);
+    void open_hotkeys();
+    std::string hotkeys_report() const;
     void text(const std::string &value);
     bool tick();
     void focus_address(bool select = true);
@@ -115,6 +119,15 @@ class BrowserUi {
     int session_edit_ = 0, session_scroll_ = 0;
     std::string session_error_;
     std::optional<NamedSession> session_undo_;
+    TextEditor hotkey_search_;
+    bool hotkey_search_focus_ = false;
+    std::string hotkey_recording_, hotkey_error_;
+    int hotkey_scroll_ = 0;
+    std::vector<int> hotkey_results() const;
+    void draw_hotkeys(SkCanvas &, Rect);
+    void hotkeys_pointer(Rect, int, int);
+    void save_hotkey(const std::string &, Hotkey);
+    std::string shortcut_hint(const std::string &) const;
     void draw_sessions(SkCanvas &, Rect);
     void sessions_pointer(Rect, int, int);
     void save_named_session();

@@ -25,6 +25,10 @@ uint32_t modifiers() {
                              {VK_RBUTTON, EVENTFLAG_RIGHT_MOUSE_BUTTON}})
         if (GetKeyState(key) & 0x8000)
             result |= flag;
+    if ((GetKeyState(VK_RMENU) & 0x8000) && (GetKeyState(VK_CONTROL) & 0x8000))
+        result |= EVENTFLAG_ALTGR_DOWN;
+    if ((GetKeyState(VK_LWIN) & 0x8000) || (GetKeyState(VK_RWIN) & 0x8000))
+        result |= EVENTFLAG_COMMAND_DOWN;
     if (GetKeyState(VK_CAPITAL) & 1)
         result |= EVENTFLAG_CAPS_LOCK_ON;
     if (GetKeyState(VK_NUMLOCK) & 1)

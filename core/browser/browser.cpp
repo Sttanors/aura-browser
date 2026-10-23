@@ -1307,6 +1307,7 @@ std::string BrowserController::report() const {
         << ",\"tabs\":" << (quit_snapshot_.empty() ? tabs_json(tabs) : quit_snapshot_)
         << ",\"profile_name\":" << json_quote(profile_name())
         << ",\"profile_directory\":" << json_quote(utf8_path(profile.directory))
+        << ",\"hotkeys_ui\":" << ui->hotkeys_report()
         << ",\"screenshot_ui\":" << ui->screenshot_report()
         << ",\"sessions_ui\":" << ui->sessions_report()
         << ",\"bookmarks_ui\":" << ui->bookmarks_report()
@@ -1612,6 +1613,7 @@ void BrowserController::clear_data(const std::string &kind) {
     }
     if (kind == "reset") {
         static_cast<BrowserPreferences &>(profile) = BrowserPreferences{};
+        profile.hotkeys.clear();
         for (auto &rule : profile.site_permissions)
             rule.value = "default";
         for (auto &rule : state_->private_site_permissions)

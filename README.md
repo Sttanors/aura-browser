@@ -227,6 +227,8 @@ See [windows and sessions](docs/windows-and-sessions.md).
 
 ## Keyboard shortcuts
 
+Open **Keyboard shortcuts** from the Aura menu or command palette to remap 34 commands. Click a combination and press new keys; Escape cancels recording. Conflicts keep the old binding. Each command can be disabled or reset; restore defaults resets the whole list. Changes are saved per profile and apply to all its windows. System and text editing combinations remain reserved; F3/F5 and tab navigation keep their standard alternatives. The table below lists defaults.
+
 | Shortcut | Action |
 |---|---|
 | Ctrl L / Alt Home | Address bar / homepage |

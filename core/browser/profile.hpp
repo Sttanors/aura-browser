@@ -1,4 +1,5 @@
 #pragma once
+#include "core/browser/hotkeys.hpp"
 #include "core/browser/permissions.hpp"
 #include "core/browser/preferences.hpp"
 #include <array>
@@ -72,6 +73,7 @@ class Profile : public BrowserPreferences {
     std::filesystem::path directory;
     std::string profiles_root;
     std::vector<SitePermission> site_permissions;
+    std::vector<HotkeyOverride> hotkeys;
     std::vector<Visit> history, bookmarks;
     std::vector<BookmarkFolder> bookmark_folders;
     int next_bookmark_folder = 1;
