@@ -3,6 +3,7 @@
 #include "include/cef_api_hash.h"
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <fstream>
 #include <gtest/gtest.h>
 #include <sqlite3.h>
@@ -130,6 +131,57 @@ TEST_F(Imports, DiscoversKnownProfilesWithoutOpeningTheirDatabaseAndReadsCombine
     ASSERT_EQ(data.history.size(), 1);
     EXPECT_EQ(data.history[0].url, "https://combined.test/");
 }
+#ifndef _WIN32
+struct ImportEnvironment {
+    const char *name;
+    std::optional<std::string> previous;
+    ImportEnvironment(const char *key, const std::string &value) : name(key) {
+        if (const char *old = std::getenv(key))
+            previous = old;
+        setenv(key, value.c_str(), 1);
+    }
+    ~ImportEnvironment() {
+        if (previous)
+            setenv(name, previous->c_str(), 1);
+        else
+            unsetenv(name);
+    }
+};
+TEST_F(Imports, DiscoversFirefoxXdgLegacySnapAndFlatpakWithoutDuplicateSymlinkProfiles) {
+    ImportEnvironment home("HOME", utf8_path(directory));
+    ImportEnvironment config("XDG_CONFIG_HOME", utf8_path(directory / "custom-config"));
+    for (const auto &relative :
+         {".mozilla/firefox/legacy.default",
+          "custom-config/mozilla/firefox/Новый профиль.default-release",
+          "snap/firefox/common/.mozilla/firefox/snap.default",
+          ".var/app/org.mozilla.firefox/.mozilla/firefox/flatpak.default",
+          ".var/app/org.mozilla.firefox/config/mozilla/firefox/xdg.default"}) {
+        auto profile = directory / path_from_utf8(relative);
+        std::filesystem::create_directories(profile);
+        std::ofstream(profile / "places.sqlite") << "Discovery must not open this file";
+    }
+    std::filesystem::create_directory_symlink(directory / "custom-config/mozilla/firefox" /
+                                                  path_from_utf8("Новый профиль.default-release"),
+                                              directory /
+                                                  ".mozilla/firefox/linked.default-release");
+    auto sources = discover_browser_imports(browser_import_roots());
+    ASSERT_EQ(sources.size(), 5);
+    EXPECT_EQ(
+        std::count_if(sources.begin(), sources.end(),
+                      [](const auto &source) { return source.path.filename() == "snap.default"; }),
+        1);
+    // An empty or invalid XDG_CONFIG_HOME must fall back to ~/.config.
+    std::filesystem::create_directories(directory / ".config/mozilla/firefox/fallback.default");
+    file(".config/mozilla/firefox/fallback.default/places.sqlite", "Not opened");
+    for (const auto *value : {"", "relative/path"}) {
+        ImportEnvironment invalid("XDG_CONFIG_HOME", value);
+        auto fallback = discover_browser_imports(browser_import_roots());
+        EXPECT_TRUE(std::any_of(fallback.begin(), fallback.end(), [](const auto &source) {
+            return source.path.filename() == "fallback.default";
+        }));
+    }
+}
+#endif
 TEST_F(Imports, ApplyKeepsExistingTitlesDeduplicatesAndCreatesRecoverableBackup) {
     Profile profile(directory / "aura");
     profile.bookmarks = {{"https://existing.test/", "My title", 1}};

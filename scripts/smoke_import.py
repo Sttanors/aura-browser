@@ -35,11 +35,17 @@ def main():
         db.executemany('INSERT INTO urls VALUES(?,?,?,?,?)', [
             (1, 'https://one.test/', 'One', 1, (now+11644473600)*1000000),
             (2, 'https://two.test/', 'Two', 1, (now+11644473600-60)*1000000)])
-    # Discovery must not parse unselected databases.
-    firefox = home/'.mozilla/firefox/example.default'
+    # Modern Firefox uses XDG_CONFIG_HOME/mozilla/firefox. Exercise actual selection/import.
+    firefox = home/'config/mozilla/firefox/example.default-release'
     firefox.mkdir(parents=True)
-    (firefox/'places.sqlite').write_text('Unselected fixture')
-    source_hashes = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in (bookmark_file, database)}
+    with sqlite3.connect(firefox/'places.sqlite') as db:
+        db.executescript('CREATE TABLE moz_places(id INTEGER PRIMARY KEY,url TEXT,title TEXT,last_visit_date INTEGER);'
+                        'CREATE TABLE moz_bookmarks(id INTEGER PRIMARY KEY,fk INTEGER,type INTEGER,title TEXT,dateAdded INTEGER);')
+        db.execute('INSERT INTO moz_places VALUES(1,?,?,?)', ('https://firefox.test/', 'Firefox page', now*1000000))
+        db.execute('INSERT INTO moz_bookmarks VALUES(1,1,1,?,?)', ('Из Firefox', now*1000000))
+    # Closed Firefox may leave its lock file behind; it must not hide the profile.
+    (firefox/'.parentlock').touch()
+    source_hashes = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in (bookmark_file, database, firefox/'places.sqlite')}
     html = out/'Экспорт с пробелами.html'
     html.write_text('<!DOCTYPE NETSCAPE-Bookmark-file-1>\n<A HREF="https://html.test/">Из HTML &amp; экспорт</A>', encoding='utf-8')
     invalid = out/'invalid.json'
@@ -165,6 +171,19 @@ def main():
                     key_at(window, 'Return')
                     wait_until(lambda: not state()['import_ui']['busy'] and not state()['import_ui']['ready'], 'Malformed preview was accepted')
                     assert state()['bookmark_count'] == 3 and state()['history_count'] == 2
+                    click(state()['import_ui']['profiles'])
+                    time.sleep(.3)
+                    p = state()['import_ui']['profiles']
+                    # Chromium sorts first, Firefox second.
+                    click([p[0], p[1]+80, 240, 31])
+                    ready()
+                    ui = state()['import_ui']
+                    assert ui['preview_bookmarks'] == 1 and ui['preview_history'] == 1, ui
+                    result = apply()
+                    assert result['bookmarks'] == 1 and result['history'] == 1, result
+                    wait_until(lambda: state()['bookmark_count'] == 4 and state()['history_count'] == 3,
+                               'Firefox bookmarks/history were not imported')
+                    shot('ru-firefox-xdg.png')
                     row = next(c for c in seek('language') if c['id'] == 'language')
                     click(next(c['bounds'] for c in row['options'] if c['value'] == 'en'))
                     key_at(window, 'Escape')
@@ -178,9 +197,10 @@ def main():
                     wait_until(lambda: state()['interface']['width'] <= 900, 'Window did not resize')
                     shot('en-small.png')
                 else:
-                    assert state()['bookmark_count'] == 3 and state()['history_count'] == 2, state()
+                    assert state()['bookmark_count'] == 4 and state()['history_count'] == 3, state()
                     saved = tomllib.loads((profile/'profile.toml').read_text())
                     assert next(b['title'] for b in saved['bookmarks'] if b['url'] == 'https://kept.test/') == 'My original title'
+                    assert next(b['title'] for b in saved['bookmarks'] if b['url'] == 'https://firefox.test/') == 'Из Firefox'
                 key_at(window, 'q', 4)
                 proc.wait(timeout=20)
                 assert proc.returncode == 0
@@ -190,8 +210,8 @@ def main():
                     proc.wait(timeout=5)
     for path, digest in source_hashes.items():
         assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
-    assert len(list((profile/'import-backups').iterdir())) == 3
-    (out/'PASS.txt').write_text('PASS: detected Chromium profile, preview without mutation, selective bookmarks/history, native UTF-8 chooser, duplicate rejection, backup, malformed input, RU/EN and scaling, persistence, unchanged sources.\n')
+    assert len(list((profile/'import-backups').iterdir())) == 4
+    (out/'PASS.txt').write_text('PASS: detected Chromium and XDG Firefox profiles, Firefox with leftover lock, preview without mutation, selective bookmarks/history, native UTF-8 chooser, duplicate rejection, backup, malformed input, RU/EN and scaling, persistence, unchanged sources.\n')
     print('PASS: native browser import and profile retention')
 
 

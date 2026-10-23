@@ -869,3 +869,18 @@ Debian-built native runtime: browser GUI и rendering full/page-only, dark/light
 проверены. https://github.com/Sttanors/aura-browser/actions/runs/39956023363
 README RU/EN и двуязычные release notes с отметкой AI обновлены. Установщики теперь
 действительно содержат все 15 функций и CEF156; задача выпуска завершена.
+
+### 0.4.0 Preview 2 — обнаружение Firefox
+
+Причина обращения: реальный профиль Firefox расположен в ~/.config/mozilla/firefox,
+а Aura проверяла только ~/.mozilla/firefox и старый Flatpak-путь. До чтения SQLite
+импорт не доходил; закрытие Firefox не меняло список.
+Добавлены XDG_CONFIG_HOME/mozilla/firefox, Snap и XDG Flatpak. Физические профили
+дедуплицируются через canonical path, включая ссылки между старым и новым путём.
+Добавлен unit-тест XDG/custom XDG/legacy/Snap/Flatpak/symlink/invalid XDG fallback.
+GUI-проверка теперь действительно выбирает Firefox из XDG-расположения, импортирует
+SQLite-закладку, проверяет сохранение после перезапуска и неизменность базы источника;
+в профиле оставлен .parentlock для проверки закрытого Firefox.
+Host Linux: 123 CTest, 0 failures. Изолированный GUI import PASS: Firefox найден,
+закладки и история импортированы, исходные файлы не изменились, профиль пережил
+перезапуск. Сборка и проверка обновлённых установщиков выполняются.

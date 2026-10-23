@@ -517,19 +517,24 @@ std::vector<BrowserImportRoot> browser_import_roots() {
     auto config = config_value ? path_from_utf8(config_value) : home / ".config";
     if (!config.is_absolute())
         config = home / ".config";
-    roots = {{"Firefox", home / ".mozilla/firefox", true},
-             {"Chrome", config / "google-chrome", false},
-             {"Chromium", config / "chromium", false},
-             {"Brave", config / "BraveSoftware/Brave-Browser", false},
-             {"Firefox Flatpak", home / ".var/app/org.mozilla.firefox/.mozilla/firefox", true},
-             {"Chrome Flatpak", home / ".var/app/com.google.Chrome/config/google-chrome", false},
-             {"Chromium Flatpak", home / ".var/app/org.chromium.Chromium/config/chromium", false}};
+    roots = {
+        {"Firefox", home / ".mozilla/firefox", true},
+        {"Firefox", config / "mozilla/firefox", true},
+        {"Firefox Snap", home / "snap/firefox/common/.mozilla/firefox", true},
+        {"Chrome", config / "google-chrome", false},
+        {"Chromium", config / "chromium", false},
+        {"Brave", config / "BraveSoftware/Brave-Browser", false},
+        {"Firefox Flatpak", home / ".var/app/org.mozilla.firefox/.mozilla/firefox", true},
+        {"Firefox Flatpak", home / ".var/app/org.mozilla.firefox/config/mozilla/firefox", true},
+        {"Chrome Flatpak", home / ".var/app/com.google.Chrome/config/google-chrome", false},
+        {"Chromium Flatpak", home / ".var/app/org.chromium.Chromium/config/chromium", false}};
 #endif
     return roots;
 }
 std::vector<BrowserImportSource>
 discover_browser_imports(const std::vector<BrowserImportRoot> &roots) {
     std::vector<BrowserImportSource> sources;
+    std::unordered_set<std::string> seen;
     for (const auto &root : roots) {
         std::error_code error;
         auto it = std::filesystem::directory_iterator(
@@ -549,8 +554,12 @@ discover_browser_imports(const std::vector<BrowserImportRoot> &roots) {
             };
             bool found = root.firefox ? is_file("places.sqlite")
                                       : (is_file("Bookmarks") || is_file("History"));
-            if (found)
-                sources.push_back({root.browser + " · " + name, it->path()});
+            if (found) {
+                // Legacy locations can link to XDG profiles. Show each physical profile once.
+                auto canonical = std::filesystem::weakly_canonical(it->path(), entry_error);
+                if (!entry_error && seen.insert(utf8_path(canonical)).second)
+                    sources.push_back({root.browser + " · " + name, it->path()});
+            }
             if (sources.size() >= 32)
                 break;
         }

@@ -18,22 +18,22 @@ HTML используется только для посещаемых стра�
 
 Windows-порт использует то же приложение и интерфейс, что и Linux: **Win32 + Skia raster + CEF OSR**.
 Статус его сборки и проверок виден в [GitHub Actions](https://github.com/Sttanors/aura-browser/actions).
-Готовые portable-сборки Windows и Linux доступны в [GitHub Releases](https://github.com/Sttanors/aura-browser/releases/tag/v0.4.0-preview.1).
+Готовые portable-сборки Windows и Linux доступны в [GitHub Releases](https://github.com/Sttanors/aura-browser/releases/tag/v0.4.0-preview.2).
 Для Windows скачайте `aura2-windows64.zip`, для Linux — `aura2-linux64.zip`.
 Распакуйте архив целиком и запустите **Aura2/aura_browser.exe**. Windows 10/11 x64.
 Доверенной подписи издателя Windows пока нет. Канал обновлений проверяется
 подписью Ed25519; результаты проверок релиза отмечаются в
 [журнале работ](docs/browser-roadmap-progress.md).
 
-Версия 0.4.0-preview.1 проверена в [Windows CI](https://github.com/Sttanors/aura-browser/actions/runs/39602429743):
+Версия 0.4.0-preview.1 проверена в [Windows CI](https://github.com/Sttanors/aura-browser/actions/runs/39952387746):
 сборка, модульные тесты, настоящий браузер с вводом Unicode, редактором фильтров,
 обычными/приватными окнами и повторным запуском, portable-упаковка и установщик.
-Linux: 86 CTest и 23 Python-теста; подробные GUI-результаты и оговорки — в
+Linux 0.4.0 Preview 1: 122 CTest и 33 GUI-набора; подробные результаты — в
 [журнале работ](docs/browser-roadmap-progress.md). Установщики 0.4.0-preview.1 содержат эти изменения.
 
 ## Установка в систему
 
-Все варианты доступны в [релизе](https://github.com/Sttanors/aura-browser/releases/tag/v0.4.0-preview.1).
+Все варианты доступны в [релизе](https://github.com/Sttanors/aura-browser/releases/tag/v0.4.0-preview.2).
 Установщики содержат браузер. Пакетный менеджер Linux может скачать системные зависимости.
 
 | Платформа | Файл | Запуск |
@@ -50,9 +50,9 @@ Linux: 86 CTest и 23 Python-теста; подробные GUI-результа
 
 | Дистрибутив (x86_64) | Установка скачанного пакета | Удаление |
 |---|---|---|
-| Arch Linux / CachyOS (актуальный rolling) | `sudo pacman -U ./aura-browser-0.4.0rc1-1-x86_64.pkg.tar.gz` | `sudo pacman -R aura-browser` |
-| Debian 13+ | `sudo apt install './aura-browser_0.4.0-preview.1-1_amd64.deb'` | `sudo apt remove aura-browser` |
-| Fedora 44 | `sudo dnf install './aura-browser-0.4.0-preview.1-1.x86_64.rpm'` | `sudo dnf remove aura-browser` |
+| Arch Linux / CachyOS (актуальный rolling) | `sudo pacman -U ./aura-browser-0.4.0rc2-1-x86_64.pkg.tar.gz` | `sudo pacman -R aura-browser` |
+| Debian 13+ | `sudo apt install './aura-browser_0.4.0-preview.2-1_amd64.deb'` | `sudo apt remove aura-browser` |
+| Fedora 44 | `sudo dnf install './aura-browser-0.4.0-preview.2-1.x86_64.rpm'` | `sudo dnf remove aura-browser` |
 
 Пакетный менеджер установит необходимые системные библиотеки. Сборка использует ABI Debian 13,
 а не более новые библиотеки компьютера разработчика. Debian 12 не поддерживается.

@@ -4,6 +4,11 @@ Open **Settings → Data → Import browser data**. Use **Detected profiles** to
 a standard Firefox, Chrome, Chromium or Brave profile, or choose/paste an export
 file. Custom profile directories can also be pasted directly.
 
+On Linux discovery includes Firefox in `~/.mozilla/firefox` and
+`$XDG_CONFIG_HOME/mozilla/firefox` (normally `~/.config/mozilla/firefox`),
+as well as Snap and both legacy and XDG Flatpak profile locations. Linked copies
+of the same profile appear once. Firefox lock files do not hide a profile.
+
 Supported sources:
 
 | Source | What Aura reads |

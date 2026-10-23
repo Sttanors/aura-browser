@@ -18,7 +18,7 @@ reader/translation tools, site controls, bookmark/session managers, screenshots 
 
 ## Download and install
 
-Get the files from [GitHub Releases](https://github.com/Sttanors/aura-browser/releases/tag/v0.4.0-preview.1).
+Get the files from [GitHub Releases](https://github.com/Sttanors/aura-browser/releases/tag/v0.4.0-preview.2).
 SHA-256 checksum files accompany each download. Installers contain the browser runtime. Native Linux package managers can download system-library dependencies.
 
 | Platform | Installer | How to install |
@@ -35,9 +35,9 @@ Close Aura before upgrading.
 
 | Distribution (x86_64) | Install downloaded package | Remove |
 |---|---|---|
-| Arch Linux / CachyOS (current rolling) | `sudo pacman -U ./aura-browser-0.4.0rc1-1-x86_64.pkg.tar.gz` | `sudo pacman -R aura-browser` |
-| Debian 13+ | `sudo apt install './aura-browser_0.4.0-preview.1-1_amd64.deb'` | `sudo apt remove aura-browser` |
-| Fedora 44 | `sudo dnf install './aura-browser-0.4.0-preview.1-1.x86_64.rpm'` | `sudo dnf remove aura-browser` |
+| Arch Linux / CachyOS (current rolling) | `sudo pacman -U ./aura-browser-0.4.0rc2-1-x86_64.pkg.tar.gz` | `sudo pacman -R aura-browser` |
+| Debian 13+ | `sudo apt install './aura-browser_0.4.0-preview.2-1_amd64.deb'` | `sudo apt remove aura-browser` |
+| Fedora 44 | `sudo dnf install './aura-browser-0.4.0-preview.2-1.x86_64.rpm'` | `sudo dnf remove aura-browser` |
 
 Native package managers install required system libraries. These packages are built against Debian 13's
 ABI, rather than the newer ABI of the original development machine; Debian 12 is not a supported target.
