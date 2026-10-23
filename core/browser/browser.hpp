@@ -23,6 +23,14 @@ namespace aura {
 std::string password_origin(const std::string &url);
 std::string permission_origin(const std::string &url);
 class BrowserUi;
+struct SiteDataState {
+    std::string origin, error, message;
+    int tab = 0, container = 0, pending = 0;
+    bool private_mode = false, clearing = false;
+    uint64_t serial = 0, usage = 0, quota = 0, cookies = 0;
+    std::map<std::string, uint64_t> types;
+    std::chrono::steady_clock::time_point started{};
+};
 struct Tab {
     int id = 0;
     int workspace = 0;
@@ -135,6 +143,10 @@ class BrowserController {
     ~BrowserController();
     std::shared_ptr<void> callback_lifetime = std::make_shared<int>(0);
     Profile &profile;
+    SiteDataState site_data;
+    void open_site_data();
+    void refresh_site_data(const std::string &origin = "");
+    void clear_site_data(bool cookies);
     bool private_window = false;
     std::shared_ptr<BrowserState> state() const {
         return state_;

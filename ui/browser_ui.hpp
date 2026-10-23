@@ -26,7 +26,8 @@ class BrowserUi {
         Profiles,
         Commands,
         Translation,
-        Permissions
+        Permissions,
+        SiteData
     };
     BrowserUi(BrowserController &owner, const std::filesystem::path &font);
     ~BrowserUi();
@@ -70,6 +71,8 @@ class BrowserUi {
     std::string menu_report() const;
     void open_permissions();
     std::string permissions_report() const;
+    void open_site_data();
+    std::string site_data_report() const;
     std::string sidebar_report() const;
     void passwords_locked() {
         clear_password_fields();
@@ -88,6 +91,12 @@ class BrowserUi {
 
   private:
     BrowserController &app_;
+    bool data_picker_ = false, data_search_focus_ = false;
+    int data_selected_ = 0, data_scroll_ = 0;
+    TextEditor data_search_;
+    std::vector<std::string> data_sites() const;
+    void draw_site_data(SkCanvas &, Rect);
+    void site_data_pointer(Rect, int, int);
     struct PermissionSite {
         std::string origin;
         int container = 0;

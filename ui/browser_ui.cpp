@@ -129,7 +129,18 @@ std::vector<std::string> wrap_text(const SkFont &f, const std::string &text, int
     std::vector<std::string> lines;
     std::string remaining = text;
     while (!remaining.empty() && int(lines.size()) < limit) {
-        if (measure(f, remaining) <= width || int(lines.size()) == limit - 1) {
+        if (int(lines.size()) == limit - 1) {
+            std::replace(remaining.begin(), remaining.end(), '\n', ' ');
+            lines.push_back(elide(f, remaining, width));
+            break;
+        }
+        const auto newline = remaining.find('\n');
+        if (newline != std::string::npos && measure(f, remaining.substr(0, newline)) <= width) {
+            lines.push_back(remaining.substr(0, newline));
+            remaining.erase(0, newline + 1);
+            continue;
+        }
+        if (measure(f, remaining) <= width) {
             lines.push_back(elide(f, remaining, width));
             break;
         }
@@ -369,6 +380,7 @@ Rect BrowserUi::panel_bounds() const {
                            : panel_ == Groups      ? 900
                            : panel_ == Containers  ? 900
                            : panel_ == Commands    ? 900
+                           : panel_ == SiteData    ? 900
                            : panel_ == Permissions ? 900
                            : panel_ == Translation ? 900
                            : panel_ == Profiles    ? 900
@@ -384,6 +396,11 @@ Rect BrowserUi::panel_bounds() const {
         : panel_ == Commands
             ? std::clamp(180 + int(std::min<std::size_t>(8, command_results().size())) * 52, 284,
                          596)
+        : panel_ == SiteData
+            ? std::clamp(460 + 26 * int(std::count_if(
+                                        app_.site_data.types.begin(), app_.site_data.types.end(),
+                                        [](const auto &item) { return item.second > 0; })),
+                         512, 620)
         : panel_ == Permissions ? 700
         : panel_ == Translation ? 520
         : panel_ == Profiles    ? std::clamp(236 + int(listed_profiles().size()) * 84, 340, 700)
@@ -408,7 +425,13 @@ Rect BrowserUi::panel_bounds() const {
             w, h};
 }
 Rect BrowserUi::dialog_bounds() const {
-    return {std::max(260, (width_ - 490) / 2), std::max(110, (height_ - 230) / 2), 490, 230};
+    int h = 230;
+    if (!app_.dialogs.empty() && app_.dialogs.front().owned && !app_.dialogs.front().prompt) {
+        const int lines =
+            int(wrap_text(font(regular_, 13), app_.dialogs.front().message, 440, 8).size());
+        h = std::min(std::max(230, 148 + lines * 18), std::max(230, height_ - 140));
+    }
+    return {std::max(260, (width_ - 490) / 2), std::max(110, (height_ - h) / 2), 490, h};
 }
 void BrowserUi::focus_target(Rect r) {
     if (r.x >= 0 && r.y >= 0 && r.x + r.width <= width_ && r.y + r.height <= height_)
@@ -797,7 +820,8 @@ void BrowserUi::draw(SkCanvas &c) {
                                       app_.tr("Profiles"),
                                       app_.tr("Command palette"),
                                       app_.tr("Translate"),
-                                      app_.tr("Site permissions")};
+                                      app_.tr("Site permissions"),
+                                      app_.tr("Site data")};
         label(c, medium_, titles[panel_], r.x + 28, r.y + 47, 23, ink);
         icon(c, "close", r.x + r.width - 43, r.y + 26, 19, muted);
         if (panel_ == History || panel_ == Bookmarks) {
@@ -907,6 +931,8 @@ void BrowserUi::draw(SkCanvas &c) {
             draw_translation(c, r);
         if (panel_ == Permissions)
             draw_permissions(c, r);
+        if (panel_ == SiteData)
+            draw_site_data(c, r);
     }
 
     if (editing) {
@@ -1014,7 +1040,10 @@ void BrowserUi::draw(SkCanvas &c) {
                       dialog.before_unload ? app_.tr("This page may contain unsaved changes.")
                       : dialog.owned       ? app_.tr(dialog.message)
                                            : dialog.message,
-                      r.width - 50, dialog.prompt ? 2 : 4);
+                      r.width - 50,
+                      dialog.prompt  ? 2
+                      : dialog.owned ? 8
+                                     : 4);
         for (size_t i = 0; i < lines.size(); ++i)
             label(c, regular_, lines[i], r.x + 25, r.y + 78 + int(i) * 18, 13, muted, r.width - 50);
         if (dialog.prompt) {
@@ -2408,6 +2437,7 @@ std::vector<Visit> BrowserUi::suggestions() const {
         address.value, std::min(app_.profile.suggestion_limit, std::max(1, (height_ - 205) / 54)));
 }
 void BrowserUi::focus_address(bool select) {
+    data_search_focus_ = false;
     clear_password_fields();
     app_.close_extension_popup();
     editing = true;
@@ -2475,6 +2505,7 @@ void BrowserUi::commit_address() {
     app_.navigate(value);
 }
 void BrowserUi::dismiss() {
+    data_search_focus_ = false;
     clear_password_fields();
     editing = false;
     panel_ = None;
@@ -2531,6 +2562,9 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
             else if (panel_ == Permissions && permissions_picker_ && permissions_search_focus_ &&
                      target == &permissions_search_)
                 live = &permissions_search_;
+            else if (panel_ == SiteData && data_picker_ && data_search_focus_ &&
+                     target == &data_search_)
+                live = &data_search_;
             else if (panel_ == Commands && target == &command_query_)
                 live = &command_query_;
             else if (panel_ == Profiles && target == &profile_input_ && profile_input_focus_)
@@ -2556,9 +2590,12 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
                 (live != &group_input_ || live->value.size() + text.size() <= 120) &&
                 (live != &container_input_ || live->value.size() + text.size() <= 120) &&
                 (live != &permissions_search_ || live->value.size() + text.size() <= 512) &&
+                (live != &data_search_ || live->value.size() + text.size() <= 512) &&
                 (live != &command_query_ || live->value.size() + text.size() <= 512) &&
                 (live != &profile_input_ || live->value.size() + text.size() <= 120))
                 live->insert(text);
+            if (live == &data_search_)
+                data_selected_ = data_scroll_ = 0;
             if (live == &permissions_search_)
                 permissions_pick_selected_ = permissions_scroll_ = 0;
             if (live == &command_query_)
@@ -2699,6 +2736,7 @@ bool BrowserUi::key(const CefKeyEvent &key) {
         container_input_focus_ = false;
         profile_input_focus_ = false;
         permissions_search_focus_ = false;
+        data_search_focus_ = false;
         if (auto tab = app_.current(); tab && tab->browser)
             tab->browser->GetHost()->SetFocus(false);
         if (!focus_targets_.empty()) {
@@ -2752,6 +2790,10 @@ bool BrowserUi::key(const CefKeyEvent &key) {
         }
     }
     if (down) {
+        if (ctrl && alt && code == 'D' && app_.dialogs.empty() && !editing) {
+            open_site_data();
+            return true;
+        }
         if (ctrl && alt && code == 'I' && app_.dialogs.empty() && !editing) {
             open_permissions();
             return true;
@@ -2801,6 +2843,50 @@ bool BrowserUi::key(const CefKeyEvent &key) {
                 return code < 0x20 || ctrl || (code >= 0x21 && code <= 0x2E);
             }
             return true;
+        }
+        if (panel_ == SiteData && ctrl && code == 'F') {
+            data_picker_ = true;
+            data_search_focus_ = true;
+            data_search_.select_all();
+            data_selected_ = data_scroll_ = 0;
+            app_.changed();
+            return true;
+        }
+        if (panel_ == SiteData && data_picker_ && data_search_focus_) {
+            const auto sites = data_sites();
+            const int capacity = std::max(1, (panel_bounds().height - 230) / 52),
+                      n = int(sites.size());
+            if (code == 0x1B) {
+                data_picker_ = false;
+                data_search_focus_ = false;
+                app_.changed();
+                return true;
+            }
+            if (code == 0x26 || code == 0x28 || code == 0x21 || code == 0x22) {
+                data_selected_ =
+                    std::clamp(data_selected_ + (code == 0x26 || code == 0x21 ? -1 : 1) *
+                                                    (code == 0x21 || code == 0x22 ? capacity : 1),
+                               0, std::max(0, n - 1));
+                data_scroll_ = std::clamp(data_scroll_, std::max(0, data_selected_ - capacity + 1),
+                                          data_selected_);
+                app_.changed();
+                return true;
+            }
+            if (code == 0x0D) {
+                if (n) {
+                    data_picker_ = false;
+                    data_search_focus_ = false;
+                    app_.site_data.message.clear();
+                    app_.refresh_site_data(sites[std::clamp(data_selected_, 0, n - 1)]);
+                }
+                return true;
+            }
+            if (!ctrl || (code != 'L' && code != 'T' && code != 'W' && code != 'Q')) {
+                editor_key(data_search_, key);
+                data_selected_ = data_scroll_ = 0;
+                app_.changed();
+                return code < 0x20 || ctrl || (code >= 0x21 && code <= 0x2E);
+            }
         }
         if (panel_ == Permissions && ctrl && code == 'F') {
             permissions_picker_ = true;
@@ -3372,6 +3458,10 @@ void BrowserUi::text(const std::string &value) {
     if (!app_.dialogs.empty()) {
         if (app_.dialogs.front().prompt)
             app_.dialogs.front().input.insert(clean);
+    } else if (panel_ == SiteData && data_picker_ && data_search_focus_) {
+        if (data_search_.value.size() + clean.size() <= 512)
+            data_search_.insert(clean);
+        data_selected_ = data_scroll_ = 0;
     } else if (panel_ == Permissions && permissions_picker_ && permissions_search_focus_) {
         if (permissions_search_.value.size() + clean.size() <= 512)
             permissions_search_.insert(clean);
@@ -3431,6 +3521,29 @@ void BrowserUi::text(const std::string &value) {
     app_.changed();
 }
 bool BrowserUi::tick() {
+    if (panel_ == SiteData) {
+        const auto &d = app_.site_data;
+        const auto source = app_.tab(d.tab);
+        const auto error = app_.tr("Open a website in this context and reopen Site data.");
+        if ((!source || source->closing || !source->browser || source->container != d.container ||
+             source->private_tab != d.private_mode) &&
+            d.error != error) {
+            ++app_.site_data.serial;
+            app_.site_data.pending = 0;
+            app_.site_data.clearing = false;
+            app_.site_data.error = error;
+            app_.changed();
+        }
+    }
+
+    if ((app_.site_data.pending || app_.site_data.clearing) &&
+        std::chrono::steady_clock::now() - app_.site_data.started > std::chrono::seconds(20)) {
+        ++app_.site_data.serial;
+        app_.site_data.pending = 0;
+        app_.site_data.clearing = false;
+        app_.site_data.error = app_.tr("Site data request timed out. Reopen this panel to retry.");
+        app_.changed();
+    }
     poll_wallpaper_picker();
     const auto now = std::chrono::steady_clock::now();
     const float dt = std::min(.1, std::chrono::duration<double>(now - last_tick_).count());
@@ -3522,6 +3635,17 @@ void BrowserUi::pointer(const PointerInput &input) {
         else
             start_scroll_ = std::clamp(start_scroll_ + (input.dy < 0 ? 64 : -64), 0,
                                        start_page_layout().maximum);
+        return;
+    }
+    if (input.kind == PointerInput::Wheel && panel_ == SiteData && data_picker_) {
+        const int count = int(data_sites().size()),
+                  capacity = std::max(1, (panel_bounds().height - 230) / 52);
+        data_scroll_ =
+            std::clamp(data_scroll_ + (input.dy < 0 ? 1 : -1), 0, std::max(0, count - capacity));
+        if (count)
+            data_selected_ = std::clamp(data_selected_, data_scroll_,
+                                        std::min(count - 1, data_scroll_ + capacity - 1));
+        app_.changed();
         return;
     }
     if (input.kind == PointerInput::Wheel && panel_ == Permissions) {
@@ -3768,6 +3892,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                 translation_pointer(r, x, y);
             else if (panel_ == Permissions)
                 permissions_pointer(r, x, y);
+            else if (panel_ == SiteData)
+                site_data_pointer(r, x, y);
         }
         return;
     }
@@ -3807,7 +3933,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                 {12, app_.tr(t && t->reader_active ? "Exit reader" : "Reader mode"),
                  t && t->browser && !t->ntp, "Ctrl+Alt+R"},
                 {13, app_.tr("Translate"), t && t->browser && !t->ntp, "Ctrl+Alt+T"},
-                {14, app_.tr("Site permissions"), true, "Ctrl+Alt+I"}};
+                {14, app_.tr("Site permissions"), true, "Ctrl+Alt+I"},
+                {15, app_.tr("Site data"), true, "Ctrl+Alt+D"}};
             app_.menu_width = 320;
             app_.menu_x = 16;
             app_.menu_y = 76;
@@ -3836,6 +3963,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                     open_translation(app_.current() && !app_.current()->selected_text.empty());
                 else if (command == 14)
                     open_permissions();
+                else if (command == 15)
+                    open_site_data();
                 else
                     app_.request_exit();
             };
@@ -5987,6 +6116,7 @@ std::vector<BrowserUi::CommandResult> BrowserUi::command_results() const {
         {"translate_page", "Translate page", "Ctrl+Alt+T", page},
         {"translate_selection", "Translate selection", "", page && !current->selected_text.empty()},
         {"permissions", "Site permissions", "Ctrl+Alt+I", true},
+        {"site_data", "Site data", "Ctrl+Alt+D", true},
         {"devtools", "Developer tools", "F12", page},
     };
     for (const auto &action : actions)
@@ -6145,6 +6275,8 @@ void BrowserUi::run_command(int index) {
         open_translation(true);
     else if (id == "permissions")
         open_permissions();
+    else if (id == "site_data")
+        open_site_data();
     else if (id == "devtools")
         app_.devtools();
     app_.changed();
@@ -6691,6 +6823,264 @@ std::string BrowserUi::permissions_report() const {
                    ",\"container\":" + std::to_string(sites[i].container) + ",\"bounds\":" +
                    rect({r.x + 20, r.y + 174 + (i - permissions_scroll_) * 52, r.width - 40, 48}) +
                    "}";
+        }
+    return out + "]}";
+}
+void BrowserUi::open_site_data() {
+    data_picker_ = data_search_focus_ = false;
+    data_selected_ = data_scroll_ = 0;
+    data_search_.set("");
+    app_.close_menu();
+    app_.open_site_data();
+    if (auto t = app_.current(); t && t->browser)
+        t->browser->GetHost()->SetFocus(false);
+}
+std::vector<std::string> BrowserUi::data_sites() const {
+    std::vector<std::string> result;
+    std::set<std::string> seen;
+    const auto query = fold_settings(data_search_.value);
+    const auto &data = app_.site_data;
+    auto add = [&](const std::string &url) {
+        const auto origin = permission_origin(url);
+        if (!origin.empty() && seen.insert(origin).second &&
+            (query.empty() || fold_settings(origin).find(query) != std::string::npos) &&
+            result.size() < 4096)
+            result.push_back(origin);
+    };
+    add(data.origin);
+    for (const auto *window : app_.state()->windows)
+        for (const auto &tab : window->tabs)
+            if (!tab->closing && tab->container == data.container &&
+                tab->private_tab == data.private_mode) {
+                add(tab->page.url);
+                for (const auto &[id, origin] : tab->protection_contexts)
+                    add(origin);
+            }
+    if (!data.private_mode) {
+        for (auto it = app_.profile.history.rbegin(); it != app_.profile.history.rend(); ++it)
+            add(it->url);
+        for (const auto &rule : app_.profile.site_permissions)
+            if (rule.container == data.container)
+                add(rule.origin);
+    }
+    return result;
+}
+void BrowserUi::draw_site_data(SkCanvas &c, Rect r) {
+    const auto &theme = interface_theme(app_.profile);
+    const auto &data = app_.site_data;
+    const bool busy = data.pending || data.clearing,
+               ready = !busy && valid_permission_origin(data.origin) && data.error.empty();
+    auto button = [&](Rect b, const std::string &text, bool enabled = true) {
+        if (enabled)
+            focus_target(b);
+        fill(c, b, 8, SkColorSetA(theme.accent, enabled && inside(b, hover_x_, hover_y_) ? 24 : 8));
+        border(c, b, 8, SkColorSetA(theme.accent, enabled ? 140 : 45));
+        centered_label(c, medium_, app_.tr(text), b, 12, enabled ? theme.text : theme.muted, 8, 8);
+    };
+    label(c, regular_,
+          app_.tr(data_picker_
+                      ? "Open and recent sites. This is not a complete disk inventory."
+                      : "Inspect storage in this container. Cookies are managed separately."),
+          r.x + 28, r.y + 73, 11, theme.muted, r.width - 56);
+    if (data_picker_) {
+        label(c, regular_, app_.tr("Search sites"), r.x + 28, r.y + 101, 11, theme.muted);
+        Rect input{r.x + 28, r.y + 112, r.width - 56, 36};
+        focus_target(input);
+        fill(c, input, 8, theme.background);
+        border(c, input, 8, SkColorSetA(theme.accent, data_search_focus_ ? 255 : 110));
+        draw_editor(c, data_search_, {input.x + 10, input.y + 2, input.width - 20, 32}, 13,
+                    data_search_focus_);
+        const auto sites = data_sites();
+        const int capacity = std::max(1, (r.height - 230) / 52);
+        data_scroll_ = std::clamp(data_scroll_, 0, std::max(0, int(sites.size()) - capacity));
+        if (sites.empty())
+            label(c, regular_, app_.tr("No matching sites. Open a website to inspect its data."),
+                  r.x + 28, r.y + 200, 13, theme.muted, r.width - 56);
+        for (int i = data_scroll_; i < int(sites.size()) && i < data_scroll_ + capacity; ++i) {
+            Rect row{r.x + 20, r.y + 166 + (i - data_scroll_) * 52, r.width - 40, 48};
+            focus_target(row);
+            if (data_search_focus_ && i == data_selected_) {
+                fill(c, row, 8, SkColorSetA(theme.accent, 20));
+                border(c, row, 8, theme.accent);
+            } else if (inside(row, hover_x_, hover_y_))
+                fill(c, row, 8, SkColorSetA(theme.accent, 16));
+            label(c, medium_, sites[i], row.x + 8, row.y + 29, 13, theme.text, row.width - 16);
+        }
+        if (int(sites.size()) > capacity) {
+            const int h = capacity * 52, thumb = std::max(24, h * capacity / int(sites.size()));
+            fill(c, {r.x + r.width - 13, r.y + 166, 3, h}, 1, SkColorSetA(theme.muted, 35));
+            fill(c,
+                 {r.x + r.width - 13,
+                  r.y + 166 + (h - thumb) * data_scroll_ / (int(sites.size()) - capacity), 3,
+                  thumb},
+                 1, theme.accent);
+        }
+        button({r.x + 28, r.y + r.height - 56, 132, 32}, "Back");
+        return;
+    }
+    label(c, medium_, data.origin.empty() ? app_.tr("No website selected") : data.origin, r.x + 28,
+          r.y + 102, 13, theme.text, r.width - 56);
+    label(c, regular_,
+          app_.profile.container_label(data.container) +
+              (data.private_mode ? " / " + app_.tr("Private browsing") : ""),
+          r.x + 28, r.y + 123, 10, theme.muted, r.width - 56);
+    button({r.x + 28, r.y + 134, 180, 30}, "Choose site", !busy);
+    const int half = (r.width - 72) / 2;
+    label(c, regular_, app_.tr("Storage estimate"), r.x + 28, r.y + 190, 12, theme.muted, half);
+    label(c, regular_, app_.tr("Matching cookies"), r.x + 44 + half, r.y + 190, 12, theme.muted,
+          half);
+    auto size = [](uint64_t n) {
+        char b[64];
+        if (n >= 1024 * 1024)
+            std::snprintf(b, sizeof(b), "%.1f MiB", double(n) / (1024 * 1024));
+        else if (n >= 1024)
+            std::snprintf(b, sizeof(b), "%.1f KiB", double(n) / 1024);
+        else
+            std::snprintf(b, sizeof(b), "%llu B", static_cast<unsigned long long>(n));
+        return std::string(b);
+    };
+    label(c, medium_,
+          busy ? app_.tr(data.clearing ? "Deleting..." : "Measuring...") : size(data.usage),
+          r.x + 28, r.y + 217, 20, theme.text, half);
+    label(c, medium_, busy ? app_.tr("Measuring...") : std::to_string(data.cookies),
+          r.x + 44 + half, r.y + 217, 20, theme.text, half);
+    const auto info = wrap_text(
+        font(regular_, 10),
+        app_.tr(
+            "Estimate covers quota-managed storage. Local storage and cookies are not included."),
+        r.width - 56, 2);
+    for (size_t i = 0; i < info.size(); ++i)
+        label(c, regular_, info[i], r.x + 28, r.y + 241 + int(i) * 15, 10, theme.muted,
+              r.width - 56);
+    const std::pair<const char *, const char *> types[] = {{"indexeddb", "Databases"},
+                                                           {"cache_storage", "Cache storage"},
+                                                           {"service_workers", "Service workers"},
+                                                           {"file_systems", "File storage"},
+                                                           {"other", "Other storage"}};
+    std::vector<std::pair<std::string, uint64_t>> rows;
+    uint64_t shown = 0;
+    for (const auto &[id, title] : types) {
+        const auto found = data.types.find(id);
+        const uint64_t amount = std::string(id) == "other"
+                                    ? (data.usage > shown ? data.usage - shown : 0)
+                                : found == data.types.end() ? 0
+                                                            : found->second;
+        shown += amount;
+        if (amount)
+            rows.emplace_back(title, amount);
+    }
+    const int capacity = std::max(1, (r.height - 469) / 26 + 1);
+    if (int(rows.size()) > capacity) {
+        uint64_t rest = 0;
+        for (size_t i = capacity - 1; i < rows.size(); ++i)
+            rest += rows[i].second;
+        rows.resize(capacity);
+        rows.back() = {"Other storage", rest};
+    }
+    int y = r.y + 279;
+    for (const auto &[title, amount] : rows) {
+        label(c, regular_, app_.tr(title), r.x + 28, y, 12, theme.text, r.width - 180);
+        label(c, regular_, size(amount), r.x + r.width - 150, y, 12, theme.muted, 122);
+        y += 26;
+    }
+    button({r.x + 28, r.y + r.height - 162, half, 34}, "Delete storage", ready);
+    button({r.x + 44 + half, r.y + r.height - 162, half, 34}, "Delete cookies", ready);
+    const std::string message =
+        !data.error.empty() ? data.error
+        : !data.message.empty()
+            ? data.message
+            : app_.tr(
+                  "Open pages can recreate data. Other containers and permissions are unchanged.");
+    const auto lines = wrap_text(font(regular_, 11), message, r.width - 56, 3);
+    for (size_t i = 0; i < lines.size(); ++i)
+        label(c, regular_, lines[i], r.x + 28, r.y + r.height - 103 + int(i) * 15, 11, theme.muted,
+              r.width - 56);
+    button({r.x + 28, r.y + r.height - 56, 132, 32}, "Refresh", !busy);
+    button({r.x + r.width - 160, r.y + r.height - 56, 132, 32}, "Close");
+}
+void BrowserUi::site_data_pointer(Rect r, int x, int y) {
+    auto inside = [&](Rect b) {
+        return x >= b.x && x < b.x + b.width && y >= b.y && y < b.y + b.height;
+    };
+    if (data_picker_) {
+        if (inside({r.x + 28, r.y + 112, r.width - 56, 36})) {
+            data_search_focus_ = true;
+            data_search_.select_all();
+            return;
+        }
+        if (inside({r.x + 28, r.y + r.height - 56, 132, 32})) {
+            data_picker_ = data_search_focus_ = false;
+            app_.changed();
+            return;
+        }
+        const auto sites = data_sites();
+        const int n = data_scroll_ + (y - r.y - 166) / 52, cap = std::max(1, (r.height - 230) / 52);
+        if (y >= r.y + 166 && y < r.y + 166 + cap * 52 && n >= 0 && n < int(sites.size())) {
+            data_picker_ = data_search_focus_ = false;
+            app_.site_data.message.clear();
+            app_.refresh_site_data(sites[n]);
+        }
+        return;
+    }
+    const bool busy = app_.site_data.pending || app_.site_data.clearing;
+    if (inside({r.x + r.width - 160, r.y + r.height - 56, 132, 32})) {
+        dismiss();
+        return;
+    }
+    if (busy)
+        return;
+    if (inside({r.x + 28, r.y + 134, 180, 30})) {
+        data_picker_ = data_search_focus_ = true;
+        data_search_.set("");
+        data_selected_ = data_scroll_ = 0;
+        app_.changed();
+        return;
+    }
+    if (inside({r.x + 28, r.y + r.height - 56, 132, 32})) {
+        app_.refresh_site_data();
+        return;
+    }
+    if (!app_.site_data.error.empty())
+        return;
+    const int half = (r.width - 72) / 2;
+    if (inside({r.x + 28, r.y + r.height - 162, half, 34}))
+        app_.clear_site_data(false);
+    else if (inside({r.x + 44 + half, r.y + r.height - 162, half, 34}))
+        app_.clear_site_data(true);
+}
+std::string BrowserUi::site_data_report() const {
+    if (panel_ != SiteData)
+        return "null";
+    const auto &data = app_.site_data;
+    const auto r = panel_bounds();
+    const int half = (r.width - 72) / 2;
+    auto rect = [](Rect b) {
+        return "[" + std::to_string(b.x) + "," + std::to_string(b.y) + "," +
+               std::to_string(b.width) + "," + std::to_string(b.height) + "]";
+    };
+    std::string out =
+        "{\"origin\":" + json_quote(data.origin) +
+        ",\"container\":" + std::to_string(data.container) +
+        ",\"private\":" + (data.private_mode ? "true" : "false") +
+        ",\"busy\":" + (data.pending || data.clearing ? "true" : "false") +
+        ",\"usage\":" + std::to_string(data.usage) +
+        ",\"cookies\":" + std::to_string(data.cookies) + ",\"error\":" + json_quote(data.error) +
+        ",\"message\":" + json_quote(data.message) +
+        ",\"picker\":" + (data_picker_ ? "true" : "false") +
+        ",\"query\":" + json_quote(data_search_.value) +
+        ",\"choose\":" + rect({r.x + 28, r.y + 134, 180, 30}) +
+        ",\"search\":" + rect({r.x + 28, r.y + 112, r.width - 56, 36}) +
+        ",\"storage_delete\":" + rect({r.x + 28, r.y + r.height - 162, half, 34}) +
+        ",\"cookies_delete\":" + rect({r.x + 44 + half, r.y + r.height - 162, half, 34}) +
+        ",\"refresh\":" + rect({r.x + 28, r.y + r.height - 56, 132, 32}) + ",\"sites\":[";
+    const auto sites = data_sites();
+    const int cap = std::max(1, (r.height - 230) / 52);
+    if (data_picker_)
+        for (int i = data_scroll_; i < int(sites.size()) && i < data_scroll_ + cap; ++i) {
+            if (i != data_scroll_)
+                out += ",";
+            out += "{\"origin\":" + json_quote(sites[i]) + ",\"bounds\":" +
+                   rect({r.x + 20, r.y + 166 + (i - data_scroll_) * 52, r.width - 40, 48}) + "}";
         }
     return out + "]}";
 }

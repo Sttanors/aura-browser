@@ -16,7 +16,7 @@
 | 8 | Режим чтения | Реализовано, Linux проверки PASS |
 | 9 | Перевод страниц и выделения | Реализовано, Linux/offline/live проверки PASS |
 | 10 | Центр разрешений сайта | Реализовано, Linux проверки PASS |
-| 11 | Панель данных сайтов | В очереди |
+| 11 | Панель данных сайтов | Реализовано, Linux проверки PASS |
 | 12 | Менеджер закладок | В очереди |
 | 13 | Снимки сессий | В очереди |
 | 14 | Скриншоты страницы | В очереди |
@@ -528,3 +528,64 @@ restart/default reset, searchable site picker и keyboard dropdown, RU 900×620 
 Установщики не изменены; Windows проверка этого checkpoint ещё не выполнена.
 
 Базовая browser GUI regression и offline translation/menu regression — PASS.
+
+## 11. План панели данных сайтов
+
+Продукт и аудитория те же. Задача: оценить дисковое хранилище выбранного сайта и
+удалить его данные, понимая, где это завершит вход в аккаунт. Контекст закреплён
+за исходной вкладкой: container/private не подменяются при переключении вкладок.
+Текущий origin и список открытых/недавних сайтов этого контекста; список не выдаётся
+за полный индекс диска. Quota estimate отдельно от cookies; localStorage не входит
+в quota estimate, но входит в очистку. Cookies имеют отдельное действие и пояснение
+про общие порты/родительские domain cookies.
+
+Дизайн gui-genius: те же 5 theme tokens и Inter 24/13/11, окно 900×620, выравнивание
+слева по 28 px. Header → origin/context → размер и типы → два понятных действия →
+status/refresh. Точный origin вместо неявного объединения поддоменов. Пример:
+[Данные сайта] [Выбрать сайт] / example.org / Контейнер: Работа /
+[Хранилище 1.2 MB] [Cookies 4] / [Удалить хранилище] [Удалить cookies].
+Никаких декоративных диаграмм: числа и последствия важнее визуального шума.
+Loading/error/empty/success, RU/EN и клавиатура; destructive confirmation называет
+origin и последствия. Нет сетевых запросов и чтения значений cookies в отчёт.
+Проверка: реальные IDB/cache/localStorage/cookies, разные origin/port/container/
+private, отмена удаления, повторный замер и восстановление после перезапуска.
+
+Windows CI 39908268381 для 4198e68 (пункт 10) — SUCCESS; перевод c4aba8f также прошёл Windows CI 39837402503. Пакеты релиза не заменялись.
+
+### 11. Реализация (финальные проверки выполняются)
+
+Ctrl+Alt+D, меню Aura и палитра команд открывают Site data. Scope закреплён за
+исходным tab id/container/private; запросы выполняются его DevTools session и
+request context, без fallback в default context. Picker читает открытые и недавние
+origins; он не навигирует страницу и не выдаёт список за полную инвентаризацию диска.
+
+Storage.getUsageAndQuota показывает quota-managed estimate и breakdown, с явным
+пояснением, что Local Storage/cookies в сумму не входят. Исправлен разбор int/double
+CEF JSON: целочисленный usage прежде ошибочно отображался нулём. Значения cookies
+не читаются: native visitor считает совпадающие domains, включая parent domain
+cookies; httpOnly/path/port не скрывают записи от очистки. Visitor delete + FlushStore
+завершаются до повторного замера. Подтверждение называет origin/context и последствия.
+
+Удаление хранилища использует Storage.clearDataForOrigin с отдельными storageTypes,
+исключая cookies и permissions; sessionStorage не обещается к удалению. Cookies
+удаляются отдельным действием и могут завершить вход на общих портах/поддоменах.
+Проверяются serial/lifetime/context, timeout 20 секунд и исчезновение исходной вкладки.
+Native confirmation меняет высоту по тексту, чтобы не обрезать последствия удаления.
+
+### 11. Финальная проверка
+
+104/104 CTest PASS. Native GUI PASS (2 запуска): quota estimate на несжимаемых
+синтетических данных; отмена обоих подтверждений сохраняет данные; удаление
+IDB/cache/localStorage/service worker для A сохраняет B другого порта и cookies.
+Отдельная очистка cookies удаляет host/path/HttpOnly записи на общих портах,
+сохраняет localhost другого host, container и private context. Private delete не
+затрагивает normal/container. Переключение вкладки при открытой панели не меняет
+её scope; picker не навигирует документ. Restart сохраняет remaining container
+storage и результаты удаления. Private URLs отсутствуют в profile/backup.
+
+RU 900×620, пустой поиск, keyboard picker, confirmation с переносами и полными
+последствиями просмотрены. Малый экран суммирует скрытые типы в «Прочие»; полный
+размер не теряется. Лишняя высота большой панели убрана. Permissions regression и
+command palette regression — PASS. Логи /tmp/aura-site-data-{build-final,ctest-final,
+gui-final,permissions-regression,commands-regression}.log. Checkpoint 11 завершён.
+Установщики не обновлялись; Windows CI для этого checkpoint ожидается после push.
