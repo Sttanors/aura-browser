@@ -856,3 +856,16 @@ history/settings, cookies/localStorage, профиль после uninstall PASS
 
 Debian-built native runtime: browser GUI и rendering full/page-only, dark/light,
 75–200%, device scale1/1.25 PASS. Подробности в docs/releases/0.4.0-preview.1-validation.md.
+
+### 0.4.0 Preview 1 — опубликовано
+
+23 октября 2026, 12:47 UTC: https://github.com/Sttanors/aura-browser/releases/tag/v0.4.0-preview.1
+Публичный prerelease, не draft. Тег указывает на 47f7098 (от f0f2398 отличаются только
+три документа); продуктовый код и все проверенные бинарники соответствуют f0f2398.
+В релизе ровно 16 assets: 7 сборок (.exe/.run/.deb/.rpm/.pkg.tar.gz и 2 portable ZIP),
+7 SHA-256 и 2 файла подписи канала. Без отдельных логотипов и дублированного source.zip.
+После публикации GitHub Actions 39956023363 SUCCESS: заново скачаны metadata/signature
+и все семь публичных бинарных assets; Ed25519, version/tag/sequence/expiry, size/SHA-256
+проверены. https://github.com/Sttanors/aura-browser/actions/runs/39956023363
+README RU/EN и двуязычные release notes с отметкой AI обновлены. Установщики теперь
+действительно содержат все 15 функций и CEF156; задача выпуска завершена.
