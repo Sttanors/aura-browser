@@ -17,7 +17,7 @@
 | 9 | Перевод страниц и выделения | Реализовано, Linux/offline/live проверки PASS |
 | 10 | Центр разрешений сайта | Реализовано, Linux проверки PASS |
 | 11 | Панель данных сайтов | Реализовано, Linux проверки PASS |
-| 12 | Менеджер закладок | В очереди |
+| 12 | Менеджер закладок | Реализовано, Linux проверки PASS |
 | 13 | Снимки сессий | В очереди |
 | 14 | Скриншоты страницы | В очереди |
 | 15 | Настраиваемые горячие клавиши | В очереди |
@@ -589,3 +589,66 @@ RU 900×620, пустой поиск, keyboard picker, confirmation с пере�
 command palette regression — PASS. Логи /tmp/aura-site-data-{build-final,ctest-final,
 gui-final,permissions-regression,commands-regression}.log. Checkpoint 11 завершён.
 Установщики не обновлялись; Windows CI для этого checkpoint ожидается после push.
+
+## 12. План менеджера закладок
+
+Задача: организовать сохранённые страницы и переносить их в другой браузер.
+Папки, теги, поиск по названию/адресу/тегам, выбор нескольких записей, перенос,
+назначение тегов, удаление с Undo, HTML export с native Save dialog. Существующие
+bookmarks мигрируют в «Без папки», import и адресные подсказки сохраняются.
+
+GUI-genius: те же theme tokens (background #0D111B, surface #182033, text #EDF3FF,
+muted #99A7C1, accent #A7B6FF), Inter 24/13/11, шаг 8/16/24. Один список вместо
+карточек: [Поиск] [Папка v] → [✓ название / адрес / теги] → [массовые действия] →
+[Новая папка] [Экспорт HTML]. Edit только по явной кнопке; поля с подписями и
+ошибкой возле формы. На узком экране прокручиваются строки, нижние действия видны.
+Primary — сохранить изменения в editor; разрушение заменяется доступным Undo.
+Не добавлять отдельный dashboard или декоративные счётчики.
+
+Profile schema 12, stable folder ids и metadata в Visit с defaults для старого
+формата. Export — Netscape HTML, escaped text/attributes, только безопасные HTTP(S)
+адреса. Native Save + atomic replacement сохраняет предыдущий файл при ошибке.
+Проверка: migration/round trip/escaping/limits, настоящие UI search/edit/folder/bulk/
+undo/save chooser, restart, RU/EN и импорт экспортированного HTML обратно.
+
+### 12. Реализация (финальная проверка впереди)
+
+Profile schema 12 хранит stable folder ids/counter и tags; старые записи остаются
+в «Без папки». Менеджер заменяет прежний простой список: RU/EN token search,
+редактирование title/HTTP(S)/folder/tags, searchable folder picker без обрезания
+большого каталога, выбор скрытых строк, bulk move/tag/delete и Undo. Undo вставляет
+удалённые записи в прежние позиции, сохраняет сторонние изменения и не заменяет
+уже существующий URL; удалённая позже папка заменяется Unfiled при восстановлении.
+Поиск кешируется по shared profile revision, query и folder, не сканируя весь
+каталог при каждом кадре; изменения из другого окна инвалидируют кеш.
+
+Native Save: Windows GetSaveFileNameW / Linux zenity, отдельный cancel/error/success,
+UTF-8 paths. Atomic export пишет новый temp O_EXCL/0600 и flush/replace, прежний файл
+не обрезается при ошибке. Netscape HTML экранирует HREF/title/folder/tags и не
+экспортирует исполняемые схемы. HTML import восстанавливает folders/tags, вложенные
+папки уплощаются в названия путей; imported ids сопоставляются local catalog.
+110/110 CTest PASS на первом проходе: migration, limits, RU tags, metadata restart,
+HTML safety/round trip/nested folders и atomic binary overwrite/failure.
+Первый GUI прошёл edit/validation, folders/bulk/undo, реальный Save cancel и HTML
+export/restart, но выявил перехват Escape полем поиска; исправлено до финальной
+проверки. Полные RU/EN screenshots получены, итоговая проверка ещё не завершена.
+
+Windows build/CTest пункта 11 прошли; integration 39910494609 упал на transient sharing violation при чтении atomic QA report (KeyError пустого dict). Отдельный 6111f3d сохраняет last complete report в Windows smoke reader; повторный CI запущен автоматически.
+
+### 12. Финальная проверка
+
+110/110 CTest PASS. GUI PASS, 2 запуска: RU uppercase search и tags, editor с
+отказом javascript URL, folder create/rename/remove, keyboard folder picker,
+выбор всех 19 отфильтрованных записей включая скрытые, bulk move/tag/delete/Undo,
+сохранение порядка после Undo, native Save cancel и UTF-8 HTML filename, escaped
+markup и полные metadata после restart. Private страницы не попадают в bookmarks
+автоматически и не сохраняются в profile/backup. RU 900×620 просмотрен: фиксированные
+подписи не обрезаются; bulk geometry общая для draw/pointer/report и сжимается по
+ширине. Лишние карточки/счётчики не добавлены. Исправлены Escape и selection/scroll
+папок, чтобы клавиатура работала и в коротком списке.
+
+Import GUI regression, базовый browser GUI regression и command palette regression
+PASS. Логи /tmp/aura-bookmarks-{build-final,ctest-final,gui-final,import-regression,
+browser-regression,commands-regression}.log. Checkpoint 12 завершён. README RU/EN
+описывают менеджер; устаревшее точное число настроек заменено описанием разделов.
+Установщики не заменялись; Windows проверка пункта 12 ожидается после push.

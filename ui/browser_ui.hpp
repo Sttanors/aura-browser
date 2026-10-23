@@ -73,6 +73,8 @@ class BrowserUi {
     std::string permissions_report() const;
     void open_site_data();
     std::string site_data_report() const;
+    void save_export(std::string payload, const std::string &filename, const std::string &filter);
+    std::string bookmarks_report() const;
     std::string sidebar_report() const;
     void passwords_locked() {
         clear_password_fields();
@@ -91,6 +93,31 @@ class BrowserUi {
 
   private:
     BrowserController &app_;
+    TextEditor bookmark_search_, bookmark_title_, bookmark_url_, bookmark_tags_,
+        bookmark_folder_name_;
+    int bookmark_mode_ = 0, bookmark_focus_ = -1, bookmark_filter_ = -1, bookmark_edit_folder_ = 0;
+    int bookmark_scroll_ = 0, bookmark_folder_action_ = 0, bookmark_folder_selected_ = 0;
+    std::vector<int> bookmark_folder_results() const;
+    void choose_bookmark_folder(int id);
+    std::string bookmark_edit_url_, bookmark_error_, bookmark_previous_query_;
+    std::set<std::string> bookmark_selection_;
+    std::vector<Visit> bookmark_undo_;
+    std::vector<size_t> bookmark_undo_positions_;
+    bool bookmark_can_undo_ = false;
+    std::string save_payload_, save_error_, last_export_;
+    bool picker_save_ = false;
+    void finish_export(const std::string &path);
+    mutable std::vector<size_t> bookmark_matches_;
+    mutable uint64_t bookmark_result_revision_ = ~uint64_t{0};
+    mutable int bookmark_result_filter_ = -999;
+    mutable std::string bookmark_result_query_;
+    const std::vector<size_t> &bookmark_results() const;
+    void draw_bookmarks(SkCanvas &, Rect);
+    void bookmarks_pointer(Rect, int, int);
+    void bookmark_folder_menu(bool move = false, bool edit = false);
+    void save_bookmark_edit();
+    void bookmark_snapshot();
+    std::array<Rect, 5> bookmark_actions(Rect) const;
     bool data_picker_ = false, data_search_focus_ = false;
     int data_selected_ = 0, data_scroll_ = 0;
     TextEditor data_search_;

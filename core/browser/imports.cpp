@@ -10,6 +10,7 @@
 #include <ctime>
 #include <fstream>
 #include <functional>
+#include <map>
 #include <openssl/rand.h>
 #include <sqlite3.h>
 #include <unordered_set>
@@ -76,7 +77,8 @@ struct Reader {
     std::unordered_set<std::string> bookmarks, history;
     size_t scanned = 0;
     size_t decoded_bytes = 0;
-    void add(std::vector<Visit> &target, std::string url, std::string title, long long time) {
+    void add(std::vector<Visit> &target, std::string url, std::string title, long long time,
+             int folder = 0, std::vector<std::string> tags = {}) {
         budget.check();
         if (++scanned > 4 * record_limit)
             throw std::runtime_error("Too many records. Export a smaller selection and try again.");
@@ -90,7 +92,10 @@ struct Reader {
             return;
         }
         title = title.empty() ? url : title_text(std::move(title));
-        if (decoded_bytes + url.size() + title.size() > 64 * 1024 * 1024) {
+        size_t metadata = 0;
+        for (const auto &tag : tags)
+            metadata += tag.size();
+        if (decoded_bytes + url.size() + title.size() + metadata > 64 * 1024 * 1024) {
             data.limited = true;
             return;
         }
@@ -99,8 +104,8 @@ struct Reader {
             ++data.duplicates;
             return;
         }
-        decoded_bytes += url.size() + title.size();
-        target.push_back({std::move(url), std::move(title), time});
+        decoded_bytes += url.size() + title.size() + metadata;
+        target.push_back({std::move(url), std::move(title), time, folder, std::move(tags)});
     }
 };
 std::string entities(std::string_view text) {
@@ -168,22 +173,28 @@ bool space(char c) {
 }
 void read_html(Reader &r, const std::string &text) {
     r.data.source = "Bookmarks HTML";
-    std::string url, title;
+    std::string url, title, heading, pending_folder;
+    std::vector<int> folders;
+    std::vector<std::string> tags;
+    int link_folder = 0;
     long long date = 0;
-    bool anchor = false;
+    bool anchor = false, in_heading = false;
     auto finish = [&] {
         if (anchor)
-            r.add(r.data.bookmarks, entities(url), entities(title), date);
+            r.add(r.data.bookmarks, entities(url), entities(title), date, link_folder, tags);
         anchor = false;
         url.clear();
         title.clear();
         date = 0;
+        tags.clear();
     };
     for (size_t pos = 0; pos < text.size();) {
         r.budget.check();
         auto start = text.find('<', pos);
         if (start == std::string::npos)
             start = text.size();
+        if (in_heading && heading.size() < 4096)
+            heading.append(text, pos, std::min(start - pos, 4096 - heading.size()));
         if (anchor && title.size() < 4096)
             title.append(text, pos, std::min(start - pos, 4096 - title.size()));
         if (start == text.size())
@@ -223,6 +234,50 @@ void read_html(Reader &r, const std::string &text) {
             pos = static_cast<size_t>(found - text.begin());
             continue;
         }
+        if (name == "h3") {
+            if (closing) {
+                pending_folder = title_text(entities(heading));
+                in_heading = false;
+            } else {
+                finish();
+                heading.clear();
+                in_heading = true;
+            }
+            continue;
+        }
+        if (name == "dl") {
+            if (closing) {
+                if (!folders.empty())
+                    folders.pop_back();
+            } else {
+                int id = folders.empty() ? 0 : folders.back();
+                if (!pending_folder.empty()) {
+                    std::string path;
+                    for (const auto &f : r.data.bookmark_folders)
+                        if (f.id == id)
+                            path = f.name + " / ";
+                    path += pending_folder;
+                    if (path.size() <= 120 && r.data.bookmark_folders.size() < 128) {
+                        auto found = std::find_if(r.data.bookmark_folders.begin(),
+                                                  r.data.bookmark_folders.end(),
+                                                  [&](const auto &f) { return f.name == path; });
+                        if (found == r.data.bookmark_folders.end()) {
+                            id = int(r.data.bookmark_folders.size()) + 1;
+                            r.data.bookmark_folders.push_back({id, path});
+                        } else
+                            id = found->id;
+                    } else {
+                        id = 0;
+                        r.data.limited = true;
+                    }
+                    pending_folder.clear();
+                }
+                if (folders.size() >= 128)
+                    throw std::runtime_error("Bookmarks folder nesting is too deep");
+                folders.push_back(id);
+            }
+            continue;
+        }
         if (name != "a")
             continue;
         if (closing) {
@@ -231,6 +286,7 @@ void read_html(Reader &r, const std::string &text) {
         }
         finish();
         anchor = true;
+        link_folder = folders.empty() ? 0 : folders.back();
         size_t p = name_end;
         while (p < tag.size()) {
             while (p < tag.size() && space(tag[p]))
@@ -255,6 +311,9 @@ void read_html(Reader &r, const std::string &text) {
             auto value = tag.substr(begin, p - begin);
             if (q && p < tag.size())
                 ++p;
+            if (key == "tags")
+                if (auto parsed = bookmark_tags(entities(value)))
+                    tags = std::move(*parsed);
             if (key == "href")
                 url = std::string(value);
             if (key == "add_date")
@@ -510,6 +569,19 @@ BrowserImportResult apply_browser_import(Profile &profile, const BrowserImportDa
     std::unordered_set<std::string> previous_history;
     for (const auto &v : profile.history)
         previous_history.insert(v.url);
+    std::map<int, int> folder_map{{0, 0}};
+    if (bookmarks)
+        for (const auto &folder : data.bookmark_folders) {
+            if (folder.id <= 0)
+                continue;
+            auto found =
+                std::find_if(updated.bookmark_folders.begin(), updated.bookmark_folders.end(),
+                             [&](const auto &f) { return f.name == folder.name; });
+            const int id = found == updated.bookmark_folders.end()
+                               ? updated.add_bookmark_folder(folder.name)
+                               : found->id;
+            folder_map[folder.id] = std::max(0, id);
+        }
     auto merge = [&](std::vector<Visit> &target, const std::vector<Visit> &source, size_t &count) {
         std::unordered_set<std::string> seen;
         for (const auto &v : target) {
@@ -518,7 +590,12 @@ BrowserImportResult apply_browser_import(Profile &profile, const BrowserImportDa
         }
         for (const auto &v : source)
             if (seen.insert(v.url).second) {
-                target.push_back(v);
+                auto copy = v;
+                if (&target == &updated.bookmarks) {
+                    auto found = folder_map.find(v.folder);
+                    copy.folder = found == folder_map.end() ? 0 : found->second;
+                }
+                target.push_back(std::move(copy));
                 ++count;
             } else
                 ++result.duplicates;

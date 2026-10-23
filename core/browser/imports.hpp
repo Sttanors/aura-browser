@@ -7,6 +7,7 @@ namespace aura {
 struct BrowserImportData {
     std::string source;
     std::vector<Visit> bookmarks, history;
+    std::vector<BookmarkFolder> bookmark_folders;
     size_t skipped = 0, duplicates = 0;
     bool limited = false;
 };

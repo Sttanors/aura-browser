@@ -14,7 +14,15 @@ std::string url_host(const std::string &url);
 struct Visit {
     std::string url, title;
     long long time = 0;
+    int folder = 0;
+    std::vector<std::string> tags;
 };
+struct BookmarkFolder {
+    int id = 0;
+    std::string name;
+};
+std::optional<std::vector<std::string>> bookmark_tags(const std::string &text);
+std::string bookmarks_html(const std::vector<Visit> &, const std::vector<BookmarkFolder> &);
 struct Shortcut {
     std::string title, url;
 };
@@ -55,6 +63,15 @@ class Profile : public BrowserPreferences {
     std::string profiles_root;
     std::vector<SitePermission> site_permissions;
     std::vector<Visit> history, bookmarks;
+    std::vector<BookmarkFolder> bookmark_folders;
+    int next_bookmark_folder = 1;
+    bool has_bookmark_folder(int id) const;
+    std::string bookmark_folder_label(int id) const;
+    int add_bookmark_folder(std::string name, int assigned_id = 0);
+    bool rename_bookmark_folder(int id, std::string name);
+    bool remove_bookmark_folder(int id);
+    bool edit_bookmark(const std::string &old_url, std::string title, std::string url, int folder,
+                       const std::string &tags);
     std::vector<SavedTab> session;
     std::vector<SavedWindow> windows;
     std::vector<Workspace> workspaces{{0, "Personal space"}};

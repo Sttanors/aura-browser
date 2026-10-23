@@ -410,6 +410,7 @@ void BrowserController::changed(bool persistent) {
         if (other->window)
             other->window->invalidate();
     if (persistent) {
+        ++state_->profile_revision;
         needs_save_ = true;
         save_at_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(350);
     }
@@ -1245,6 +1246,7 @@ std::string BrowserController::report() const {
         << ",\"tabs\":" << (quit_snapshot_.empty() ? tabs_json(tabs) : quit_snapshot_)
         << ",\"profile_name\":" << json_quote(profile_name())
         << ",\"profile_directory\":" << json_quote(utf8_path(profile.directory))
+        << ",\"bookmarks_ui\":" << ui->bookmarks_report()
         << ",\"site_data_ui\":" << ui->site_data_report()
         << ",\"permissions_ui\":" << ui->permissions_report()
         << ",\"translation_ui\":" << ui->translation_report()

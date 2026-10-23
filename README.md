@@ -122,9 +122,11 @@ with full WebGL rendering unverified.
 
 ## Settings and customization
 
-Open **Settings** from the sidebar or the toolbar gear. There are **87 settings in ten categories**,
+Open **Settings** from the sidebar or the toolbar gear. Settings are organized into **ten categories**,
 searchable by English or Russian names/descriptions. **Ctrl F** focuses settings search.
 **General → Interface language** switches between English and Russian immediately; website text is unaffected.
+
+The **bookmark manager** (Ctrl B) adds folders, tags, search and bulk move/tag/delete with undo. **Export all as HTML** opens a Save dialog; HTML imports restore folders and tags. Save the current page with Ctrl D.
 
 The **site data panel** (Ctrl Alt D) estimates quota-managed storage for an origin in the selected container. Delete its local storage, databases, caches and service workers separately from cookies; cookie deletion can sign you out across shared ports and subdomains. Open pages may recreate data.
 

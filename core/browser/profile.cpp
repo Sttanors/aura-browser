@@ -296,6 +296,21 @@ void Profile::load() {
     session_clean = table["session_clean"].value_or(true);
     history.clear();
     bookmarks.clear();
+    bookmark_folders.clear();
+    next_bookmark_folder = 1;
+    if (auto rows = table["bookmark_folders"].as_array())
+        for (const auto &node : *rows) {
+            if (bookmark_folders.size() >= 128)
+                break;
+            if (auto row = node.as_table()) {
+                const int id = (*row)["id"].value_or(0);
+                auto name = (*row)["name"].value_or(std::string{});
+                if (id > 0)
+                    add_bookmark_folder(name, id);
+            }
+        }
+    next_bookmark_folder = std::max(
+        next_bookmark_folder, std::clamp(table["next_bookmark_folder"].value_or(1), 1, 1000001));
     session.clear();
     windows.clear();
     auto read = [&](const char *key, std::vector<Visit> &target) {
@@ -303,9 +318,31 @@ void Profile::load() {
             for (auto &node : *a)
                 if (auto t = node.as_table()) {
                     auto url = (*t)["url"].value_or(std::string{});
-                    if (!url.empty())
-                        target.push_back(
-                            {url, (*t)["title"].value_or(url), (*t)["time"].value_or(0LL)});
+                    if (!url.empty()) {
+                        Visit visit{url, (*t)["title"].value_or(url), (*t)["time"].value_or(0LL)};
+                        if (std::string_view(key) == "bookmarks") {
+                            const int folder = (*t)["folder"].value_or(0);
+                            visit.folder = has_bookmark_folder(folder) ? folder : 0;
+                            if (auto tags = (*t)["tags"].as_array()) {
+                                std::string input;
+                                bool valid = true;
+                                for (const auto &node : *tags)
+                                    if (auto tag = node.value<std::string>()) {
+                                        if (input.size() + tag->size() + 1 > 4096) {
+                                            valid = false;
+                                            break;
+                                        }
+                                        if (!input.empty())
+                                            input += ",";
+                                        input += *tag;
+                                    }
+                                if (valid)
+                                    if (auto parsed = bookmark_tags(input))
+                                        visit.tags = std::move(*parsed);
+                            }
+                        }
+                        target.push_back(std::move(visit));
+                    }
                 }
     };
     read("history", history);
@@ -383,7 +420,12 @@ void Profile::load() {
 }
 void Profile::save() const {
     toml::table root;
-    root.insert("schema", 11);
+    root.insert("schema", 12);
+    toml::array folders;
+    for (const auto &f : bookmark_folders)
+        folders.push_back(toml::table{{"id", f.id}, {"name", f.name}});
+    root.insert("bookmark_folders", std::move(folders));
+    root.insert("next_bookmark_folder", next_bookmark_folder);
     toml::array permissions;
     for (const auto &rule : site_permissions)
         permissions.push_back(toml::table{{"origin", rule.origin},
@@ -419,10 +461,19 @@ void Profile::save() const {
     root.insert("session_clean", session_clean);
     for (const auto &setting : settings_catalog())
         std::visit([&](auto member) { root.insert(setting.id, this->*member); }, setting.member);
-    auto list = [](const std::vector<Visit> &values) {
+    auto list = [](const std::vector<Visit> &values, bool metadata = false) {
         toml::array result;
-        for (auto &v : values)
-            result.push_back(toml::table{{"url", v.url}, {"title", v.title}, {"time", v.time}});
+        for (auto &v : values) {
+            toml::table row{{"url", v.url}, {"title", v.title}, {"time", v.time}};
+            if (metadata) {
+                row.insert("folder", v.folder);
+                toml::array tags;
+                for (const auto &tag : v.tags)
+                    tags.push_back(tag);
+                row.insert("tags", std::move(tags));
+            }
+            result.push_back(std::move(row));
+        }
         return result;
     };
     toml::array links;
@@ -430,7 +481,7 @@ void Profile::save() const {
         links.push_back(toml::table{{"title", s.title}, {"url", s.url}});
     root.insert("shortcuts", std::move(links));
     root.insert("history", list(history));
-    root.insert("bookmarks", list(bookmarks));
+    root.insert("bookmarks", list(bookmarks, true));
     toml::array tabs;
     for (auto &t : session)
         tabs.push_back(toml::table{{"url", t.url},

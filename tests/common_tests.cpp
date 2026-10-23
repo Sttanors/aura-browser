@@ -1,5 +1,6 @@
 #include "aura/design_tokens.hpp"
 #include "common/config.hpp"
+#include "common/exports.hpp"
 #include "common/file_lock.hpp"
 #include "common/geometry.hpp"
 #include "common/paint_buffer.hpp"
@@ -1072,4 +1073,90 @@ TEST(Permissions, MalformedOrFutureNamespaceRowsCannotBecomeDefaultProfileGrants
     ASSERT_EQ(profile.site_permissions.size(), 1u);
     EXPECT_EQ(profile.site_permissions[0].origin, "https://good.test");
     EXPECT_EQ(profile.site_permissions[0].value, "block");
+}
+
+TEST(Bookmarks, FolderIdsTagsAndMetadataSurviveRestartAndRemoval) {
+    TemporaryProfile temp;
+    Profile p(temp.path);
+    const int folder = p.add_bookmark_folder("  Работа  ");
+    ASSERT_GT(folder, 0);
+    EXPECT_EQ(p.add_bookmark_folder("работа"), -1);
+    EXPECT_EQ(p.add_bookmark_folder("Unfiled"), -1);
+    EXPECT_EQ(p.add_bookmark_folder("Все папки"), -1);
+    p.toggle_bookmark("https://book.test/a?x=1&y=2", "Initial");
+    ASSERT_TRUE(p.edit_bookmark("https://book.test/a?x=1&y=2", "Статья",
+                                "https://book.test/a?x=1&y=2", folder,
+                                "work, Работа, работа, work, C++"));
+    EXPECT_EQ(p.bookmarks[0].tags, (std::vector<std::string>{"work", "Работа", "C++"}));
+    p.save();
+    Profile restored(temp.path);
+    ASSERT_EQ(restored.bookmarks.size(), 1);
+    EXPECT_EQ(restored.bookmarks[0].folder, folder);
+    EXPECT_EQ(restored.bookmarks[0].tags, p.bookmarks[0].tags);
+    EXPECT_TRUE(restored.rename_bookmark_folder(folder, "Учёба"));
+    EXPECT_TRUE(restored.remove_bookmark_folder(folder));
+    EXPECT_EQ(restored.bookmarks[0].folder, 0);
+    restored.save();
+    Profile next(temp.path);
+    EXPECT_GT(next.add_bookmark_folder("Next"), folder);
+}
+TEST(Bookmarks, OldFormatUnknownFoldersAndLimitsAreHandledWithoutLosingUrls) {
+    TemporaryProfile temp;
+    {
+        std::ofstream f(temp.path / "profile.toml");
+        f << "schema=11\n[[bookmarks]]\nurl='https://legacy.test/"
+             "'\ntitle='Legacy'\nfolder=999\ntags=['one', 'two']\n";
+    }
+    Profile p(temp.path);
+    ASSERT_EQ(p.bookmarks.size(), 1);
+    EXPECT_EQ(p.bookmarks[0].folder, 0);
+    EXPECT_EQ(p.bookmarks[0].tags.size(), 2);
+    EXPECT_FALSE(p.edit_bookmark("https://legacy.test/", "Title", "javascript:alert(1)", 0, ""));
+    EXPECT_FALSE(p.edit_bookmark("https://legacy.test/", "Title", "https://valid.test/", 999, ""));
+    EXPECT_FALSE(bookmark_tags(std::string(81, 'x')));
+    std::string tags;
+    for (int i = 0; i < 33; ++i)
+        tags += std::to_string(i) + ",";
+    EXPECT_FALSE(bookmark_tags(tags));
+    EXPECT_EQ(bookmark_tags("ЁЖ, ёж")->size(), 1);
+    for (int i = 0; i < 128; ++i)
+        ASSERT_GT(p.add_bookmark_folder("Folder " + std::to_string(i)), 0);
+    EXPECT_EQ(p.add_bookmark_folder("One more"), -1);
+    EXPECT_FALSE(p.rename_bookmark_folder(0, "Root"));
+}
+TEST(Bookmarks, ExportEscapesEveryHtmlContextAndExcludesExecutableSchemes) {
+    const std::vector<Visit> links = {{"https://example.test/?q=\"<x>&y='ok'",
+                                       "<script>alert(1)</script>",
+                                       0,
+                                       7,
+                                       {"\"tag\"", "A&B"}},
+                                      {"javascript:alert(1)", "Unsafe", 0},
+                                      {"https://orphan.test/", "Orphan", 0, 999, {}}};
+    const auto html = bookmarks_html(links, {{7, "<Work & \"stuff\">"}});
+    EXPECT_NE(html.find("&lt;script&gt;"), std::string::npos);
+    EXPECT_NE(html.find("&quot;&lt;x&gt;&amp;y=&#39;ok&#39;"), std::string::npos);
+    EXPECT_NE(html.find("TAGS=\"&quot;tag&quot;,A&amp;B\""), std::string::npos);
+    EXPECT_EQ(html.find("javascript:"), std::string::npos);
+    EXPECT_EQ(html.find("<script>"), std::string::npos);
+    EXPECT_NE(html.find("https://orphan.test/"), std::string::npos);
+}
+TEST(Exports, AtomicBinaryOverwriteAndFailurePreserveChosenFile) {
+    TemporaryProfile temp;
+    const auto path = temp.path / path_from_utf8("Экспорт.html");
+    write_export(path, "old");
+    const std::string binary("PNG\0bytes", 9);
+    write_export(path, binary);
+    std::ifstream f(path, std::ios::binary);
+    const std::string contents((std::istreambuf_iterator<char>(f)), {});
+    EXPECT_EQ(contents, binary);
+    f.close();
+    EXPECT_THROW(write_export(temp.path, "replacement"), std::exception);
+    EXPECT_TRUE(std::filesystem::exists(path));
+    size_t files = 0;
+    for (const auto &entry : std::filesystem::directory_iterator(temp.path)) {
+        ++files;
+        EXPECT_FALSE(entry.path().filename().string().starts_with(".aura-export-"));
+    }
+    EXPECT_EQ(files, 1);
+    EXPECT_THROW(write_export("relative.html", "x"), std::exception);
 }

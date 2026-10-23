@@ -113,6 +113,7 @@ struct WindowRequest {
 struct BrowserState {
     explicit BrowserState(const std::filesystem::path &path);
     Profile profile;
+    uint64_t profile_revision = 0;
     ProfileCatalog profiles;
     std::vector<SitePermission> private_site_permissions;
     bool private_permissions_initialized = false;

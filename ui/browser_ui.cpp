@@ -2,6 +2,7 @@
 #include "aura/design_tokens.hpp"
 #include "common/branding_data.hpp"
 #include "common/config.hpp"
+#include "common/exports.hpp"
 #include "common/platform.hpp"
 #include "common/update_key.hpp"
 #include "core/browser/translation.hpp"
@@ -31,6 +32,7 @@
 #include <fstream>
 #include <map>
 #include <sstream>
+#include <tuple>
 #ifndef _WIN32
 #include <fcntl.h>
 #include <signal.h>
@@ -380,6 +382,7 @@ Rect BrowserUi::panel_bounds() const {
                            : panel_ == Groups      ? 900
                            : panel_ == Containers  ? 900
                            : panel_ == Commands    ? 900
+                           : panel_ == Bookmarks   ? 900
                            : panel_ == SiteData    ? 900
                            : panel_ == Permissions ? 900
                            : panel_ == Translation ? 900
@@ -824,7 +827,9 @@ void BrowserUi::draw(SkCanvas &c) {
                                       app_.tr("Site data")};
         label(c, medium_, titles[panel_], r.x + 28, r.y + 47, 23, ink);
         icon(c, "close", r.x + r.width - 43, r.y + 26, 19, muted);
-        if (panel_ == History || panel_ == Bookmarks) {
+        if (panel_ == Bookmarks)
+            draw_bookmarks(c, r);
+        if (panel_ == History) {
             auto &list = panel_ == History ? app_.profile.history : app_.profile.bookmarks;
             std::string info = panel_ == History
                                    ? app_.tr("Your recent places, stored on this device.")
@@ -1434,6 +1439,111 @@ bool BrowserUi::import_wallpaper(const std::string &value) {
 void BrowserUi::choose_wallpaper() {
     choose_file(false);
 }
+void BrowserUi::finish_export(const std::string &path) {
+    try {
+        write_export(path_from_utf8(path), save_payload_);
+        last_export_ = path;
+        save_error_.clear();
+        ++app_.audit["exports_saved"];
+        toast(app_.tr("Export saved"));
+    } catch (...) {
+        save_error_ = app_.tr("Could not save the export. Check the path and permissions.");
+        toast(save_error_);
+    }
+    save_payload_.clear();
+    app_.changed();
+}
+void BrowserUi::save_export(std::string payload, const std::string &filename,
+                            const std::string &filter) {
+#ifndef _WIN32
+    if (picker_pid_ > 0)
+        return;
+#endif
+    save_payload_ = std::move(payload);
+    save_error_.clear();
+    last_export_.clear();
+    auto directory = app_.profile.download_directory.empty()
+                         ? app_.profile.directory / "downloads"
+                         : path_from_utf8(app_.profile.download_directory);
+    std::error_code ec;
+    std::filesystem::create_directories(directory, ec);
+#ifdef _WIN32
+    std::wstring file(32768, L'\0');
+    const auto initial = (directory / path_from_utf8(filename)).wstring();
+    std::copy(initial.begin(), initial.end(), file.begin());
+    const auto title = CefString(app_.tr("Save export")).ToWString();
+    const auto extension = path_from_utf8(filename).extension().wstring();
+    OPENFILENAMEW dialog{};
+    dialog.lStructSize = sizeof(dialog);
+    dialog.hwndOwner = app_.window->handle();
+    dialog.lpstrFilter = L"All files\0*.*\0\0";
+    dialog.lpstrFile = file.data();
+    dialog.nMaxFile = DWORD(file.size());
+    dialog.lpstrTitle = title.c_str();
+    dialog.lpstrDefExt = extension.empty() ? nullptr : extension.c_str() + 1;
+    dialog.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_EXPLORER;
+    if (GetSaveFileNameW(&dialog)) {
+        file.resize(wcslen(file.c_str()));
+        finish_export(utf8_path(std::filesystem::path(file)));
+    } else {
+        save_payload_.clear();
+        if (CommDlgExtendedError()) {
+            save_error_ = app_.tr("Could not open the save dialog.");
+            toast(save_error_);
+        }
+    }
+#else
+    int pipes[2];
+    if (pipe2(pipes, O_CLOEXEC | O_NONBLOCK)) {
+        save_payload_.clear();
+        save_error_ = app_.tr("Could not open the save dialog.");
+        toast(save_error_);
+        return;
+    }
+    std::vector<std::string> args = {"env",
+                                     "GDK_BACKEND=x11",
+                                     "GSK_RENDERER=cairo",
+                                     "GTK_USE_PORTAL=0",
+                                     "LIBGL_ALWAYS_SOFTWARE=1",
+                                     "zenity",
+                                     "--file-selection",
+                                     "--save",
+                                     "--confirm-overwrite",
+                                     "--modal",
+                                     "--title=" + app_.tr("Save export"),
+                                     "--file-filter=" + filter,
+                                     "--file-filter=" + app_.tr("All files") + " | *",
+                                     "--filename=" +
+                                         utf8_path(directory / path_from_utf8(filename))};
+    std::vector<char *> argv;
+    for (auto &arg : args)
+        argv.push_back(arg.data());
+    argv.push_back(nullptr);
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_adddup2(&actions, pipes[1], STDOUT_FILENO);
+    posix_spawn_file_actions_addclose(&actions, pipes[0]);
+    posix_spawn_file_actions_addclose(&actions, pipes[1]);
+    pid_t child;
+    const int status = posix_spawnp(&child, "env", &actions, nullptr, argv.data(), environ);
+    posix_spawn_file_actions_destroy(&actions);
+    close(pipes[1]);
+    if (status) {
+        close(pipes[0]);
+        save_payload_.clear();
+        save_error_ = app_.tr("Could not open the save dialog.");
+        toast(save_error_);
+        return;
+    }
+    picker_pid_ = child;
+    picker_fd_ = pipes[0];
+    picker_save_ = true;
+    picker_import_ = picker_filters_ = false;
+    picker_output_.clear();
+    keyboard_focus_ = -1;
+#endif
+    app_.changed();
+}
 void BrowserUi::choose_file(bool for_import, bool for_filters) {
     if (for_filters && app_.filter_lists().busy())
         return;
@@ -1524,6 +1634,7 @@ void BrowserUi::choose_file(bool for_import, bool for_filters) {
         toast(app_.tr(error_text));
         return;
     }
+    picker_save_ = false;
     picker_pid_ = child;
     picker_import_ = for_import;
     picker_filters_ = for_filters;
@@ -1557,7 +1668,9 @@ void BrowserUi::poll_wallpaper_picker() {
                (picker_output_.back() == '\n' || picker_output_.back() == '\r'))
             picker_output_.pop_back();
         if (!picker_output_.empty()) {
-            if (picker_filters_)
+            if (picker_save_)
+                finish_export(picker_output_);
+            else if (picker_filters_)
                 app_.filter_lists().import_custom(path_from_utf8(picker_output_));
             else if (picker_import_) {
                 import_input_.set(picker_output_);
@@ -1568,11 +1681,14 @@ void BrowserUi::poll_wallpaper_picker() {
         }
         settings_error_.clear();
     } else if (!WIFEXITED(status) || WEXITSTATUS(status) != 1)
-        toast(app_.tr(picker_filters_ ? "Could not open the file chooser. Add rules manually."
+        toast(app_.tr(picker_save_      ? "Could not open the save dialog."
+                      : picker_filters_ ? "Could not open the file chooser. Add rules manually."
                       : picker_import_
                           ? "Could not open the file chooser. Paste a file path instead."
                           : "Could not open the image chooser. Paste a file path instead."));
     picker_output_.clear();
+    save_payload_.clear();
+    picker_save_ = false;
     app_.changed();
 #endif
 }
@@ -1946,7 +2062,7 @@ void BrowserUi::import_pointer(Rect r, int x, int y) {
             import_history_ = !import_history_;
         else if (inside({r.x + 28, r.y + r.height - 82, 240, 36}, x, y)) {
             importer.apply(app_.profile, import_bookmarks_, import_history_);
-            app_.changed();
+            app_.changed(true);
         }
     } else if (importer.result && !importer.result->backup.empty() &&
                inside({r.x + r.width - 256, r.y + r.height - 82, 228, 36}, x, y))
@@ -2460,6 +2576,16 @@ void BrowserUi::toast(std::string message) {
     app_.changed();
 }
 void BrowserUi::panel(Panel value) {
+    bookmark_focus_ = -1;
+    if (value == Bookmarks) {
+        bookmark_mode_ = 0;
+        bookmark_scroll_ = 0;
+        bookmark_error_.clear();
+        bookmark_selection_.clear();
+        bookmark_search_.set("");
+        bookmark_focus_ = 0;
+    }
+
     app_.close_extension_popup();
     popup_buttons_ = 0;
     keyboard_focus_ = -1;
@@ -2468,6 +2594,8 @@ void BrowserUi::panel(Panel value) {
     panel_ = value;
     if (value != Permissions)
         permissions_search_focus_ = false;
+    if (value != SiteData)
+        data_search_focus_ = false;
     if (value != Translation) {
         translation_text_.clear();
         translation_source_.clear();
@@ -2508,6 +2636,7 @@ void BrowserUi::dismiss() {
     data_search_focus_ = false;
     clear_password_fields();
     editing = false;
+    bookmark_focus_ = -1;
     panel_ = None;
     permissions_search_focus_ = false;
     translation_text_.clear();
@@ -2562,6 +2691,13 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
             else if (panel_ == Permissions && permissions_picker_ && permissions_search_focus_ &&
                      target == &permissions_search_)
                 live = &permissions_search_;
+            else if (panel_ == Bookmarks && bookmark_focus_ >= 0 &&
+                     target == (bookmark_focus_ == 0   ? &bookmark_search_
+                                : bookmark_focus_ == 1 ? &bookmark_title_
+                                : bookmark_focus_ == 2 ? &bookmark_url_
+                                : bookmark_focus_ == 3 ? &bookmark_tags_
+                                                       : &bookmark_folder_name_))
+                live = target;
             else if (panel_ == SiteData && data_picker_ && data_search_focus_ &&
                      target == &data_search_)
                 live = &data_search_;
@@ -2591,9 +2727,12 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
                 (live != &container_input_ || live->value.size() + text.size() <= 120) &&
                 (live != &permissions_search_ || live->value.size() + text.size() <= 512) &&
                 (live != &data_search_ || live->value.size() + text.size() <= 512) &&
+                (panel_ != Bookmarks || live->value.size() + text.size() <= 16384) &&
                 (live != &command_query_ || live->value.size() + text.size() <= 512) &&
                 (live != &profile_input_ || live->value.size() + text.size() <= 120))
                 live->insert(text);
+            if (live == &bookmark_search_)
+                bookmark_scroll_ = bookmark_folder_selected_ = 0;
             if (live == &data_search_)
                 data_selected_ = data_scroll_ = 0;
             if (live == &permissions_search_)
@@ -2737,6 +2876,7 @@ bool BrowserUi::key(const CefKeyEvent &key) {
         profile_input_focus_ = false;
         permissions_search_focus_ = false;
         data_search_focus_ = false;
+        bookmark_focus_ = -1;
         if (auto tab = app_.current(); tab && tab->browser)
             tab->browser->GetHost()->SetFocus(false);
         if (!focus_targets_.empty()) {
@@ -2755,7 +2895,7 @@ bool BrowserUi::key(const CefKeyEvent &key) {
         !import_input_focus_ && !filter_input_focus_ && shortcut_focus_ < 0 &&
         password_focus_ < 0 && !workspace_input_focus_ && !group_input_focus_ &&
         !container_input_focus_ && !profile_input_focus_ && !permissions_search_focus_ &&
-        !editing) {
+        !data_search_focus_ && bookmark_focus_ < 0 && !editing) {
         const auto r = focus_targets_[keyboard_focus_];
         const int previous = keyboard_focus_;
         const auto previous_panel = panel_;
@@ -2843,6 +2983,78 @@ bool BrowserUi::key(const CefKeyEvent &key) {
                 return code < 0x20 || ctrl || (code >= 0x21 && code <= 0x2E);
             }
             return true;
+        }
+        if (panel_ == Bookmarks) {
+            if (code == 0x1B && bookmark_mode_ == 0) {
+                dismiss();
+                return true;
+            }
+            if (ctrl && code == 'F') {
+                bookmark_mode_ = 0;
+                bookmark_focus_ = 0;
+                bookmark_search_.select_all();
+                app_.changed();
+                return true;
+            }
+            if (code == 0x1B && bookmark_mode_ == 5) {
+                choose_bookmark_folder(-999);
+                return true;
+            }
+            if (code == 0x1B && bookmark_mode_) {
+                bookmark_mode_ = 0;
+                bookmark_focus_ = -1;
+                bookmark_error_.clear();
+                app_.changed();
+                return true;
+            }
+            if (bookmark_mode_ == 5 && bookmark_focus_ == 0 &&
+                (code == 0x26 || code == 0x28 || code == 0x21 || code == 0x22)) {
+                const int n = int(bookmark_folder_results().size()),
+                          cap = std::max(1, (panel_bounds().height - 236) / 44);
+                bookmark_folder_selected_ = std::clamp(
+                    bookmark_folder_selected_ + (code == 0x26 || code == 0x21 ? -1 : 1) *
+                                                    (code == 0x21 || code == 0x22 ? cap : 1),
+                    0, std::max(0, n - 1));
+                bookmark_scroll_ =
+                    std::clamp(bookmark_scroll_, std::max(0, bookmark_folder_selected_ - cap + 1),
+                               bookmark_folder_selected_);
+                app_.changed();
+                return true;
+            }
+            if (code == 0x0D && bookmark_focus_ >= 0) {
+                if (bookmark_mode_ == 5) {
+                    const auto folders = bookmark_folder_results();
+                    if (!folders.empty())
+                        choose_bookmark_folder(folders[std::clamp(bookmark_folder_selected_, 0,
+                                                                  int(folders.size()) - 1)]);
+                } else if (bookmark_mode_)
+                    save_bookmark_edit();
+                return true;
+            }
+            if (bookmark_focus_ >= 0 && (!ctrl || (code != 'L' && code != 'T' && code != 'W' &&
+                                                   code != 'Q' && code != 'N' && code != 'B'))) {
+                auto &editor = bookmark_focus_ == 0   ? bookmark_search_
+                               : bookmark_focus_ == 1 ? bookmark_title_
+                               : bookmark_focus_ == 2 ? bookmark_url_
+                               : bookmark_focus_ == 3 ? bookmark_tags_
+                                                      : bookmark_folder_name_;
+                editor_key(editor, key);
+                bookmark_scroll_ = bookmark_folder_selected_ = 0;
+                app_.changed();
+                return code < 0x20 || ctrl || (code >= 0x21 && code <= 0x2E);
+            }
+            if (code == 0x21 || code == 0x22 || code == 0x24 || code == 0x23) {
+                const int n = int(bookmark_results().size()),
+                          cap = std::max(1, (panel_bounds().height - 320) / 52),
+                          maximum = std::max(0, n - cap);
+                bookmark_scroll_ =
+                    std::clamp(code == 0x24   ? 0
+                               : code == 0x23 ? maximum
+                                              : bookmark_scroll_ + (code == 0x21 ? -cap : cap),
+                               0, maximum);
+                app_.changed();
+                return true;
+            }
         }
         if (panel_ == SiteData && ctrl && code == 'F') {
             data_picker_ = true;
@@ -3458,6 +3670,15 @@ void BrowserUi::text(const std::string &value) {
     if (!app_.dialogs.empty()) {
         if (app_.dialogs.front().prompt)
             app_.dialogs.front().input.insert(clean);
+    } else if (panel_ == Bookmarks && bookmark_focus_ >= 0) {
+        auto &editor = bookmark_focus_ == 0   ? bookmark_search_
+                       : bookmark_focus_ == 1 ? bookmark_title_
+                       : bookmark_focus_ == 2 ? bookmark_url_
+                       : bookmark_focus_ == 3 ? bookmark_tags_
+                                              : bookmark_folder_name_;
+        if (editor.value.size() + clean.size() <= 16384)
+            editor.insert(clean);
+        bookmark_scroll_ = bookmark_folder_selected_ = 0;
     } else if (panel_ == SiteData && data_picker_ && data_search_focus_) {
         if (data_search_.value.size() + clean.size() <= 512)
             data_search_.insert(clean);
@@ -3635,6 +3856,16 @@ void BrowserUi::pointer(const PointerInput &input) {
         else
             start_scroll_ = std::clamp(start_scroll_ + (input.dy < 0 ? 64 : -64), 0,
                                        start_page_layout().maximum);
+        return;
+    }
+    if (input.kind == PointerInput::Wheel && panel_ == Bookmarks) {
+        const int n = bookmark_mode_ == 5 ? int(bookmark_folder_results().size())
+                                          : int(bookmark_results().size());
+        const int cap = std::max(1, (panel_bounds().height - (bookmark_mode_ == 5 ? 236 : 320)) /
+                                        (bookmark_mode_ == 5 ? 44 : 52));
+        bookmark_scroll_ =
+            std::clamp(bookmark_scroll_ + (input.dy < 0 ? 1 : -1), 0, std::max(0, n - cap));
+        app_.changed();
         return;
     }
     if (input.kind == PointerInput::Wheel && panel_ == SiteData && data_picker_) {
@@ -3844,7 +4075,7 @@ void BrowserUi::pointer(const PointerInput &input) {
                 panel(None);
                 return;
             }
-            if (panel_ == Bookmarks || panel_ == History) {
+            if (panel_ == History) {
                 auto &list = panel_ == Bookmarks ? app_.profile.bookmarks : app_.profile.history;
                 int i = (y - r.y - 103) / 61 + panel_scroll_;
                 if (y >= r.y + 103 && i >= 0 && i < static_cast<int>(list.size())) {
@@ -3894,6 +4125,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                 permissions_pointer(r, x, y);
             else if (panel_ == SiteData)
                 site_data_pointer(r, x, y);
+            else if (panel_ == Bookmarks)
+                bookmarks_pointer(r, x, y);
         }
         return;
     }
@@ -7082,6 +7315,495 @@ std::string BrowserUi::site_data_report() const {
             out += "{\"origin\":" + json_quote(sites[i]) + ",\"bounds\":" +
                    rect({r.x + 20, r.y + 166 + (i - data_scroll_) * 52, r.width - 40, 48}) + "}";
         }
+    return out + "]}";
+}
+const std::vector<size_t> &BrowserUi::bookmark_results() const {
+    const auto query = fold_settings(bookmark_search_.value);
+    if (bookmark_result_revision_ == app_.state()->profile_revision &&
+        bookmark_result_filter_ == bookmark_filter_ && bookmark_result_query_ == query)
+        return bookmark_matches_;
+    bookmark_result_revision_ = app_.state()->profile_revision;
+    bookmark_result_filter_ = bookmark_filter_;
+    bookmark_result_query_ = query;
+    auto &result = bookmark_matches_;
+    result.clear();
+    for (size_t i = 0; i < app_.profile.bookmarks.size(); ++i) {
+        const auto &b = app_.profile.bookmarks[i];
+        if (bookmark_filter_ >= 0 && b.folder != bookmark_filter_)
+            continue;
+        std::string text =
+            b.title + " " + b.url + " " + app_.profile.bookmark_folder_label(b.folder);
+        for (const auto &tag : b.tags)
+            text += " " + tag;
+        const auto haystack = fold_settings(text);
+        bool matches = true;
+        size_t begin = 0;
+        while (begin < query.size()) {
+            const auto end = query.find(' ', begin);
+            const auto token = query.substr(begin, end == std::string::npos ? end : end - begin);
+            if (!token.empty() && haystack.find(token) == std::string::npos) {
+                matches = false;
+                break;
+            }
+            if (end == std::string::npos)
+                break;
+            begin = end + 1;
+        }
+        if (matches)
+            result.push_back(i);
+    }
+    return result;
+}
+std::vector<int> BrowserUi::bookmark_folder_results() const {
+    std::vector<int> result;
+    const auto query = fold_settings(bookmark_search_.value);
+    auto add = [&](int id, const std::string &name) {
+        if (query.empty() || fold_settings(name).find(query) != std::string::npos)
+            result.push_back(id);
+    };
+    if (bookmark_folder_action_ == 0)
+        add(-1, app_.tr("All folders"));
+    add(0, app_.tr("Unfiled"));
+    for (const auto &folder : app_.profile.bookmark_folders)
+        add(folder.id, folder.name);
+    return result;
+}
+void BrowserUi::bookmark_folder_menu(bool move, bool edit) {
+    bookmark_folder_action_ = edit ? 2 : move ? 1 : 0;
+    bookmark_previous_query_ = bookmark_search_.value;
+    bookmark_search_.set("");
+    bookmark_mode_ = 5;
+    bookmark_focus_ = 0;
+    bookmark_scroll_ = bookmark_folder_selected_ = 0;
+    keyboard_focus_ = -1;
+    app_.changed();
+}
+void BrowserUi::choose_bookmark_folder(int id) {
+    if (id != -999) {
+        if (bookmark_folder_action_ == 0)
+            bookmark_filter_ = id;
+        else if (app_.profile.has_bookmark_folder(id)) {
+            if (bookmark_folder_action_ == 2)
+                bookmark_edit_folder_ = id;
+            else {
+                for (auto &b : app_.profile.bookmarks)
+                    if (bookmark_selection_.contains(b.url))
+                        b.folder = id;
+                bookmark_selection_.clear();
+                app_.changed(true);
+            }
+        }
+    }
+    bookmark_mode_ = bookmark_folder_action_ == 2 ? 1 : 0;
+    bookmark_search_.set(bookmark_previous_query_);
+    bookmark_focus_ = -1;
+    bookmark_scroll_ = 0;
+    app_.changed();
+}
+void BrowserUi::bookmark_snapshot() {
+    bookmark_undo_.clear();
+    bookmark_undo_positions_.clear();
+    for (size_t i = 0; i < app_.profile.bookmarks.size(); ++i) {
+        const auto &b = app_.profile.bookmarks[i];
+        if (bookmark_selection_.contains(b.url)) {
+            bookmark_undo_.push_back(b);
+            bookmark_undo_positions_.push_back(i);
+        }
+    }
+    bookmark_can_undo_ = !bookmark_undo_.empty();
+}
+void BrowserUi::save_bookmark_edit() {
+    bool ok = false;
+    if (bookmark_mode_ == 1)
+        ok = app_.profile.edit_bookmark(bookmark_edit_url_, bookmark_title_.value,
+                                        bookmark_url_.value, bookmark_edit_folder_,
+                                        bookmark_tags_.value);
+    else if (bookmark_mode_ == 2) {
+        const int id = app_.profile.add_bookmark_folder(bookmark_folder_name_.value);
+        ok = id > 0;
+        if (ok)
+            bookmark_filter_ = id;
+    } else if (bookmark_mode_ == 3)
+        ok = app_.profile.rename_bookmark_folder(bookmark_filter_, bookmark_folder_name_.value);
+    else if (bookmark_mode_ == 4) {
+        if (auto tags = bookmark_tags(bookmark_tags_.value)) {
+            for (auto &b : app_.profile.bookmarks)
+                if (bookmark_selection_.contains(b.url))
+                    b.tags = *tags;
+            ok = true;
+        }
+    }
+    if (!ok) {
+        bookmark_error_ = app_.tr(
+            bookmark_mode_ == 2 || bookmark_mode_ == 3
+                ? "Use a short unique folder name. Up to 128 folders."
+            : bookmark_mode_ == 4 ? "Use up to 32 short tags separated by commas."
+                                  : "Check the name, HTTP(S) address, folder and comma-separated "
+                                    "tags. Names and addresses must be unique.");
+        app_.changed();
+        return;
+    }
+    bookmark_mode_ = 0;
+    bookmark_focus_ = -1;
+    bookmark_error_.clear();
+    bookmark_selection_.clear();
+    bookmark_scroll_ = 0;
+    app_.changed(true);
+}
+std::array<Rect, 5> BrowserUi::bookmark_actions(Rect r) const {
+    const int desired[] = {108, 100, 72, 88, 100};
+    const double factor = std::min(1., double(r.width - 88) / 468);
+    std::array<Rect, 5> result;
+    int x = r.x + 28;
+    for (int i = 0; i < 5; ++i) {
+        result[i] = {x, r.y + r.height - 116, int(desired[i] * factor), 32};
+        x += result[i].width + 8;
+    }
+    return result;
+}
+void BrowserUi::draw_bookmarks(SkCanvas &c, Rect r) {
+    const auto &theme = interface_theme(app_.profile);
+    auto button = [&](Rect b, const std::string &title, bool enabled = true, bool primary = false) {
+        if (enabled)
+            focus_target(b);
+        fill(c, b, 8,
+             SkColorSetA(theme.accent, primary                                    ? 30
+                                       : enabled && inside(b, hover_x_, hover_y_) ? 24
+                                                                                  : 8));
+        border(c, b, 8, SkColorSetA(theme.accent, enabled ? 140 : 45));
+        centered_label(c, medium_, title, b, 12, enabled ? theme.text : theme.muted, 8, 8);
+    };
+    auto input = [&](const std::string &title, TextEditor &editor, int focus, int y) {
+        label(c, regular_, app_.tr(title), r.x + 28, r.y + y, 11, theme.muted, r.width - 56);
+        Rect b{r.x + 28, r.y + y + 10, r.width - 56, 36};
+        focus_target(b);
+        fill(c, b, 8, theme.background);
+        border(c, b, 8, SkColorSetA(theme.accent, bookmark_focus_ == focus ? 255 : 110));
+        draw_editor(c, editor, {b.x + 10, b.y + 2, b.width - 20, 32}, 13, bookmark_focus_ == focus);
+    };
+    if (bookmark_mode_ == 5) {
+        input("Search folders", bookmark_search_, 0, 82);
+        const auto folders = bookmark_folder_results();
+        const int capacity = std::max(1, (r.height - 236) / 44);
+        bookmark_scroll_ =
+            std::clamp(bookmark_scroll_, 0, std::max(0, int(folders.size()) - capacity));
+        for (int i = bookmark_scroll_; i < int(folders.size()) && i < bookmark_scroll_ + capacity;
+             ++i) {
+            const int id = folders[i];
+            Rect row{r.x + 28, r.y + 160 + (i - bookmark_scroll_) * 44, r.width - 56, 38};
+            button(row, id < 0 ? app_.tr("All folders") : app_.profile.bookmark_folder_label(id));
+            if (bookmark_focus_ == 0 && i == bookmark_folder_selected_)
+                border(c, row, 8, theme.accent);
+        }
+        if (folders.empty())
+            label(c, regular_, app_.tr("No matching folders."), r.x + 28, r.y + 190, 13,
+                  theme.muted, r.width - 56);
+        button({r.x + 28, r.y + r.height - 64, 132, 34}, app_.tr("Back"));
+        return;
+    }
+    if (bookmark_mode_) {
+        if (bookmark_mode_ == 1) {
+            input("Title", bookmark_title_, 1, 82);
+            input("Web address", bookmark_url_, 2, 148);
+            input("Tags separated by commas", bookmark_tags_, 3, 214);
+            label(c, regular_, app_.tr("Folder"), r.x + 28, r.y + 280, 11, theme.muted);
+            button({r.x + 28, r.y + 290, r.width - 56, 34},
+                   app_.profile.bookmark_folder_label(bookmark_edit_folder_));
+        } else if (bookmark_mode_ == 4) {
+            input("Tags separated by commas", bookmark_tags_, 3, 100);
+            label(c, regular_, app_.tr("Replaces tags on the selected bookmarks."), r.x + 28,
+                  r.y + 180, 12, theme.muted, r.width - 56);
+        } else
+            input("Folder name", bookmark_folder_name_, 4, 100);
+        const auto lines = wrap_text(font(regular_, 11), bookmark_error_, r.width - 56, 3);
+        for (size_t i = 0; i < lines.size(); ++i)
+            label(c, regular_, lines[i], r.x + 28, r.y + r.height - 112 + int(i) * 15, 11,
+                  theme.muted, r.width - 56);
+        button({r.x + 28, r.y + r.height - 64, 132, 34}, app_.tr("Cancel"));
+        button({r.x + r.width - 200, r.y + r.height - 64, 172, 34}, app_.tr("Save changes"), true,
+               true);
+        return;
+    }
+    input("Search bookmarks", bookmark_search_, 0, 78);
+    const auto filter = bookmark_filter_ < 0 ? app_.tr("All folders")
+                                             : app_.profile.bookmark_folder_label(bookmark_filter_);
+    button({r.x + 28, r.y + 136, r.width - 296, 32}, filter);
+    button({r.x + r.width - 260, r.y + 136, 136, 32}, app_.tr("Rename"), bookmark_filter_ > 0);
+    button({r.x + r.width - 116, r.y + 136, 88, 32}, app_.tr("Remove"), bookmark_filter_ > 0);
+    const auto &matches = bookmark_results();
+    const int capacity = std::max(1, (r.height - 320) / 52);
+    bookmark_scroll_ = std::clamp(bookmark_scroll_, 0, std::max(0, int(matches.size()) - capacity));
+    if (matches.empty())
+        label(c, regular_,
+              app_.tr("No bookmarks here. Save a page with Ctrl+D or change the search."), r.x + 28,
+              r.y + 210, 13, theme.muted, r.width - 56);
+    for (int i = bookmark_scroll_; i < int(matches.size()) && i < bookmark_scroll_ + capacity;
+         ++i) {
+        const auto &b = app_.profile.bookmarks[matches[i]];
+        const int y = r.y + 180 + (i - bookmark_scroll_) * 52;
+        const bool selected = bookmark_selection_.contains(b.url);
+        Rect check{r.x + 28, y + 9, 30, 30};
+        focus_target(check);
+        border(c, {check.x + 6, check.y + 6, 18, 18}, 4, SkColorSetA(theme.accent, 180));
+        if (selected)
+            icon(c, "check", check.x + 6, check.y + 6, 18, theme.accent);
+        Rect open{r.x + 66, y, r.width - 202, 50};
+        focus_target(open);
+        if (inside(open, hover_x_, hover_y_))
+            fill(c, open, 6, SkColorSetA(theme.accent, 12));
+        label(c, medium_, b.title, r.x + 68, y + 17, 13, theme.text, r.width - 214);
+        label(c, regular_, b.url, r.x + 68, y + 32, 10, theme.muted, r.width - 214);
+        std::string tags = app_.profile.bookmark_folder_label(b.folder);
+        for (const auto &tag : b.tags)
+            tags += " / " + tag;
+        label(c, regular_, tags, r.x + 68, y + 46, 10, theme.muted, r.width - 214);
+        button({r.x + r.width - 124, y + 10, 96, 30}, app_.tr("Edit"));
+    }
+    if (int(matches.size()) > capacity) {
+        const int h = capacity * 52, thumb = std::max(24, h * capacity / int(matches.size()));
+        fill(c, {r.x + r.width - 13, r.y + 180, 3, h}, 1, SkColorSetA(theme.muted, 35));
+        fill(c,
+             {r.x + r.width - 13,
+              r.y + 180 + (h - thumb) * bookmark_scroll_ / (int(matches.size()) - capacity), 3,
+              thumb},
+             1, theme.accent);
+    }
+    label(c, regular_,
+          !bookmark_error_.empty() ? bookmark_error_
+          : !save_error_.empty()
+              ? save_error_
+              : app_.tr("Selected") + ": " + std::to_string(bookmark_selection_.size()),
+          r.x + 28, r.y + r.height - 140, 11, theme.muted, r.width - 56);
+    const bool selection = !bookmark_selection_.empty();
+    const auto actions = bookmark_actions(r);
+    const char *titles[] = {"Select all", "Move", "Set tags", "Delete", "Undo"};
+    const bool enabled[] = {!matches.empty(), selection, selection, selection, bookmark_can_undo_};
+    for (int i = 0; i < 5; ++i)
+        button(actions[i], app_.tr(titles[i]), enabled[i]);
+    button({r.x + 28, r.y + r.height - 64, 140, 34}, app_.tr("New folder"));
+    button({r.x + 184, r.y + r.height - 64, 180, 34}, app_.tr("Export all as HTML"),
+           !app_.profile.bookmarks.empty());
+    button({r.x + r.width - 128, r.y + r.height - 64, 100, 34}, app_.tr("Close"));
+}
+void BrowserUi::bookmarks_pointer(Rect r, int x, int y) {
+    auto hit = [&](Rect b) { return inside(b, x, y); };
+    auto field = [&](int top, int focus, TextEditor &editor) {
+        if (hit({r.x + 28, r.y + top + 10, r.width - 56, 36})) {
+            bookmark_focus_ = focus;
+            editor.select_all();
+            return true;
+        }
+        return false;
+    };
+    if (bookmark_mode_ == 5) {
+        if (field(82, 0, bookmark_search_))
+            return;
+        if (hit({r.x + 28, r.y + r.height - 64, 132, 34})) {
+            choose_bookmark_folder(-999);
+            return;
+        }
+        const auto folders = bookmark_folder_results();
+        const int cap = std::max(1, (r.height - 236) / 44),
+                  n = bookmark_scroll_ + (y - r.y - 160) / 44;
+        if (y >= r.y + 160 && y < r.y + 160 + cap * 44 && n >= 0 && n < int(folders.size()))
+            choose_bookmark_folder(folders[n]);
+        return;
+    }
+    if (bookmark_mode_) {
+        if (bookmark_mode_ == 1) {
+            if (field(82, 1, bookmark_title_) || field(148, 2, bookmark_url_) ||
+                field(214, 3, bookmark_tags_))
+                return;
+            if (hit({r.x + 28, r.y + 290, r.width - 56, 34})) {
+                bookmark_folder_menu(false, true);
+                return;
+            }
+        } else if (bookmark_mode_ == 4) {
+            if (field(100, 3, bookmark_tags_))
+                return;
+        } else if (field(100, 4, bookmark_folder_name_))
+            return;
+        if (hit({r.x + 28, r.y + r.height - 64, 132, 34})) {
+            bookmark_mode_ = 0;
+            bookmark_focus_ = -1;
+            bookmark_error_.clear();
+            app_.changed();
+        } else if (hit({r.x + r.width - 200, r.y + r.height - 64, 172, 34}))
+            save_bookmark_edit();
+        return;
+    }
+    if (field(78, 0, bookmark_search_))
+        return;
+    if (hit({r.x + 28, r.y + 136, r.width - 296, 32})) {
+        bookmark_folder_menu();
+        return;
+    }
+    if (bookmark_filter_ > 0 && hit({r.x + r.width - 260, r.y + 136, 136, 32})) {
+        bookmark_mode_ = 3;
+        bookmark_folder_name_.set(app_.profile.bookmark_folder_label(bookmark_filter_), true);
+        bookmark_focus_ = 4;
+        app_.changed();
+        return;
+    }
+    if (bookmark_filter_ > 0 && hit({r.x + r.width - 116, r.y + 136, 88, 32})) {
+        app_.profile.remove_bookmark_folder(bookmark_filter_);
+        bookmark_filter_ = 0;
+        toast(app_.tr("Folder removed. Bookmarks moved to Unfiled."));
+        app_.changed(true);
+        return;
+    }
+    const auto &matches = bookmark_results();
+    const int cap = std::max(1, (r.height - 320) / 52), n = bookmark_scroll_ + (y - r.y - 180) / 52;
+    if (y >= r.y + 180 && y < r.y + 180 + cap * 52 && n >= 0 && n < int(matches.size())) {
+        const auto &b = app_.profile.bookmarks[matches[n]];
+        if (x < r.x + 64) {
+            if (!bookmark_selection_.erase(b.url))
+                bookmark_selection_.insert(b.url);
+            bookmark_focus_ = -1;
+            app_.changed();
+        } else if (x >= r.x + r.width - 132) {
+            bookmark_mode_ = 1;
+            bookmark_edit_url_ = b.url;
+            bookmark_edit_folder_ = b.folder;
+            bookmark_title_.set(b.title, true);
+            bookmark_url_.set(b.url);
+            std::string tags;
+            for (const auto &t : b.tags) {
+                if (!tags.empty())
+                    tags += ", ";
+                tags += t;
+            }
+            bookmark_tags_.set(tags);
+            bookmark_focus_ = 1;
+            bookmark_error_.clear();
+            app_.changed();
+        } else
+            app_.navigate(b.url);
+        return;
+    }
+    const auto actions = bookmark_actions(r);
+    for (int action = 0; action < 5; ++action) {
+        if (hit(actions[action])) {
+            if (action == 0) {
+                for (auto i : matches)
+                    bookmark_selection_.insert(app_.profile.bookmarks[i].url);
+                app_.changed();
+            } else if (action == 1 && !bookmark_selection_.empty())
+                bookmark_folder_menu(true);
+            else if (action == 2 && !bookmark_selection_.empty()) {
+                bookmark_mode_ = 4;
+                bookmark_tags_.set("");
+                bookmark_focus_ = 3;
+                app_.changed();
+            } else if (action == 3 && !bookmark_selection_.empty()) {
+                bookmark_snapshot();
+                std::erase_if(app_.profile.bookmarks,
+                              [&](const auto &b) { return bookmark_selection_.contains(b.url); });
+                bookmark_selection_.clear();
+                app_.changed(true);
+            } else if (action == 4 && bookmark_can_undo_) {
+                for (size_t i = 0; i < bookmark_undo_.size(); ++i)
+                    if (!app_.profile.bookmarked(bookmark_undo_[i].url)) {
+                        auto b = bookmark_undo_[i];
+                        if (!app_.profile.has_bookmark_folder(b.folder))
+                            b.folder = 0;
+                        app_.profile.bookmarks.insert(app_.profile.bookmarks.begin() +
+                                                          std::min(bookmark_undo_positions_[i],
+                                                                   app_.profile.bookmarks.size()),
+                                                      std::move(b));
+                    }
+                bookmark_undo_.clear();
+                bookmark_undo_positions_.clear();
+                bookmark_can_undo_ = false;
+                app_.changed(true);
+            }
+            return;
+        }
+    }
+    if (hit({r.x + 28, r.y + r.height - 64, 140, 34})) {
+        bookmark_mode_ = 2;
+        bookmark_folder_name_.set("");
+        bookmark_focus_ = 4;
+        bookmark_error_.clear();
+        app_.changed();
+    } else if (hit({r.x + 184, r.y + r.height - 64, 180, 34}) && !app_.profile.bookmarks.empty())
+        save_export(bookmarks_html(app_.profile.bookmarks, app_.profile.bookmark_folders),
+                    "aura-bookmarks.html", "HTML | *.html");
+    else if (hit({r.x + r.width - 128, r.y + r.height - 64, 100, 34}))
+        dismiss();
+}
+std::string BrowserUi::bookmarks_report() const {
+    if (panel_ != Bookmarks)
+        return "null";
+    const auto r = panel_bounds();
+    auto rect = [](Rect b) {
+        return "[" + std::to_string(b.x) + "," + std::to_string(b.y) + "," +
+               std::to_string(b.width) + "," + std::to_string(b.height) + "]";
+    };
+    std::string draft = "{\"title\":" + json_quote(bookmark_title_.value) +
+                        ",\"url\":" + json_quote(bookmark_url_.value) +
+                        ",\"tags\":" + json_quote(bookmark_tags_.value) +
+                        ",\"name\":" + json_quote(bookmark_folder_name_.value) + "}";
+    std::string out =
+        "{\"folder_selected\":" + std::to_string(bookmark_folder_selected_) +
+        ",\"draft\":" + draft + ",\"rename\":" + rect({r.x + r.width - 260, r.y + 136, 136, 32}) +
+        ",\"remove_folder\":" + rect({r.x + r.width - 116, r.y + 136, 88, 32}) +
+        ",\"mode\":" + std::to_string(bookmark_mode_) +
+        ",\"query\":" + json_quote(bookmark_search_.value) +
+        ",\"filter\":" + std::to_string(bookmark_filter_) +
+        ",\"selected\":" + std::to_string(bookmark_selection_.size()) +
+        ",\"undo\":" + (bookmark_can_undo_ ? "true" : "false") +
+        ",\"error\":" + json_quote(bookmark_error_.empty() ? save_error_ : bookmark_error_) +
+        ",\"last_export\":" + json_quote(last_export_) +
+        ",\"picker_pid\":" + std::to_string(picker_pid_) +
+        ",\"search\":" + rect({r.x + 28, r.y + (bookmark_mode_ == 5 ? 92 : 88), r.width - 56, 36}) +
+        ",\"folder\":" + rect({r.x + 28, r.y + 136, r.width - 296, 32}) +
+        ",\"new_folder\":" + rect({r.x + 28, r.y + r.height - 64, 140, 34}) +
+        ",\"export\":" + rect({r.x + 184, r.y + r.height - 64, 180, 34}) +
+        ",\"save\":" + rect({r.x + r.width - 200, r.y + r.height - 64, 172, 34}) +
+        ",\"title_input\":" + rect({r.x + 28, r.y + 92, r.width - 56, 36}) +
+        ",\"url_input\":" + rect({r.x + 28, r.y + 158, r.width - 56, 36}) + ",\"tags_input\":" +
+        rect({r.x + 28, r.y + (bookmark_mode_ == 1 ? 224 : 110), r.width - 56, 36}) +
+        ",\"name_input\":" + rect({r.x + 28, r.y + 110, r.width - 56, 36}) +
+        ",\"folder_input\":" + rect({r.x + 28, r.y + 290, r.width - 56, 34}) + ",\"actions\":[";
+    const auto actions = bookmark_actions(r);
+    const char *ids[] = {"select_all", "move", "tags", "delete", "undo"};
+    for (int i = 0; i < 5; ++i) {
+        if (i)
+            out += ",";
+        out += "{\"id\":" + json_quote(ids[i]) + ",\"bounds\":" + rect(actions[i]) + "}";
+    }
+    out += "],\"items\":[";
+    if (bookmark_mode_ == 0) {
+        const auto &matches = bookmark_results();
+        const int cap = std::max(1, (r.height - 320) / 52);
+        for (int i = bookmark_scroll_; i < int(matches.size()) && i < bookmark_scroll_ + cap; ++i) {
+            if (i != bookmark_scroll_)
+                out += ",";
+            const auto &b = app_.profile.bookmarks[matches[i]];
+            const int y = r.y + 180 + (i - bookmark_scroll_) * 52;
+            out += "{\"url\":" + json_quote(b.url) + ",\"title\":" + json_quote(b.title) +
+                   ",\"folder\":" + std::to_string(b.folder) +
+                   ",\"select\":" + rect({r.x + 28, y + 9, 30, 30}) +
+                   ",\"edit\":" + rect({r.x + r.width - 124, y + 10, 96, 30}) + "}";
+        }
+    }
+    out += "],\"folders\":[";
+    if (bookmark_mode_ == 5) {
+        const auto folders = bookmark_folder_results();
+        const int cap = std::max(1, (r.height - 236) / 44);
+        for (int i = bookmark_scroll_; i < int(folders.size()) && i < bookmark_scroll_ + cap; ++i) {
+            if (i != bookmark_scroll_)
+                out += ",";
+            const int id = folders[i];
+            out += "{\"id\":" + std::to_string(id) + ",\"name\":" +
+                   json_quote(id < 0 ? app_.tr("All folders")
+                                     : app_.profile.bookmark_folder_label(id)) +
+                   ",\"bounds\":" +
+                   rect({r.x + 28, r.y + 160 + (i - bookmark_scroll_) * 44, r.width - 56, 38}) +
+                   "}";
+        }
+    }
     return out + "]}";
 }
 } // namespace aura

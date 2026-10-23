@@ -1,6 +1,7 @@
 #include "common/config.hpp"
 #include "core/browser/imports.hpp"
 #include "include/cef_api_hash.h"
+#include <algorithm>
 #include <chrono>
 #include <fstream>
 #include <gtest/gtest.h>
@@ -211,6 +212,46 @@ TEST_F(Imports, LargeHistoryShowsTheMostRecentSubsetInsteadOfFailingTheEntireImp
     EXPECT_TRUE(data.limited);
     ASSERT_EQ(data.history.size(), 100000);
     EXPECT_EQ(data.history.front().url, "https://limit.test/100001");
+}
+TEST_F(Imports, AuraHtmlRoundTripPreservesFoldersTagsAndSafeText) {
+    const std::vector<Visit> links = {
+        {"https://round.test/a?x=1&y=2", "<Article & text>", 123, 7, {"Русский", "A&B"}},
+        {"https://round.test/root", "Root", 0}};
+    auto data =
+        read(file("bookmarks.html", bookmarks_html(links, {{7, "Work & research"}, {8, "Empty"}})));
+    ASSERT_EQ(data.bookmarks.size(), 2);
+    ASSERT_EQ(data.bookmark_folders.size(), 2);
+    auto article = std::find_if(data.bookmarks.begin(), data.bookmarks.end(), [](const auto &b) {
+        return b.url.find("/a?") != std::string::npos;
+    });
+    ASSERT_NE(article, data.bookmarks.end());
+    EXPECT_EQ(article->title, "<Article & text>");
+    EXPECT_EQ(article->tags, links[0].tags);
+    EXPECT_GT(article->folder, 0);
+    Profile target(directory / "profile");
+    const int existing = target.add_bookmark_folder("Work & research");
+    target.toggle_bookmark("https://existing.test/", "Existing");
+    target.save();
+    EXPECT_EQ(apply_browser_import(target, data, true, false).bookmarks_added, 2);
+    EXPECT_EQ(target.bookmark_folders.size(), 2);
+    auto restored =
+        std::find_if(target.bookmarks.begin(), target.bookmarks.end(),
+                     [](const auto &b) { return b.url.find("/a?") != std::string::npos; });
+    ASSERT_NE(restored, target.bookmarks.end());
+    EXPECT_EQ(restored->folder, existing);
+    EXPECT_EQ(restored->tags, links[0].tags);
+    Profile restarted(directory / "profile");
+    EXPECT_EQ(restarted.bookmark_folders.size(), 2);
+}
+TEST_F(Imports, NestedHtmlFoldersAreFlattenedWithoutPromotingScriptOrUnknownLinks) {
+    auto data = read(file("nested.html",
+                          "<DL><p><DT><H3>Parent</H3><DL><DT><H3>Child</H3><DL><DT><A "
+                          "HREF='https://nested.test/' TAGS='one, two'>Title</A></DL></DL></DL>"));
+    ASSERT_EQ(data.bookmarks.size(), 1);
+    ASSERT_EQ(data.bookmark_folders.size(), 2);
+    EXPECT_EQ(data.bookmark_folders[1].name, "Parent / Child");
+    EXPECT_EQ(data.bookmarks[0].folder, data.bookmark_folders[1].id);
+    EXPECT_EQ(data.bookmarks[0].tags, (std::vector<std::string>{"one", "two"}));
 }
 } // namespace
 } // namespace aura
