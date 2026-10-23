@@ -883,4 +883,15 @@ SQLite-закладку, проверяет сохранение после пе
 в профиле оставлен .parentlock для проверки закрытого Firefox.
 Host Linux: 123 CTest, 0 failures. Изолированный GUI import PASS: Firefox найден,
 закладки и история импортированы, исходные файлы не изменились, профиль пережил
-перезапуск. Сборка и проверка обновлённых установщиков выполняются.
+перезапуск. Debian-built runtime также прошёл GUI import; его SHA-256 совпал с
+бинарником в release ZIP. Debian/Arch/Fedora: реальная установка/reinstall/remove,
+launcher/icons/ownership, миграция .run и сохранение профиля PASS. Настоящая .run:
+install/version/hash/icon/desktop/uninstall/profile retention PASS.
+Windows CI 39974439885 SUCCESS: build/unit/реальный GUI/portable/installer lifecycle.
+Опубликован https://github.com/Sttanors/aura-browser/releases/tag/v0.4.0-preview.2
+Продуктовый commit 81e0b1b, sequence7. Все 16 assets загружены полностью, размеры
+сверены, семь SHA-256 и локальная Ed25519-подпись PASS. Закрытый ключ не передавался.
+Публичный канал: GitHub Actions 39978169054 SUCCESS. Независимо скачаны manifest,
+подпись и все семь опубликованных бинарников; identity/expiry/Ed25519/size/SHA-256
+проверены. Релиз публичный с 23 октября 2026, 15:25:29 UTC. Выпуск завершён.
+Протокол: docs/releases/0.4.0-preview.2-validation.md.
