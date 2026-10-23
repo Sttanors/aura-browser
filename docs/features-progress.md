@@ -836,3 +836,23 @@ lock закреплены вычисленные SHA-256. Подписание �
 закрытый ключ не передаётся в CI. До публикации: сборки и GUI после смены CEF,
 Debian ABI runtime + .deb/.rpm/.pkg.tar.gz + .run, Windows CI exact commit,
 подписанные хеши всех семи assets и проверка публичного канала.
+
+### 0.4.0 — проверки сборок и установщиков
+
+f0f2398: host Linux и Debian 13 build/CTest PASS, 122 зарегистрированных теста,
+0 failures; optional external Web Store package test skipped без fixture.
+Полный прогон всех 33 GUI suites на CEF156 PASS: все 15 функций, настоящий
+пятиминутный сон, compatibility/security/WebM, clipboard/history/popups,
+rendering/scrolling/scaling, настройки/импорт/passwords/extensions/windows/filters.
+Windows CI 39952387746 SUCCESS: build/unit/integration/portable/installer lifecycle.
+.deb / .pkg.tar.gz / .rpm реально установлены, переустановлены и удалены в чистых
+Debian/Arch/Fedora44 контейнерах: версии, launcher/icons/ownership, миграция старого
+пользовательского launcher и сохранение профиля PASS.
+Реальная подписанная .run 0.3.0-preview.1 → 0.4.0-preview.1: binary hash, bookmarks,
+history/settings, cookies/localStorage, профиль после uninstall PASS.
+Семь бинарных assets и SHA-256 проверены; channel sequence6 подписан локально и
+сверен с public key. Закрытый ключ не передавался в CI. Черновик релиза загружается;
+публичная публикация и проверка сервера ещё впереди.
+
+Debian-built native runtime: browser GUI и rendering full/page-only, dark/light,
+75–200%, device scale1/1.25 PASS. Подробности в docs/releases/0.4.0-preview.1-validation.md.
