@@ -382,6 +382,7 @@ Rect BrowserUi::panel_bounds() const {
                            : panel_ == Groups      ? 900
                            : panel_ == Containers  ? 900
                            : panel_ == Commands    ? 900
+                           : panel_ == Screenshot  ? 900
                            : panel_ == Sessions    ? 900
                            : panel_ == Bookmarks   ? 900
                            : panel_ == SiteData    ? 900
@@ -405,6 +406,7 @@ Rect BrowserUi::panel_bounds() const {
                                         app_.site_data.types.begin(), app_.site_data.types.end(),
                                         [](const auto &item) { return item.second > 0; })),
                          512, 620)
+        : panel_ == Screenshot ? 520
         : panel_ == Sessions
             ? std::clamp(268 + int(app_.profile.named_sessions.size()) * 90, 390, 700)
         : panel_ == Permissions ? 700
@@ -457,6 +459,10 @@ void BrowserUi::focus_target(Rect r) {
         focus_targets_.push_back(r);
 }
 void BrowserUi::resize(int width, int height) {
+    if (app_.screenshot.selecting) {
+        finish_screenshot_area(false);
+        app_.screenshot.error = app_.tr("The page view changed. Select the area again.");
+    }
     visible_active_id_ = -1;
     keyboard_focus_ = -1;
     width_ = width;
@@ -841,7 +847,8 @@ void BrowserUi::draw(SkCanvas &c) {
                                       app_.tr("Translate"),
                                       app_.tr("Site permissions"),
                                       app_.tr("Site data"),
-                                      app_.tr("Session snapshots")};
+                                      app_.tr("Session snapshots"),
+                                      app_.tr("Screenshot")};
         label(c, medium_, titles[panel_], r.x + 28, r.y + 47, 23, ink);
         icon(c, "close", r.x + r.width - 43, r.y + 26, 19, muted);
         if (panel_ == Bookmarks)
@@ -957,6 +964,8 @@ void BrowserUi::draw(SkCanvas &c) {
             draw_site_data(c, r);
         if (panel_ == Sessions)
             draw_sessions(c, r);
+        if (panel_ == Screenshot)
+            draw_screenshot(c, r);
     }
 
     if (editing) {
@@ -1085,6 +1094,8 @@ void BrowserUi::draw(SkCanvas &c) {
                                                                  : "OK");
         centered_label(c, medium_, accept, buttons[1], 12, t.background);
     }
+    if (app_.screenshot.selecting)
+        draw_screenshot_area(c);
     if (keyboard_focus_ >= 0 && keyboard_focus_ < int(focus_targets_.size()) &&
         !app_.extension_popup) {
         auto r = focus_targets_[keyboard_focus_];
@@ -1472,7 +1483,7 @@ void BrowserUi::finish_export(const std::string &path) {
     app_.changed();
 }
 void BrowserUi::save_export(std::string payload, const std::string &filename,
-                            const std::string &filter) {
+                            const std::string &filter, const std::string &caption) {
 #ifndef _WIN32
     if (picker_pid_ > 0)
         return;
@@ -1489,7 +1500,7 @@ void BrowserUi::save_export(std::string payload, const std::string &filename,
     std::wstring file(32768, L'\0');
     const auto initial = (directory / path_from_utf8(filename)).wstring();
     std::copy(initial.begin(), initial.end(), file.begin());
-    const auto title = CefString(app_.tr("Save export")).ToWString();
+    const auto title = CefString(app_.tr(caption)).ToWString();
     const auto extension = path_from_utf8(filename).extension().wstring();
     OPENFILENAMEW dialog{};
     dialog.lStructSize = sizeof(dialog);
@@ -1528,7 +1539,7 @@ void BrowserUi::save_export(std::string payload, const std::string &filename,
                                      "--save",
                                      "--confirm-overwrite",
                                      "--modal",
-                                     "--title=" + app_.tr("Save export"),
+                                     "--title=" + app_.tr(caption),
                                      "--file-filter=" + filter,
                                      "--file-filter=" + app_.tr("All files") + " | *",
                                      "--filename=" +
@@ -2571,6 +2582,8 @@ std::vector<Visit> BrowserUi::suggestions() const {
         address.value, std::min(app_.profile.suggestion_limit, std::max(1, (height_ - 205) / 54)));
 }
 void BrowserUi::focus_address(bool select) {
+    if (panel_ == Screenshot || app_.screenshot.pending || app_.screenshot.selecting)
+        app_.cancel_screenshot();
     session_input_focus_ = false;
     data_search_focus_ = false;
     clear_password_fields();
@@ -2595,6 +2608,9 @@ void BrowserUi::toast(std::string message) {
     app_.changed();
 }
 void BrowserUi::panel(Panel value) {
+    if (value != Screenshot &&
+        (panel_ == Screenshot || app_.screenshot.pending || app_.screenshot.selecting))
+        app_.cancel_screenshot();
     if (value != Sessions)
         session_input_focus_ = false;
     bookmark_focus_ = -1;
@@ -2654,6 +2670,8 @@ void BrowserUi::commit_address() {
     app_.navigate(value);
 }
 void BrowserUi::dismiss() {
+    if (panel_ == Screenshot || app_.screenshot.pending || app_.screenshot.selecting)
+        app_.cancel_screenshot();
     session_input_focus_ = false;
     data_search_focus_ = false;
     clear_password_fields();
@@ -2797,6 +2815,58 @@ bool BrowserUi::key(const CefKeyEvent &key) {
     const bool ctrl = key.modifiers & EVENTFLAG_CONTROL_DOWN,
                shift = key.modifiers & EVENTFLAG_SHIFT_DOWN,
                alt = key.modifiers & EVENTFLAG_ALT_DOWN;
+    if (app_.screenshot.selecting) {
+        if (!down)
+            return true;
+        if (code == 0x1B) {
+            finish_screenshot_area(false);
+            return true;
+        }
+        if (code == 0x09) {
+            screenshot_cancel_focus_ = !screenshot_cancel_focus_;
+            app_.changed();
+            return true;
+        }
+        if (code == 0x0D) {
+            finish_screenshot_area(!screenshot_cancel_focus_);
+            return true;
+        }
+        if (code >= 0x25 && code <= 0x28) {
+            const int step = ctrl ? 1 : 10,
+                      dx = code == 0x25   ? -step
+                           : code == 0x27 ? step
+                                          : 0,
+                      dy = code == 0x26   ? -step
+                           : code == 0x28 ? step
+                                          : 0;
+            if (shift) {
+                screenshot_region_.width = std::clamp(
+                    screenshot_region_.width + dx,
+                    std::min(8, screenshot_area_.x + screenshot_area_.width - screenshot_region_.x),
+                    screenshot_area_.x + screenshot_area_.width - screenshot_region_.x);
+                screenshot_region_.height =
+                    std::clamp(screenshot_region_.height + dy,
+                               std::min(8, screenshot_area_.y + screenshot_area_.height -
+                                               screenshot_region_.y),
+                               screenshot_area_.y + screenshot_area_.height - screenshot_region_.y);
+            } else {
+                screenshot_region_.x = std::clamp(screenshot_region_.x + dx, screenshot_area_.x,
+                                                  screenshot_area_.x + screenshot_area_.width -
+                                                      screenshot_region_.width);
+                screenshot_region_.y = std::clamp(screenshot_region_.y + dy, screenshot_area_.y,
+                                                  screenshot_area_.y + screenshot_area_.height -
+                                                      screenshot_region_.height);
+            }
+            screenshot_cancel_focus_ = false;
+            app_.changed();
+            return true;
+        }
+        return true;
+    }
+    if (down && ctrl && shift && code == 'S' && app_.dialogs.empty() && !editing) {
+        open_screenshot();
+        return true;
+    }
     if (ctrl && shift && code == '0') {
         if (down) {
             app_.profile.ui_zoom = 100;
@@ -3682,6 +3752,8 @@ bool BrowserUi::key(const CefKeyEvent &key) {
     return false;
 }
 void BrowserUi::text(const std::string &value) {
+    if (app_.screenshot.selecting)
+        return;
     if (auto p = app_.extension_popup; p && p->browser && app_.dialogs.empty()) {
         for (auto ch : CefString(value).ToString16()) {
             auto event = last_key_;
@@ -3808,6 +3880,34 @@ void BrowserUi::text(const std::string &value) {
     app_.changed();
 }
 bool BrowserUi::tick() {
+    auto &shot = app_.screenshot;
+    if (shot.native_running) {
+        const auto job = app_.tab(shot.job_tab);
+        if (!job || !job->browser) {
+            shot.native_running = false;
+            shot.pending = false;
+            ++shot.serial;
+        }
+    }
+    if (shot.pending &&
+        std::chrono::steady_clock::now() - shot.started > std::chrono::seconds(20)) {
+        ++shot.serial;
+        shot.pending = false;
+        shot.error = app_.tr("Capture timed out. Wait for it to finish or close this tab.");
+        app_.changed();
+    }
+    if (shot.selecting) {
+        const auto source = app_.tab(shot.tab);
+        if (!source || !source->browser || source->navigation_serial != shot.navigation ||
+            source->page.url != shot.source || !app_.tab_visible(shot.tab) ||
+            source->page.view_width != shot.area_view_width ||
+            source->page.view_height != shot.area_view_height) {
+            finish_screenshot_area(false);
+            shot.error = app_.tr("The page view changed. Select the area again.");
+            app_.changed();
+        }
+    }
+
     if (panel_ == SiteData) {
         const auto &d = app_.site_data;
         const auto source = app_.tab(d.tab);
@@ -3876,6 +3976,10 @@ bool BrowserUi::tick() {
     return animate;
 }
 void BrowserUi::pointer(const PointerInput &input) {
+    if (app_.screenshot.selecting) {
+        screenshot_area_pointer(input);
+        return;
+    }
     if (!app_.split_enabled())
         split_drag_ = false;
     const int x = input.point.x, y = input.point.y;
@@ -4202,6 +4306,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                 bookmarks_pointer(r, x, y);
             else if (panel_ == Sessions)
                 sessions_pointer(r, x, y);
+            else if (panel_ == Screenshot)
+                screenshot_pointer(r, x, y);
         }
         return;
     }
@@ -4243,7 +4349,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                 {13, app_.tr("Translate"), t && t->browser && !t->ntp, "Ctrl+Alt+T"},
                 {14, app_.tr("Site permissions"), true, "Ctrl+Alt+I"},
                 {15, app_.tr("Site data"), true, "Ctrl+Alt+D"},
-                {16, app_.tr("Session snapshots"), true, "Ctrl+Alt+E"}};
+                {16, app_.tr("Session snapshots"), true, "Ctrl+Alt+E"},
+                {17, app_.tr("Screenshot"), true, "Ctrl+Shift+S"}};
             app_.menu_width = 320;
             app_.menu_x = 16;
             app_.menu_y =
@@ -4277,6 +4384,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                     open_site_data();
                 else if (command == 16)
                     open_sessions();
+                else if (command == 17)
+                    open_screenshot();
                 else
                     app_.request_exit();
             };
@@ -6430,6 +6539,7 @@ std::vector<BrowserUi::CommandResult> BrowserUi::command_results() const {
         {"permissions", "Site permissions", "Ctrl+Alt+I", true},
         {"site_data", "Site data", "Ctrl+Alt+D", true},
         {"sessions", "Session snapshots", "Ctrl+Alt+E", true},
+        {"screenshot", "Screenshot", "Ctrl+Shift+S", page},
         {"devtools", "Developer tools", "F12", page},
     };
     for (const auto &action : actions)
@@ -6592,6 +6702,8 @@ void BrowserUi::run_command(int index) {
         open_site_data();
     else if (id == "sessions")
         open_sessions();
+    else if (id == "screenshot")
+        open_screenshot();
     else if (id == "devtools")
         app_.devtools();
     app_.changed();
@@ -8116,6 +8228,292 @@ std::string BrowserUi::sessions_report() const {
                (app_.profile.named_session_available(item.id) ? "true" : "false") +
                ",\"restore\":" + rect(buttons[0]) + ",\"rename\":" + rect(buttons[1]) +
                ",\"update\":" + rect(buttons[2]) + ",\"delete\":" + rect(buttons[3]) + "}";
+    }
+    return out + "]}";
+}
+void BrowserUi::open_screenshot() {
+    app_.cancel_screenshot();
+    app_.close_menu();
+    panel(Screenshot);
+    keyboard_focus_ = -1;
+    auto &shot = app_.screenshot;
+    const auto t = app_.current();
+    shot.tab = t ? t->id : 0;
+    shot.navigation = t ? t->navigation_serial : 0;
+    shot.source = t ? t->page.url : "";
+    shot.mode = 0;
+    shot.width = shot.height = 0;
+    shot.reduced = false;
+    shot.error.clear();
+    if (!export_dialog_open()) {
+        last_export_.clear();
+        save_error_.clear();
+    }
+    if (t && t->browser)
+        t->browser->GetHost()->SetFocus(false);
+    app_.changed();
+}
+void BrowserUi::draw_screenshot(SkCanvas &c, Rect r) {
+    const auto &theme = interface_theme(app_.profile);
+    const auto &shot = app_.screenshot;
+    const auto t = app_.tab(shot.tab);
+    const bool busy = shot.pending || shot.native_running || export_dialog_open();
+    const bool ready = t && t->browser && !t->ntp && !t->loading && t->page.loaded &&
+                       !t->page.failed && app_.tab_visible(t->id) &&
+                       t->navigation_serial == shot.navigation && t->page.url == shot.source &&
+                       (shot.source.starts_with("http://") || shot.source.starts_with("https://") ||
+                        shot.source.starts_with("file://"));
+    auto button = [&](Rect b, const std::string &title, bool enabled = true, bool primary = false) {
+        if (enabled)
+            focus_target(b);
+        fill(c, b, 8,
+             SkColorSetA(theme.accent, primary                                    ? 30
+                                       : enabled && inside(b, hover_x_, hover_y_) ? 24
+                                                                                  : 8));
+        border(c, b, 8, SkColorSetA(theme.accent, enabled ? 140 : 45));
+        centered_label(c, medium_, app_.tr(title), b, 12, enabled ? theme.text : theme.muted, 8, 8);
+    };
+    label(c, regular_, app_.tr("Capture this page without the Aura interface."), r.x + 28, r.y + 73,
+          11, theme.muted, r.width - 56);
+    label(c, medium_, shot.source, r.x + 28, r.y + 101, 13, theme.text, r.width - 56);
+    label(c, regular_,
+          t ? (app_.profile.container_label(t->container) +
+               (t->private_tab ? " / " + app_.tr("Private browsing") : ""))
+            : "",
+          r.x + 28, r.y + 122, 10, theme.muted, r.width - 56);
+    const char *titles[] = {"Visible area", "Select area", "Full page"};
+    const char *details[] = {"The visible document, without scrollbars.",
+                             "Choose a region using the mouse or keyboard.",
+                             "The whole document. Large pages are reduced to fit one PNG."};
+    for (int i = 0; i < 3; ++i) {
+        Rect row{r.x + 28, r.y + 140 + i * 72, r.width - 56, 60};
+        const bool enabled = !busy && !(i == 2 && t && t->reader_active);
+        if (enabled)
+            focus_target(row);
+        fill(c, row, 8,
+             SkColorSetA(theme.accent, shot.mode == i                               ? 20
+                                       : enabled && inside(row, hover_x_, hover_y_) ? 12
+                                                                                    : 0));
+        border(c, row, 8, SkColorSetA(theme.accent, shot.mode == i ? 180 : 55));
+        if (shot.mode == i)
+            icon(c, "check", row.x + 12, row.y + 19, 20, theme.accent);
+        label(c, medium_, app_.tr(titles[i]), row.x + 44, row.y + 23, 13,
+              enabled ? theme.text : theme.muted, row.width - 60);
+        label(c, regular_,
+              app_.tr(!enabled && i == 2 && t && t->reader_active
+                          ? "Exit reader view to capture the full page."
+                          : details[i]),
+              row.x + 44, row.y + 44, 10, theme.muted, row.width - 60);
+    }
+    std::string status = shot.pending           ? app_.tr("Capturing...")
+                         : shot.native_running  ? app_.tr("Finishing the previous capture...")
+                         : export_dialog_open() ? app_.tr("Choose a location in the file dialog.")
+                         : shot.width
+                             ? std::to_string(shot.width) + " × " + std::to_string(shot.height) +
+                                   " px" + (shot.reduced ? " / " + app_.tr("Reduced to fit") : "")
+                         : !ready ? app_.tr("Open a loaded web page first.")
+                                  : app_.tr("PNG is saved only after you choose a location.");
+    label(c, regular_, status, r.x + 28, r.y + r.height - 128, 11, theme.muted, r.width - 56);
+    const auto lines = wrap_text(font(regular_, 11), shot.error.empty() ? save_error_ : shot.error,
+                                 r.width - 56, 2);
+    for (size_t i = 0; i < lines.size(); ++i)
+        label(c, regular_, lines[i], r.x + 28, r.y + r.height - 106 + int(i) * 15, 11, theme.muted,
+              r.width - 56);
+    button({r.x + 28, r.y + r.height - 56, 120, 34}, "Close");
+    button({r.x + 160, r.y + r.height - 56, 140, 34}, "Use current page", !shot.pending);
+    button({r.x + r.width - 184, r.y + r.height - 56, 156, 34},
+           shot.mode == 1 ? "Select area" : "Capture",
+           ready && !busy && !(shot.mode == 2 && t && t->reader_active), true);
+}
+void BrowserUi::screenshot_pointer(Rect r, int x, int y) {
+    auto &shot = app_.screenshot;
+    auto t = app_.tab(shot.tab);
+    const bool busy = shot.pending || shot.native_running || export_dialog_open();
+    if (inside({r.x + 28, r.y + r.height - 56, 120, 34}, x, y)) {
+        dismiss();
+        return;
+    }
+    if (inside({r.x + 160, r.y + r.height - 56, 140, 34}, x, y) && !shot.pending) {
+        open_screenshot();
+        return;
+    }
+    if (busy)
+        return;
+    for (int i = 0; i < 3; ++i)
+        if (inside({r.x + 28, r.y + 140 + i * 72, r.width - 56, 60}, x, y) &&
+            !(i == 2 && t && t->reader_active)) {
+            shot.mode = i;
+            shot.error.clear();
+            app_.changed();
+            return;
+        }
+    if (inside({r.x + r.width - 184, r.y + r.height - 56, 156, 34}, x, y))
+        app_.capture_screenshot();
+}
+void BrowserUi::begin_screenshot_area() {
+    const auto t = app_.tab(app_.screenshot.tab);
+    if (!t || !t->browser)
+        return;
+    const auto page = page_bounds(*t);
+    auto &shot = app_.screenshot;
+    screenshot_area_ = page;
+    screenshot_area_.width = std::clamp(
+        int(std::lround(page.width * shot.client_width * shot.area_zoom / t->page.view_width)), 1,
+        page.width);
+    screenshot_area_.height = std::clamp(
+        int(std::lround(page.height * shot.client_height * shot.area_zoom / t->page.view_height)),
+        1, page.height);
+    if (screenshot_area_.width < 16 || screenshot_area_.height < 100) {
+        shot.error = app_.tr("The visible page is too small to select an area.");
+        app_.changed();
+        return;
+    }
+    screenshot_region_ = {screenshot_area_.x + screenshot_area_.width / 4,
+                          screenshot_area_.y + screenshot_area_.height / 4,
+                          screenshot_area_.width / 2, screenshot_area_.height / 2};
+    screenshot_drag_ = screenshot_cancel_focus_ = false;
+    app_.window->cursor(CT_CROSS);
+    shot.selecting = true;
+    panel_ = None;
+    editing = false;
+    keyboard_focus_ = -1;
+    t->browser->GetHost()->SetFocus(false);
+    app_.changed();
+}
+void BrowserUi::finish_screenshot_area(bool accept) {
+    auto &shot = app_.screenshot;
+    if (!shot.selecting)
+        return;
+    shot.selecting = false;
+    app_.window->cursor(CT_POINTER);
+    screenshot_drag_ = false;
+    panel_ = Screenshot;
+    keyboard_focus_ = -1;
+    if (!accept) {
+        app_.cancel_screenshot();
+        app_.changed();
+        return;
+    }
+    if (screenshot_region_.width < 2 || screenshot_region_.height < 2) {
+        shot.error = app_.tr("Select a larger area.");
+        app_.changed();
+        return;
+    }
+    app_.capture_screenshot(
+        {double(screenshot_region_.x - screenshot_area_.x) / screenshot_area_.width,
+         double(screenshot_region_.y - screenshot_area_.y) / screenshot_area_.height,
+         double(screenshot_region_.width) / screenshot_area_.width,
+         double(screenshot_region_.height) / screenshot_area_.height});
+}
+void BrowserUi::draw_screenshot_area(SkCanvas &c) {
+    const auto &theme = interface_theme(app_.profile);
+    const auto a = screenshot_area_, r = screenshot_region_, toolbar_area = web_bounds();
+    focus_targets_.clear();
+    fill(c, {a.x, a.y, a.width, std::max(0, r.y - a.y)}, 0, 0x99070B16);
+    fill(c, {a.x, r.y, std::max(0, r.x - a.x), r.height}, 0, 0x99070B16);
+    fill(c, {r.x + r.width, r.y, std::max(0, a.x + a.width - r.x - r.width), r.height}, 0,
+         0x99070B16);
+    fill(c, {a.x, r.y + r.height, a.width, std::max(0, a.y + a.height - r.y - r.height)}, 0,
+         0x99070B16);
+    border(c, r, 0, theme.accent);
+    const auto bar = toolbar_area;
+    Rect toolbar{bar.x + 8, bar.y + 8, bar.width - 16, 72};
+    fill(c, toolbar, 9, theme.surface);
+    const auto lines = wrap_text(
+        font(regular_, 11),
+        app_.tr("Drag to select. Arrows move; Shift+arrows resize. Enter saves; Escape cancels."),
+        std::max(80, bar.width - 260), 3);
+    for (size_t i = 0; i < lines.size(); ++i)
+        label(c, regular_, lines[i], bar.x + 20, bar.y + 29 + int(i) * 15, 11, theme.text,
+              std::max(80, bar.width - 260));
+    Rect save{bar.x + bar.width - 228, bar.y + 24, 108, 34},
+        cancel{bar.x + bar.width - 112, bar.y + 24, 96, 34};
+    for (const auto &[b, title, focus] : std::vector<std::tuple<Rect, std::string, bool>>{
+             {save, "Save PNG", !screenshot_cancel_focus_},
+             {cancel, "Cancel", screenshot_cancel_focus_}}) {
+        fill(c, b, 8, SkColorSetA(theme.accent, focus ? 36 : 10));
+        border(c, b, 8, focus ? theme.accent : SkColorSetA(theme.accent, 90));
+        centered_label(c, medium_, app_.tr(title), b, 12, theme.text, 8, 8);
+    }
+    const auto &shot = app_.screenshot;
+    auto t = app_.tab(shot.tab);
+    auto plan = screenshot_plan({0, 0, double(r.width) * shot.client_width / a.width,
+                                 double(r.height) * shot.client_height / a.height},
+                                shot.area_zoom, t ? t->page.scale : 1);
+    if (plan) {
+        Rect badge{std::clamp(r.x, bar.x + 8, std::max(bar.x + 8, bar.x + bar.width - 168)),
+                   std::clamp(r.y + r.height + 8, std::min(bar.y + 90, bar.y + bar.height - 30),
+                              bar.y + bar.height - 30),
+                   160, 24};
+        fill(c, badge, 6, theme.surface);
+        centered_label(c, medium_,
+                       std::to_string(plan->width) + " × " + std::to_string(plan->height) + " px",
+                       badge, 11, theme.text, 6, 6);
+    }
+}
+void BrowserUi::screenshot_area_pointer(const PointerInput &input) {
+    const auto a = screenshot_area_, bar = web_bounds();
+    const int x = std::clamp(input.point.x, a.x, a.x + a.width),
+              y = std::clamp(input.point.y, a.y, a.y + a.height);
+    if (input.kind == PointerInput::Down && input.button == 1) {
+        if (inside({bar.x + bar.width - 228, bar.y + 24, 108, 34}, input.point.x, input.point.y)) {
+            finish_screenshot_area(true);
+            return;
+        }
+        if (inside({bar.x + bar.width - 112, bar.y + 24, 96, 34}, input.point.x, input.point.y)) {
+            finish_screenshot_area(false);
+            return;
+        }
+        if (!inside(a, input.point.x, input.point.y))
+            return;
+        screenshot_start_x_ = x;
+        screenshot_start_y_ = y;
+        screenshot_drag_ = true;
+        screenshot_cancel_focus_ = false;
+        screenshot_region_ = {x, y, 0, 0};
+    }
+    if (screenshot_drag_ && (input.kind == PointerInput::Move || input.kind == PointerInput::Up)) {
+        screenshot_region_ = {std::min(x, screenshot_start_x_), std::min(y, screenshot_start_y_),
+                              std::abs(x - screenshot_start_x_), std::abs(y - screenshot_start_y_)};
+        if (input.kind == PointerInput::Up) {
+            screenshot_drag_ = false;
+            screenshot_region_.x = std::clamp(screenshot_region_.x, a.x, a.x + a.width - 8);
+            screenshot_region_.y = std::clamp(screenshot_region_.y, a.y, a.y + a.height - 8);
+            screenshot_region_.width =
+                std::clamp(screenshot_region_.width, 8, a.x + a.width - screenshot_region_.x);
+            screenshot_region_.height =
+                std::clamp(screenshot_region_.height, 8, a.y + a.height - screenshot_region_.y);
+        }
+    }
+    app_.changed();
+}
+std::string BrowserUi::screenshot_report() const {
+    const auto &shot = app_.screenshot;
+    if (panel_ != Screenshot && !shot.selecting)
+        return "null";
+    auto rect = [](Rect b) {
+        return "[" + std::to_string(b.x) + "," + std::to_string(b.y) + "," +
+               std::to_string(b.width) + "," + std::to_string(b.height) + "]";
+    };
+    const auto r = panel_bounds();
+    std::string out =
+        "{\"source\":" + json_quote(shot.source) + ",\"mode\":" + std::to_string(shot.mode) +
+        ",\"busy\":" + (shot.pending || shot.native_running ? "true" : "false") +
+        ",\"selecting\":" + (shot.selecting ? "true" : "false") +
+        ",\"width\":" + std::to_string(shot.width) + ",\"height\":" + std::to_string(shot.height) +
+        ",\"reduced\":" + (shot.reduced ? "true" : "false") +
+        ",\"error\":" + json_quote(shot.error.empty() ? save_error_ : shot.error) +
+        ",\"last_export\":" + json_quote(last_export_) +
+        ",\"picker_pid\":" + std::to_string(picker_pid_) +
+        ",\"capture\":" + rect({r.x + r.width - 184, r.y + r.height - 56, 156, 34}) +
+        ",\"refresh\":" + rect({r.x + 160, r.y + r.height - 56, 140, 34}) +
+        ",\"area\":" + rect(screenshot_area_) + ",\"selection\":" + rect(screenshot_region_) +
+        ",\"options\":[";
+    for (int i = 0; i < 3; ++i) {
+        if (i)
+            out += ",";
+        out += "{\"id\":" + std::to_string(i) +
+               ",\"bounds\":" + rect({r.x + 28, r.y + 140 + i * 72, r.width - 56, 60}) + "}";
     }
     return out + "]}";
 }

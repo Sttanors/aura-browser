@@ -217,6 +217,9 @@ Extensions are available only to the regular profile.
 
 **Session snapshots** (Ctrl Alt E) save named sets of normal windows: URLs, order, active/pinned tabs, workspaces, groups, containers and split pairs. Restore opens new windows and keeps current pages. Cookies and unsaved forms are excluded; missing containers block restoration. Private tabs are never captured.
 
+**Page screenshots** (Ctrl Shift S) save the visible document, a mouse/keyboard selection or the full page as PNG through a native Save dialog. Page zoom and display density are respected. Very large documents are reduced to 32 MP / 32766 pixels per side. Only the active page is captured in split view. Explicit captures work in private windows; no capture list is stored in the profile. Full-page capture requires leaving reader view.
+
+
 Normal windows share a profile; private windows share temporary storage until the last private tab/window closes.
 The Aura logo menu includes window commands and restoration of the previous normal session. After an interrupted
 exit, Aura offers recovery. Sessions preserve window/tab order, selection and pinning, and exclude private URLs.

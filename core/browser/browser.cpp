@@ -1307,6 +1307,7 @@ std::string BrowserController::report() const {
         << ",\"tabs\":" << (quit_snapshot_.empty() ? tabs_json(tabs) : quit_snapshot_)
         << ",\"profile_name\":" << json_quote(profile_name())
         << ",\"profile_directory\":" << json_quote(utf8_path(profile.directory))
+        << ",\"screenshot_ui\":" << ui->screenshot_report()
         << ",\"sessions_ui\":" << ui->sessions_report()
         << ",\"bookmarks_ui\":" << ui->bookmarks_report()
         << ",\"site_data_ui\":" << ui->site_data_report()

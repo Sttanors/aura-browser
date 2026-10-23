@@ -19,7 +19,7 @@
 | 11 | Панель данных сайтов | Реализовано, Linux проверки PASS |
 | 12 | Менеджер закладок | Реализовано, Linux проверки PASS |
 | 13 | Снимки сессий | Реализовано, Linux проверки PASS |
-| 14 | Скриншоты страницы | В очереди |
+| 14 | Скриншоты страницы | Реализовано, Linux проверки PASS |
 | 15 | Настраиваемые горячие клавиши | В очереди |
 
 ## Дизайн и правила взаимодействия
@@ -719,3 +719,55 @@ windowraise только на приватном display. Русские Restore
 PASS. Логи /tmp/aura-sessions-{build-final,ctest-final,gui-final,split-regression,
 workspaces-regression,permissions-regression}.log. Checkpoint 13 завершён.
 Windows CI пункта 13 ожидается после push; установщики не обновлялись.
+
+## 14. План скриншотов страницы
+
+Задача: сохранить видимую часть, выбранную область или весь документ в PNG.
+Снимок только текущего web view, без chrome Aura; явная команда и native Save,
+private разрешён по команде пользователя и не добавляет запись в профиль.
+Источник привязан к tab/navigation serial, при смене страницы результат отменяется.
+
+GUI-genius: текущие theme tokens (#0D111B/#182033/#EDF3FF/#99A7C1/#A7B6FF),
+Inter 24/13/11, шаг 8/16/24. Native panel: source → 3 выбора с пояснениями → Capture.
+Area selector поверх активной страницы: drag, arrows, Shift+arrows resize,
+Enter Save, Escape Cancel; рамка/размер и понятные кнопки. Для reader full-page
+недоступен, visible/region работают. Loading/error/empty/success, RU/EN и scaling.
+Без декоративной галереи: результат сохраняется native Save dialog.
+
+CDP Page.getLayoutMetrics + captureScreenshot(fromSurface), CSS→DIP page zoom и
+native device scale. Большие страницы уменьшаются до 32 MP/32766 px на сторону;
+output size/reduced видимы. Это отдельный предел screenshot, wallpaper не меняется.
+Base64/PNG header/size проверяются до записи, atomic export из пункта 12.
+Точный API проверен по pinned Chromium tag 154.0.8037.98 Page.pdl/page_handler.cc:
+https://chromium.googlesource.com/chromium/src/+/refs/tags/154.0.8037.98/third_party/blink/public/devtools_protocol/domains/Page.pdl
+Проверка: реальные PNG dimensions/pixels (scroll/full/region), form/scroll сохранены,
+site/interface zoom, split source, cancel/stale/private и большой документ.
+
+## 14. Реализация и проверка
+
+Ctrl Shift S, меню Aura и палитра команд открывают native панель трёх режимов.
+Область поддерживает drag, стрелки, Shift+стрелки, Ctrl для шага 1 px, Tab/Enter/Escape.
+PNG сохраняется только после native Save, атомарно; отмена не создаёт файл.
+Источник привязан к navigation serial, закрытие/смена страницы отменяет результат.
+
+При проверке пикселей обнаружена особенность CEF OSR: SetSize пустой, поэтому
+Page.captureScreenshot выдавал размер всей страницы, но заполнял его повторением
+верхней части. Добавлен реальный GetViewRect для ограниченной capture surface;
+device emulation удерживает layout viewport. После захвата метрики возвращаются,
+scroll восстанавливается через isolated world исходного документа. Ошибка/отмена
+также очищают override; промежуточный огромный buffer не попадает в native UI.
+Источник: https://github.com/chromiumembedded/cef/blob/master/libcef/browser/osr/render_widget_host_view_osr.cc
+
+118/118 CTest PASS. Реальные PNG проверены по цветным полосам документа:
+visible после scroll, full 2600 px, область 200×130, tall 50000→32766 px;
+несохранённая форма/DOM token/scroll сохранены. Native Save cancel и кириллический
+путь PASS. Второй запуск: RU, interface 150% (auto-fit 145%), page 125%, DPR 1.5,
+private PNG и full 4875 px, keyboard selector cancel, stale navigation reject PASS.
+RU UI просмотрен: укорочена обрезанная кнопка «Сохранить», убран лишний outline toolbar.
+Проверка split и повтор после финального форматирования ожидаются ниже.
+
+Финальная проверка: 118/118 CTest PASS, screenshot GUI включая split active pane
+(отдельный PNG 1800 px с цветами только выбранной страницы) PASS; базовый browser
+и reader GUI regressions PASS. Протоколы /tmp/aura-screenshot-{build-final,
+ctest-final,gui-final,browser-regression,reader-regression}.log, PNG/UI —
+artifacts/screenshot-smoke. Checkpoint 14 завершён. Windows CI после push.

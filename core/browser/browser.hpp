@@ -9,6 +9,7 @@
 #include "core/browser/profile.hpp"
 #include "core/browser/profiles.hpp"
 #include "core/browser/protection.hpp"
+#include "core/browser/screenshot.hpp"
 #include "core/browser/updates.hpp"
 #include "core/cef/diagnostic_client.hpp"
 #include "include/cef_context_menu_handler.h"
@@ -29,6 +30,18 @@ struct SiteDataState {
     bool private_mode = false, clearing = false;
     uint64_t serial = 0, usage = 0, quota = 0, cookies = 0;
     std::map<std::string, uint64_t> types;
+    std::chrono::steady_clock::time_point started{};
+};
+struct ScreenshotState {
+    int tab = 0, job_tab = 0, mode = 0, width = 0, height = 0, area_view_width = 0,
+        area_view_height = 0;
+    int surface_width = 0, surface_height = 0, restore_context = 0;
+    double scroll_x = 0, scroll_y = 0;
+    double client_width = 0, client_height = 0, area_zoom = 0;
+    uint64_t navigation = 0, serial = 0, job = 0;
+    bool pending = false, native_running = false, selecting = false, reduced = false,
+         emulating = false;
+    std::string source, error;
     std::chrono::steady_clock::time_point started{};
 };
 struct Tab {
@@ -145,6 +158,9 @@ class BrowserController {
     std::shared_ptr<void> callback_lifetime = std::make_shared<int>(0);
     Profile &profile;
     SiteDataState site_data;
+    ScreenshotState screenshot;
+    void capture_screenshot(CaptureRect relative = {});
+    void cancel_screenshot();
     void open_site_data();
     void refresh_site_data(const std::string &origin = "");
     void clear_site_data(bool cookies);

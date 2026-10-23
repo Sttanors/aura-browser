@@ -39,6 +39,7 @@ class BrowserClient final : public DiagnosticClient,
                                 CefRefPtr<CefPermissionPromptCallback>) override;
     void OnDismissPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t,
                                    cef_permission_request_result_t) override;
+    void GetViewRect(CefRefPtr<CefBrowser>, CefRect &) override;
     void OnPaint(CefRefPtr<CefBrowser>, PaintElementType, const RectList &, const void *, int,
                  int) override;
     void OnTextSelectionChanged(CefRefPtr<CefBrowser>, const CefString &,

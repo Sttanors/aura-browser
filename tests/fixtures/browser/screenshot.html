@@ -1,0 +1,9 @@
+<!doctype html><meta charset="utf-8"><style>
+*{box-sizing:border-box}html,body{margin:0;padding:0}body{background:#bb2288}#bands{width:100%;height:2600px;background:linear-gradient(to bottom,#cc3333 0 500px,#33aa55 500px 1000px,#3366cc 1000px 1500px,#eecc33 1500px 2000px,#bb2288 2000px)}input{position:absolute;top:30px;left:30px;width:200px;height:36px}
+</style><div id="bands"></div><input aria-label="Unsaved form"><script>
+const token=crypto.randomUUID(), input=document.querySelector('input');
+if(new URLSearchParams(location.search).has('tall'))document.querySelector('#bands').style.height='50000px';
+if(new URLSearchParams(location.search).has('other')){document.querySelector('#bands').style.background='#117788';document.querySelector('#bands').style.height='1800px'}
+function report(){document.title=JSON.stringify({token,value:input.value,x:scrollX,y:scrollY,width:innerWidth,height:innerHeight,clientWidth:document.documentElement.clientWidth,clientHeight:document.documentElement.clientHeight,full:document.documentElement.scrollHeight,dpr:devicePixelRatio})}
+addEventListener('scroll',report);addEventListener('resize',report);input.addEventListener('input',report);setInterval(report,200);report();
+</script>

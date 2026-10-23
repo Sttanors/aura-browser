@@ -96,10 +96,20 @@ class NetworkPolicy final : public CefResourceRequestHandler {
     IMPLEMENT_REFCOUNTING(NetworkPolicy);
 };
 } // namespace
+void BrowserClient::GetViewRect(CefRefPtr<CefBrowser> browser, CefRect &rect) {
+    const auto &shot = owner_.screenshot;
+    if (shot.native_running && shot.job_tab == id_ && shot.surface_width > 0 &&
+        shot.surface_height > 0)
+        rect = {0, 0, shot.surface_width, shot.surface_height};
+    else
+        DiagnosticClient::GetViewRect(browser, rect);
+}
 void BrowserClient::OnPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
                             const RectList &dirty, const void *data, int width, int height) {
     auto t = owner_.tab(id_);
-    if (t && !t->sleeping)
+    if (t && !t->sleeping &&
+        !(owner_.screenshot.native_running && owner_.screenshot.job_tab == id_ &&
+          owner_.screenshot.surface_width > 0))
         DiagnosticClient::OnPaint(browser, type, dirty, data, width, height);
 }
 #ifdef _WIN32

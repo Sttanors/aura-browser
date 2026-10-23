@@ -28,7 +28,8 @@ class BrowserUi {
         Translation,
         Permissions,
         SiteData,
-        Sessions
+        Sessions,
+        Screenshot
     };
     BrowserUi(BrowserController &owner, const std::filesystem::path &font);
     ~BrowserUi();
@@ -74,7 +75,12 @@ class BrowserUi {
     std::string permissions_report() const;
     void open_site_data();
     std::string site_data_report() const;
-    void save_export(std::string payload, const std::string &filename, const std::string &filter);
+    void save_export(std::string payload, const std::string &filename, const std::string &filter,
+                     const std::string &title = "Save export");
+    bool export_dialog_open() const { return picker_pid_ > 0; }
+    void open_screenshot();
+    void begin_screenshot_area();
+    std::string screenshot_report() const;
     std::string bookmarks_report() const;
     void open_sessions();
     std::string sessions_report() const;
@@ -96,6 +102,14 @@ class BrowserUi {
 
   private:
     BrowserController &app_;
+    Rect screenshot_area_, screenshot_region_;
+    bool screenshot_drag_ = false, screenshot_cancel_focus_ = false;
+    int screenshot_start_x_ = 0, screenshot_start_y_ = 0;
+    void draw_screenshot(SkCanvas &, Rect);
+    void screenshot_pointer(Rect, int, int);
+    void draw_screenshot_area(SkCanvas &);
+    void screenshot_area_pointer(const PointerInput &);
+    void finish_screenshot_area(bool accept);
     TextEditor session_name_;
     bool session_input_focus_ = false;
     int session_edit_ = 0, session_scroll_ = 0;

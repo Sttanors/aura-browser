@@ -7,6 +7,7 @@
 #include "common/platform.hpp"
 #include "common/pump_schedule.hpp"
 #include "core/browser/profiles.hpp"
+#include "core/browser/screenshot.hpp"
 #include "core/browser/translation.hpp"
 #include <climits>
 #include <fstream>
@@ -1280,4 +1281,67 @@ TEST(Sessions, LimitsNamesUnsupportedUrlsAndMalformedPrivateMetadataAreRejected)
     }
     Profile filtered(temp.path);
     EXPECT_EQ(filtered.named_sessions.size(), 31);
+}
+
+TEST(Screenshots, CssClipAccountsForPageZoomAndNativeDevicePixels) {
+    const auto plan = screenshot_plan({10, 700, 800, 500}, 1.25, 2);
+    ASSERT_TRUE(plan);
+    EXPECT_DOUBLE_EQ(plan->clip.x, 12.5);
+    EXPECT_DOUBLE_EQ(plan->clip.y, 875);
+    EXPECT_DOUBLE_EQ(plan->clip.width, 1000);
+    EXPECT_DOUBLE_EQ(plan->clip.height, 625);
+    EXPECT_DOUBLE_EQ(plan->scale, 1);
+    EXPECT_EQ(plan->width, 2000);
+    EXPECT_EQ(plan->height, 1250);
+    EXPECT_FALSE(plan->reduced);
+    EXPECT_TRUE(screenshot_plan({-200, 0, 800, 600}, 1, 1)); // RTL document offsets are valid.
+}
+TEST(Screenshots, HugePagesAreReducedWithoutExceedingMemoryOrEncoderBounds) {
+    for (const auto &rect :
+         std::vector<CaptureRect>{{0, 0, 10000, 10000}, {0, 0, 1000, 1000000}, {0, 0, 800, 2600}}) {
+        auto plan = screenshot_plan(rect, 3, 2);
+        ASSERT_TRUE(plan);
+        EXPECT_TRUE(plan->reduced);
+        EXPECT_LE(plan->width, 32766);
+        EXPECT_LE(plan->height, 32766);
+        EXPECT_LE(uint64_t(plan->width) * plan->height, 32ULL * 1024 * 1024);
+    }
+}
+TEST(Screenshots, InvalidMetricsAndDegenerateRegionsCannotAllocateAnImage) {
+    const auto nan = std::numeric_limits<double>::quiet_NaN();
+    EXPECT_FALSE(screenshot_plan({0, 0, nan, 500}, 1, 1));
+    EXPECT_FALSE(screenshot_plan({0, 0, 800, -1}, 1, 1));
+    EXPECT_FALSE(screenshot_plan({0, 0, 800, 500}, 0, 1));
+    EXPECT_FALSE(screenshot_plan({0, 0, 800, 500}, 1, 0));
+    EXPECT_FALSE(screenshot_plan({1e12, 0, 800, 500}, 1, 1));
+    EXPECT_FALSE(screenshot_plan({0, 0, 1e12, 500}, 1, 1));
+    EXPECT_FALSE(screenshot_plan({0, 0, .1, 500}, .5, 1));
+}
+TEST(Screenshots, PngHeaderDimensionsAreBoundedBeforeExport) {
+    std::string bytes(33, '\0');
+    const unsigned char magic[] = {137, 80, 78, 71, 13, 10, 26, 10};
+    for (int i = 0; i < 8; ++i)
+        bytes[i] = char(magic[i]);
+    bytes[11] = 13;
+    bytes.replace(12, 4, "IHDR");
+    auto set = [&](int offset, uint32_t n) {
+        for (int i = 3; i >= 0; --i) {
+            bytes[offset + i] = char(n & 255);
+            n >>= 8;
+        }
+    };
+    set(16, 800);
+    set(20, 600);
+    auto size = screenshot_png_size(bytes);
+    ASSERT_TRUE(size);
+    EXPECT_EQ(size->first, 800);
+    EXPECT_EQ(size->second, 600);
+    set(16, 0);
+    EXPECT_FALSE(screenshot_png_size(bytes));
+    set(16, 32767);
+    set(20, 32767);
+    EXPECT_FALSE(screenshot_png_size(bytes));
+    set(16, 0xffffffff);
+    EXPECT_FALSE(screenshot_png_size(bytes));
+    EXPECT_FALSE(screenshot_png_size("not a png"));
 }

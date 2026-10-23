@@ -28,7 +28,7 @@ add_custom_command(
           "${AURA_GENERATED}/aura/design_tokens.hpp"
   DEPENDS design/tokens.json scripts/generate_tokens.py VERBATIM)
 add_custom_target(aura_design_tokens DEPENDS "${AURA_GENERATED}/aura/design_tokens.hpp")
-add_library(aura_common common/exports.cpp core/browser/sessions.cpp core/browser/bookmarks.cpp core/browser/permissions.cpp core/browser/translation.cpp common/file_lock.cpp core/browser/profiles.cpp common/platform.cpp common/config.cpp common/paint_buffer.cpp common/pump_schedule.cpp core/browser/profile.cpp core/browser/i18n.cpp core/browser/preferences.cpp core/browser/update_policy.cpp core/browser/passwords.cpp)
+add_library(aura_common common/exports.cpp core/browser/screenshot.cpp core/browser/sessions.cpp core/browser/bookmarks.cpp core/browser/permissions.cpp core/browser/translation.cpp common/file_lock.cpp core/browser/profiles.cpp common/platform.cpp common/config.cpp common/paint_buffer.cpp common/pump_schedule.cpp core/browser/profile.cpp core/browser/i18n.cpp core/browser/preferences.cpp core/browser/update_policy.cpp core/browser/passwords.cpp)
 target_include_directories(aura_common PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}" "${AURA_GENERATED}")
 target_link_libraries(aura_common PUBLIC tomlplusplus::tomlplusplus spdlog::spdlog OpenSSL::Crypto)
 add_dependencies(aura_common aura_design_tokens)
@@ -144,7 +144,7 @@ if(AURA_BUILD_DIAGNOSTIC AND NOT APPLE)
   set_target_properties(aura_adblock PROPERTIES IMPORTED_LOCATION "${AURA_RUST_TARGET}/release/${AURA_RUST_LIBRARY}")
   add_dependencies(aura_adblock aura_adblock_build)
   set(AURA_BROWSER_SOURCES app/browser_main.cpp core/browser/browser.cpp core/browser/client.cpp core/browser/devtools.cpp core/browser/tab_lifecycle.cpp core/browser/split_view.cpp core/browser/containers.cpp core/browser/protection.cpp core/browser/filter_lists.cpp core/browser/extensions.cpp core/browser/site_tools.cpp core/browser/extension_popup.cpp core/browser/updates.cpp core/browser/imports.cpp
-    core/cef/diagnostic_client.cpp core/browser/site_data.cpp core/browser/site_permissions.cpp core/browser/reader.cpp ui/browser_ui.cpp ui/wallpaper.cpp)
+    core/cef/diagnostic_client.cpp core/browser/capture_screenshot.cpp core/browser/site_data.cpp core/browser/site_permissions.cpp core/browser/reader.cpp ui/browser_ui.cpp ui/wallpaper.cpp)
   if(WIN32)
     add_library(aura_browser SHARED ${AURA_BROWSER_SOURCES} platform/windows/browser_window.cpp render/cef_bridge/shared_texture_probe.cpp)
     target_link_libraries(aura_browser PRIVATE d3d11 dxgi)

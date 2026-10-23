@@ -9,7 +9,8 @@ bool BrowserController::can_sleep(const Tab &t) const {
     if (quitting || tab_visible(t.id) || t.ntp || t.private_tab || t.pinned || t.loading ||
         t.closing || t.page.closed || !t.page.loaded || t.page.failed || t.sleeping ||
         t.sleep_pending || t.reader_pending || !t.browser || !t.devtools || !t.site_tools_ready ||
-        t.media_capture || tools_open || site_exception(t.page.url, profile.tab_sleep_exceptions))
+        t.media_capture || (screenshot.native_running && screenshot.job_tab == t.id) ||
+        tools_open || site_exception(t.page.url, profile.tab_sleep_exceptions))
         return false;
     // Extension/background browser pages are never frozen by this controller.
     if (!t.page.url.starts_with("https://") && !t.page.url.starts_with("http://"))
