@@ -43,14 +43,19 @@ def main():
         for launch in range(2):
             report_path = output/f'report-{launch}.json'
             report_path.unlink(missing_ok=True)
+            last_report = {}
             def read():
-                try: return json.loads(report_path.read_text(encoding='utf-8'))
-                except (OSError, ValueError): return {}
+                nonlocal last_report
+                try:
+                    last_report = json.loads(report_path.read_text(encoding='utf-8'))
+                except (OSError, ValueError):
+                    pass  # A Windows sharing violation during atomic replacement is transient.
+                return last_report
             def wait(predicate, message, timeout=45):
                 deadline = time.monotonic()+timeout
                 while time.monotonic()<deadline:
                     state = read()
-                    if predicate(state): return state
+                    if state and predicate(state): return state
                     if process.poll() is not None: raise RuntimeError(f'Browser exited ({process.returncode}): {message}')
                     time.sleep(.1)
                 raise RuntimeError(message)
