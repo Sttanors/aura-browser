@@ -4,6 +4,7 @@
 #include "common/config.hpp"
 #include "common/exports.hpp"
 #include "common/platform.hpp"
+#include "common/text.hpp"
 #include "common/update_key.hpp"
 #include "core/browser/translation.hpp"
 #include "include/cef_frame.h"
@@ -416,7 +417,10 @@ Rect BrowserUi::panel_bounds() const {
         : panel_ == Translation ? 520
         : panel_ == Profiles    ? std::clamp(236 + int(listed_profiles().size()) * 84, 340, 700)
         : panel_ == Containers
-            ? std::clamp(260 + int(app_.profile.containers.size()) * 88, 440, 700)
+            ? std::clamp(260 + int(container_rules_mode_ ? app_.profile.container_rules.size()
+                                                         : app_.profile.containers.size()) *
+                                   88,
+                         440, 700)
         : panel_ == Groups
             ? std::clamp(
                   260 + int(std::count_if(app_.profile.groups.begin(), app_.profile.groups.end(),
@@ -701,8 +705,9 @@ void BrowserUi::draw(SkCanvas &c) {
             fill(c, r, 9, SkColorSetA(t.surface, 180));
         icon(c, icons[i], 28, r.y + 7, 18, muted);
         label(c, regular_, labels[i], 58, r.y + 21, 12, ink);
-        if (i == 2 && !app_.downloads.empty())
-            label(c, medium_, std::to_string(app_.downloads.size()), 204, r.y + 20, 10, t.accent);
+        if (i == 2 && !app_.visible_downloads().empty())
+            label(c, medium_, std::to_string(app_.visible_downloads().size()), 204, r.y + 20, 10,
+                  t.accent);
     }
     focus_target({16, height_ - 60, 208, 54});
     fill(c, {20, height_ - 48, 28, 28}, 10, SkColorSetA(t.accent, 35));
@@ -846,7 +851,7 @@ void BrowserUi::draw(SkCanvas &c) {
                                       app_.tr("Filter lists"),
                                       app_.tr("Workspaces"),
                                       app_.tr("Tab groups"),
-                                      app_.tr("Site containers"),
+                                      app_.tr(container_rules_mode_ ? "Site rules" : "Site containers"),
                                       app_.tr("Profiles"),
                                       app_.tr("Command palette"),
                                       app_.tr("Translate"),
@@ -892,27 +897,31 @@ void BrowserUi::draw(SkCanvas &c) {
             c.restore();
         }
         if (panel_ == Downloads) {
-            label(c, regular_, app_.tr("Files are saved in your local profile's downloads folder."),
+            const auto visible = app_.visible_downloads();
+            label(c, regular_,
+                  app_.tr("Downloads from all windows of this profile. Private downloads stay in "
+                          "their window."),
                   r.x + 28, r.y + 75, 12, muted);
             fill(c, {r.x + 25, r.y + 91, 132, 31}, 8, SkColorSetA(t.accent, 25));
             icon(c, "folder", r.x + 35, r.y + 98, 17, t.accent);
             centered_label(c, medium_, app_.tr("Show folder"), {r.x + 25, r.y + 91, 132, 31}, 11,
                            ink, 34, 8);
             focus_target({r.x + 25, r.y + 91, 132, 31});
-            if (app_.downloads.empty())
+            if (visible.empty())
                 label(c, regular_, app_.tr("Your downloads will appear here."), r.x + 28, r.y + 169,
                       14, muted);
             c.save();
             c.clipRect(
                 SkRect::MakeLTRB(r.x + 12, r.y + 132, r.x + r.width - 12, r.y + r.height - 14));
-            for (std::size_t i = panel_scroll_; i < app_.downloads.size(); ++i) {
-                auto &d = app_.downloads[i];
+            for (std::size_t i = panel_scroll_; i < visible.size(); ++i) {
+                auto &d = app_.downloads[visible[i]];
                 int y = r.y + 141 + (static_cast<int>(i) - panel_scroll_) * 75;
                 if (y > r.y + r.height - 20)
                     break;
                 icon(c, d.complete ? "check" : "download", r.x + 29, y + 7, 20, t.accent);
                 label(c, medium_, d.name.empty() ? app_.tr("Downloading…") : d.name, r.x + 62,
-                      y + 21, 13, ink, r.width - 170);
+                      y + 21, 13, ink,
+                      r.width - (d.complete || d.cancelled || d.interrupted ? 230 : 170));
                 label(c, regular_,
                       d.cancelled  ? app_.tr("Cancelled")
                       : d.complete ? app_.tr("Complete · ") + bytes(d.received)
@@ -921,7 +930,39 @@ void BrowserUi::draw(SkCanvas &c) {
                       : d.paused ? app_.tr("Paused")
                                  : bytes(d.received) + " / " + bytes(d.total),
                       r.x + 62, y + 42, 11, muted);
-                if (!d.complete && !d.cancelled) {
+                if (d.complete || d.cancelled || d.interrupted) {
+                    Rect action{r.x + r.width - 149, y + 5, 124, 34};
+                    if (y + 50 <= r.y + r.height - 14 && d.checksum_status != "hashing")
+                        focus_target(action);
+                    fill(c, action, 8,
+                         SkColorSetA(t.accent, d.checksum_status == "hashing" ? 8 : 20));
+                    centered_label(c, medium_,
+                                   app_.tr(d.checksum_status == "hashing" ? "Hashing…"
+                                           : d.complete                   ? "SHA-256"
+                                                                          : "Retry"),
+                                   action, 12, d.checksum_status == "hashing" ? muted : ink, 5, 5);
+                    if (!d.checksum_status.empty()) {
+                        const char *status =
+                            d.checksum_status == "hashing"    ? "Hashing…"
+                            : d.checksum_status == "match"    ? "SHA-256 matches"
+                            : d.checksum_status == "mismatch" ? "SHA-256 does not match"
+                            : d.checksum_status == "computed" ? "SHA-256 calculated"
+                                                              : "Could not hash this file. Check "
+                                                                "that it exists and is unchanged.";
+                        label(c, regular_, app_.tr(status), r.x + 62, y + 62, 11, muted,
+                              r.width - 95);
+                    }
+                } else {
+                    if (!d.paused && d.speed > 0) {
+                        std::string status = bytes(d.speed) + "/s";
+                        if (d.total > d.received) {
+                            const auto seconds = (d.total - d.received) / d.speed +
+                                                 ((d.total - d.received) % d.speed != 0);
+                            status += " · ~" + std::to_string(seconds / 60) + " " + app_.tr("min") +
+                                      " " + std::to_string(seconds % 60) + " " + app_.tr("sec");
+                        }
+                        label(c, regular_, status, r.x + 62, y + 61, 11, muted, r.width - 95);
+                    }
                     if (y + 50 <= r.y + r.height - 14) {
                         focus_target({r.x + r.width - 98, y + 5, 36, 36});
                         focus_target({r.x + r.width - 57, y + 5, 36, 36});
@@ -929,9 +970,9 @@ void BrowserUi::draw(SkCanvas &c) {
                     icon(c, d.paused || d.interrupted ? "play" : "pause", r.x + r.width - 89,
                          y + 13, 18, muted);
                     icon(c, "close", r.x + r.width - 48, y + 13, 18, muted);
-                    fill(c, {r.x + 62, y + 52, r.width - 94, 3}, 2, SkColorSetA(t.accent, 30));
+                    fill(c, {r.x + 62, y + 67, r.width - 94, 3}, 2, SkColorSetA(t.accent, 30));
                     fill(c,
-                         {r.x + 62, y + 52,
+                         {r.x + 62, y + 67,
                           static_cast<int>((r.width - 94) * std::max(0, d.percent) / 100.f), 3},
                          2, t.accent);
                 }
@@ -1135,30 +1176,8 @@ namespace {
 constexpr const char *settings_sections[] = {"General", "Tabs",        "Appearance", "Webpages",
                                              "Privacy", "Permissions", "Downloads",  "Protection",
                                              "Data",    "Start page"};
-std::string fold_settings(std::string text) {
-    std::string out;
-    for (std::size_t i = 0; i < text.size(); ++i) {
-        const auto c = static_cast<unsigned char>(text[i]);
-        if (c == 0xD0 && i + 1 < text.size()) {
-            auto next = static_cast<unsigned char>(text[++i]);
-            if (next == 0x81) {
-                out += '\xD1';
-                out += '\x91';
-            } else if (next >= 0x90 && next <= 0x9F) {
-                out += '\xD0';
-                out += static_cast<char>(next + 32);
-            } else if (next >= 0xA0 && next <= 0xAF) {
-                out += '\xD1';
-                out += static_cast<char>(next - 32);
-            } else {
-                out += static_cast<char>(c);
-                out += static_cast<char>(next);
-            }
-        } else
-            out += c < 128 ? static_cast<char>(std::tolower(c)) : static_cast<char>(c);
-    }
-    return out;
-}
+std::string fold_settings(std::string text) { return fold_text(text); }
+
 } // namespace
 int BrowserUi::choice_columns(const SettingSpec &spec, Rect r) const {
     float minimum = 116;
@@ -2544,7 +2563,7 @@ void BrowserUi::settings_pointer(Rect r, int x, int y) {
         if (update) {
             if (spec->id == "language")
                 toast_.clear();
-            app_.apply_settings(spec->id == "default_zoom");
+            app_.apply_settings(spec->id == "default_zoom" || spec->id == "remember_site_zoom");
         }
         settings_edit_.clear();
         return;
@@ -2791,7 +2810,8 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
                 (live != &filter_input_ || live->value.size() + text.size() <= 4096) &&
                 (live != &workspace_input_ || live->value.size() + text.size() <= 120) &&
                 (live != &group_input_ || live->value.size() + text.size() <= 120) &&
-                (live != &container_input_ || live->value.size() + text.size() <= 120) &&
+                (live != &container_input_ ||
+                 live->value.size() + text.size() <= (container_rules_mode_ ? 253u : 120u)) &&
                 (live != &permissions_search_ || live->value.size() + text.size() <= 512) &&
                 (live != &data_search_ || live->value.size() + text.size() <= 512) &&
                 (panel_ != Bookmarks || live->value.size() + text.size() <= 16384) &&
@@ -3472,7 +3492,10 @@ bool BrowserUi::key_default(const CefKeyEvent &key) {
         if (panel_ == Containers && !container_input_focus_ &&
             (code == 0x21 || code == 0x22 || code == 0x24 || code == 0x23)) {
             const int capacity = std::max(1, (panel_bounds().height - 260) / 88);
-            const int maximum = std::max(0, int(app_.profile.containers.size()) - capacity);
+            const int maximum =
+                std::max(0, int(container_rules_mode_ ? app_.profile.container_rules.size()
+                                                      : app_.profile.containers.size()) -
+                                capacity);
             container_scroll_ = std::clamp(
                 code == 0x24   ? 0
                 : code == 0x23 ? maximum
@@ -3842,7 +3865,7 @@ bool BrowserUi::key_default(const CefKeyEvent &key) {
             (code == 0x21 || code == 0x22 || code == 0x24 || code == 0x23)) {
             const int count = panel_ == History     ? int(app_.profile.history.size())
                               : panel_ == Bookmarks ? int(app_.profile.bookmarks.size())
-                              : panel_ == Downloads ? int(app_.downloads.size())
+                              : panel_ == Downloads ? int(app_.visible_downloads().size())
                               : panel_ == Shortcuts ? int(app_.profile.shortcuts.size())
                               : panel_ == Filters   ? int(filter_lines_.size())
                               : app_.extensions.candidate
@@ -3974,7 +3997,8 @@ void BrowserUi::text(const std::string &value) {
         if (profile_input_focus_ && profile_input_.value.size() + clean.size() <= 120)
             profile_input_.insert(clean);
     } else if (panel_ == Containers) {
-        if (container_input_focus_ && container_input_.value.size() + clean.size() <= 120)
+        if (container_input_focus_ &&
+            container_input_.value.size() + clean.size() <= (container_rules_mode_ ? 253u : 120u))
             container_input_.insert(clean);
     } else if (panel_ == Groups) {
         if (group_input_focus_ && group_input_.value.size() + clean.size() <= 120)
@@ -4224,8 +4248,11 @@ void BrowserUi::pointer(const PointerInput &input) {
     }
     if (input.kind == PointerInput::Wheel && panel_ == Containers) {
         const int capacity = std::max(1, (panel_bounds().height - 260) / 88);
-        container_scroll_ = std::clamp(container_scroll_ + (input.dy < 0 ? 1 : -1), 0,
-                                       std::max(0, int(app_.profile.containers.size()) - capacity));
+        container_scroll_ =
+            std::clamp(container_scroll_ + (input.dy < 0 ? 1 : -1), 0,
+                       std::max(0, int(container_rules_mode_ ? app_.profile.container_rules.size()
+                                                             : app_.profile.containers.size()) -
+                                       capacity));
         return;
     }
     if (input.kind == PointerInput::Wheel && panel_ == Groups) {
@@ -4276,7 +4303,7 @@ void BrowserUi::pointer(const PointerInput &input) {
         if (inside(r, x, y)) {
             int count = panel_ == History     ? app_.profile.history.size()
                         : panel_ == Bookmarks ? app_.profile.bookmarks.size()
-                                              : app_.downloads.size();
+                                              : app_.visible_downloads().size();
             panel_scroll_ =
                 std::clamp(panel_scroll_ + (input.dy < 0 ? 2 : -2), 0, std::max(0, count - 4));
             return;
@@ -4407,8 +4434,21 @@ void BrowserUi::pointer(const PointerInput &input) {
                     app_.open_folder();
                 else if (y >= r.y + 141) {
                     int i = (y - r.y - 141) / 75 + panel_scroll_;
-                    if (x > r.x + r.width - 110)
-                        app_.download_action(i, x > r.x + r.width - 64);
+                    const auto visible = app_.visible_downloads();
+                    if (i >= 0 && i < int(visible.size())) {
+                        const auto index = visible[i];
+                        const auto &d = app_.downloads[index];
+                        if (d.complete || d.cancelled || d.interrupted) {
+                            const int top = r.y + 141 + (i - panel_scroll_) * 75;
+                            if (inside({r.x + r.width - 149, top + 5, 124, 34}, x, y)) {
+                                if (d.complete)
+                                    app_.verify_download(index);
+                                else
+                                    app_.retry_download(index);
+                            }
+                        } else if (x > r.x + r.width - 110)
+                            app_.download_action(index, x > r.x + r.width - 64);
+                    }
                 }
             } else if (panel_ == Settings)
                 settings_pointer(r, x, y);
@@ -6248,6 +6288,7 @@ void BrowserUi::open_containers(int id) {
         app_.ui->toast(app_.tr("Containers are unavailable in private tabs."));
         return;
     }
+    container_rules_mode_ = false;
     container_target_ = id >= 0 ? id : (app_.current() ? app_.current()->id : -1);
     container_edit_ = -1;
     container_color_ = 0;
@@ -6260,6 +6301,19 @@ void BrowserUi::open_containers(int id) {
 void BrowserUi::save_container() {
     if (app_.private_window)
         return;
+    if (container_rules_mode_) {
+        if (!app_.save_container_rule(container_input_.value, container_rule_target_,
+                                      container_rule_subdomains_)) {
+            container_error_ = app_.tr("Enter a hostname without a path or port. Up to 256 rules.");
+            app_.changed();
+            return;
+        }
+        container_input_.set("");
+        container_error_.clear();
+        container_input_focus_ = false;
+        app_.changed(true);
+        return;
+    }
     bool success = false;
     if (container_edit_ > 0)
         success = app_.profile.rename_container(container_edit_, container_input_.value,
@@ -6278,6 +6332,18 @@ void BrowserUi::save_container() {
     app_.changed(true);
 }
 void BrowserUi::draw_containers(SkCanvas &canvas, Rect r) {
+    const auto &theme = interface_theme(app_.profile);
+    Rect mode{r.x + r.width - 254, r.y + 20, 194, 32};
+    focus_target(mode);
+    fill(canvas, mode, 8, SkColorSetA(theme.accent, 16));
+    border(canvas, mode, 8, SkColorSetA(theme.accent, 100));
+    centered_label(canvas, medium_,
+                   app_.tr(container_rules_mode_ ? "Back to containers" : "Site rules"), mode, 12,
+                   theme.text, 5, 5);
+    if (container_rules_mode_) {
+        draw_container_rules(canvas, r);
+        return;
+    }
     const auto &t = interface_theme(app_.profile);
     auto &c = canvas;
     const bool enabled = !app_.private_window;
@@ -6315,8 +6381,11 @@ void BrowserUi::draw_containers(SkCanvas &canvas, Rect r) {
     }
     label(c, regular_, container_error_, r.x + 28, r.y + 205, 11, t.text, r.width - 56);
     const int capacity = std::max(1, (r.height - 260) / 88);
-    container_scroll_ = std::clamp(container_scroll_, 0,
-                                   std::max(0, int(app_.profile.containers.size()) - capacity));
+    container_scroll_ =
+        std::clamp(container_scroll_, 0,
+                   std::max(0, int(container_rules_mode_ ? app_.profile.container_rules.size()
+                                                         : app_.profile.containers.size()) -
+                                   capacity));
     for (int i = container_scroll_;
          i < int(app_.profile.containers.size()) && i < container_scroll_ + capacity; i++) {
         const auto &item = app_.profile.containers[i];
@@ -6338,6 +6407,21 @@ void BrowserUi::draw_containers(SkCanvas &canvas, Rect r) {
 void BrowserUi::containers_pointer(Rect r, int x, int y) {
     if (app_.private_window)
         return;
+    if (inside({r.x + r.width - 254, r.y + 20, 194, 32}, x, y)) {
+        container_rules_mode_ = !container_rules_mode_;
+        container_scroll_ = 0;
+        container_input_.set("");
+        container_error_.clear();
+        container_input_focus_ = false;
+        if (!app_.profile.container(container_rule_target_))
+            container_rule_target_ = 0;
+        app_.changed();
+        return;
+    }
+    if (container_rules_mode_) {
+        container_rules_pointer(r, x, y);
+        return;
+    }
     if (inside({r.x + 28, r.y + 108, r.width - 196, 36}, x, y)) {
         container_input_focus_ = true;
         keyboard_focus_ = -1;
@@ -6389,12 +6473,15 @@ void BrowserUi::containers_pointer(Rect r, int x, int y) {
 std::string BrowserUi::containers_report() const {
     if (panel_ != Containers)
         return "null";
+    if (container_rules_mode_)
+        return container_rules_report();
     const auto r = panel_bounds();
     auto rect = [](Rect b) {
         return "[" + std::to_string(b.x) + "," + std::to_string(b.y) + "," +
                std::to_string(b.width) + "," + std::to_string(b.height) + "]";
     };
-    std::string out = "{\"input\":" + rect({r.x + 28, r.y + 108, r.width - 196, 36}) +
+    std::string out = "{\"rules_button\":" + rect({r.x + r.width - 254, r.y + 20, 194, 32}) +
+                      ",\"input\":" + rect({r.x + 28, r.y + 108, r.width - 196, 36}) +
                       ",\"save\":" + rect({r.x + r.width - 156, r.y + 108, 128, 36}) +
                       ",\"input_length\":" + std::to_string(container_input_.value.size()) +
                       ",\"error\":" + json_quote(container_error_) + ",\"items\":[";
@@ -8074,10 +8161,21 @@ void BrowserUi::bookmarks_pointer(Rect r, int x, int y) {
         bookmark_focus_ = 4;
         bookmark_error_.clear();
         app_.changed();
-    } else if (hit({r.x + 184, r.y + r.height - 64, 180, 34}) && !app_.profile.bookmarks.empty())
-        save_export(bookmarks_html(app_.profile.bookmarks, app_.profile.bookmark_folders),
-                    "aura-bookmarks.html", "HTML | *.html");
-    else if (hit({r.x + r.width - 128, r.y + r.height - 64, 100, 34}))
+    } else if (hit({r.x + 184, r.y + r.height - 64, 180, 34}) && !app_.profile.bookmarks.empty()) {
+        size_t skipped = 0;
+        auto payload =
+            bookmarks_html(app_.profile.bookmarks, app_.profile.bookmark_folders, &skipped);
+        auto save = [this, payload = std::move(payload)] {
+            save_export(payload, "aura-bookmarks.html", "HTML | *.html");
+        };
+        if (skipped)
+            app_.confirm_action(app_.tr("Export bookmarks"),
+                                app_.tr("Unsupported bookmark addresses will be skipped: ") +
+                                    std::to_string(skipped),
+                                std::move(save));
+        else
+            save();
+    } else if (hit({r.x + r.width - 128, r.y + r.height - 64, 100, 34}))
         dismiss();
 }
 std::string BrowserUi::bookmarks_report() const {
@@ -8829,6 +8927,186 @@ std::string BrowserUi::hotkeys_report() const {
                ",\"bind\":" + rect({r.x + r.width - 398, y, 164, 34}) +
                ",\"reset\":" + rect({r.x + r.width - 226, y, 88, 34}) +
                ",\"disable\":" + rect({r.x + r.width - 130, y, 102, 34}) + "}";
+    }
+    return out + "]}";
+}
+} // namespace aura
+
+namespace aura {
+void BrowserUi::draw_container_rules(SkCanvas &c, Rect r) {
+    const auto &t = interface_theme(app_.profile);
+    auto button = [&](Rect b, const std::string &text, bool dropdown = false) {
+        focus_target(b);
+        fill(c, b, 8, SkColorSetA(t.accent, inside(b, hover_x_, hover_y_) ? 35 : 16));
+        border(c, b, 8, SkColorSetA(t.accent, 120));
+        centered_label(c, medium_, text, b, 12, t.text, 5, dropdown ? 28 : 5);
+        if (dropdown)
+            icon(c, "collapse", b.x + b.width - 22, b.y + 12, 12, t.text);
+    };
+    label(c, regular_, app_.tr("Confirm before opening a matching site in its assigned container."),
+          r.x + 28, r.y + 73, 12, t.muted, r.width - 56);
+    label(c, regular_, app_.tr("Hostname (example.org)"), r.x + 28, r.y + 99, 11, t.muted);
+    Rect input{r.x + 28, r.y + 108, r.width - 196, 36};
+    focus_target(input);
+    fill(c, input, 8, t.background);
+    border(c, input, 8, SkColorSetA(t.accent, container_input_focus_ ? 220 : 85));
+    draw_editor(c, container_input_, {input.x + 10, input.y + 2, input.width - 20, 32}, 13,
+                container_input_focus_);
+    button({r.x + r.width - 156, r.y + 108, 128, 36}, app_.tr("Save rule"));
+    const int half = (r.width - 64) / 2;
+    button({r.x + 28, r.y + 154, half, 36},
+           app_.tr("Container") + ": " + app_.profile.container_label(container_rule_target_), true);
+    button({r.x + 36 + half, r.y + 154, half, 36},
+           std::string(container_rule_subdomains_ ? "✓ " : "○ ") + app_.tr("Include subdomains"));
+    label(c, regular_, container_error_, r.x + 28, r.y + 205, 11, t.text, r.width - 56);
+    const int capacity = std::max(1, (r.height - 260) / 88);
+    container_scroll_ = std::clamp(
+        container_scroll_, 0, std::max(0, int(app_.profile.container_rules.size()) - capacity));
+    if (app_.profile.container_rules.empty())
+        label(c, regular_, app_.tr("Add a hostname above to create the first rule."), r.x + 28,
+              r.y + 242, 13, t.muted, r.width - 56);
+    for (int i = container_scroll_;
+         i < int(app_.profile.container_rules.size()) && i < container_scroll_ + capacity; ++i) {
+        const auto &rule = app_.profile.container_rules[i];
+        const int y = r.y + 212 + (i - container_scroll_) * 88;
+        label(c, medium_, rule.host, r.x + 28, y + 22, 13, t.text, r.width - 310);
+        label(c, regular_,
+              app_.profile.container_label(rule.container) +
+                  (rule.subdomains ? " · " + app_.tr("Include subdomains") : ""),
+              r.x + 28, y + 51, 12, t.muted, r.width - 310);
+        button({r.x + r.width - 292, y + 12, 128, 36}, app_.tr("Edit"));
+        button({r.x + r.width - 156, y + 12, 128, 36}, app_.tr("Remove"));
+    }
+    label(c, regular_,
+          app_.tr("Private tabs ignore rules. Forms are never resubmitted across containers."),
+          r.x + 28, r.y + r.height - 22, 10, t.muted, r.width - 56);
+}
+void BrowserUi::container_rules_pointer(Rect r, int x, int y) {
+    if (inside({r.x + 28, r.y + 108, r.width - 196, 36}, x, y)) {
+        container_input_focus_ = true;
+        keyboard_focus_ = -1;
+        return;
+    }
+    container_input_focus_ = false;
+    if (inside({r.x + r.width - 156, r.y + 108, 128, 36}, x, y)) {
+        save_container();
+        return;
+    }
+    const int half = (r.width - 64) / 2;
+    if (inside({r.x + 28, r.y + 154, half, 36}, x, y)) {
+        container_rule_picker(r);
+        return;
+    }
+    if (inside({r.x + 36 + half, r.y + 154, half, 36}, x, y)) {
+        container_rule_subdomains_ = !container_rule_subdomains_;
+        app_.changed();
+        return;
+    }
+    const int capacity = std::max(1, (r.height - 260) / 88);
+    for (int i = container_scroll_;
+         i < int(app_.profile.container_rules.size()) && i < container_scroll_ + capacity; ++i) {
+        const int top = r.y + 212 + (i - container_scroll_) * 88;
+        if (inside({r.x + r.width - 292, top + 12, 128, 36}, x, y)) {
+            const auto rule = app_.profile.container_rules[i];
+            container_input_.set(rule.host, true);
+            container_rule_target_ = rule.container;
+            container_rule_subdomains_ = rule.subdomains;
+            container_input_focus_ = true;
+            container_error_.clear();
+            app_.changed();
+            return;
+        }
+        if (inside({r.x + r.width - 156, top + 12, 128, 36}, x, y)) {
+            app_.profile.container_rules.erase(app_.profile.container_rules.begin() + i);
+            app_.changed(true);
+            return;
+        }
+    }
+}
+void BrowserUi::container_rule_picker(Rect r, int page) {
+    app_.close_menu();
+    keyboard_focus_ = -1;
+    const int half = (r.width - 64) / 2;
+    app_.menu_x = r.x + 28;
+    app_.menu_y = r.y + 194;
+    app_.menu_width = half;
+    const auto &items = app_.profile.containers;
+    page = std::clamp(page, 0, std::max(0, (int(items.size()) - 1) / 6));
+    if (page)
+        app_.menu.push_back({-1, app_.tr("Previous")});
+    for (int i = page * 6; i < std::min(int(items.size()), page * 6 + 6); ++i)
+        app_.menu.push_back({items[i].id + 1, app_.profile.container_label(items[i].id)});
+    if ((page + 1) * 6 < int(items.size()))
+        app_.menu.push_back({-2, app_.tr("Next")});
+    app_.menu_action = [this, r, page](int id) {
+        if (id < 0) {
+            container_rule_picker(r, page + (id == -1 ? -1 : 1));
+            return;
+        }
+        if (app_.profile.container(id - 1))
+            container_rule_target_ = id - 1;
+        app_.changed();
+    };
+    app_.changed();
+}
+std::string BrowserUi::container_rules_report() const {
+    const auto r = panel_bounds();
+    auto rect = [](Rect b) {
+        return "[" + std::to_string(b.x) + "," + std::to_string(b.y) + "," +
+               std::to_string(b.width) + "," + std::to_string(b.height) + "]";
+    };
+    const int half = (r.width - 64) / 2;
+    std::string out =
+        "{\"rules_mode\":true,\"input\":" + rect({r.x + 28, r.y + 108, r.width - 196, 36}) +
+        ",\"save\":" + rect({r.x + r.width - 156, r.y + 108, 128, 36}) +
+        ",\"selector\":" + rect({r.x + 28, r.y + 154, half, 36}) +
+        ",\"subdomains_button\":" + rect({r.x + 36 + half, r.y + 154, half, 36}) +
+        ",\"target\":" + std::to_string(container_rule_target_) +
+        ",\"subdomains\":" + (container_rule_subdomains_ ? "true" : "false") +
+        ",\"input_length\":" + std::to_string(container_input_.value.size()) +
+        ",\"error\":" + json_quote(container_error_) + ",\"items\":[";
+    const int capacity = std::max(1, (r.height - 260) / 88);
+    for (int i = container_scroll_;
+         i < int(app_.profile.container_rules.size()) && i < container_scroll_ + capacity; ++i) {
+        if (i != container_scroll_)
+            out += ",";
+        const auto &rule = app_.profile.container_rules[i];
+        out += "{\"host\":" + json_quote(rule.host) +
+               ",\"container\":" + std::to_string(rule.container) +
+               ",\"subdomains\":" + (rule.subdomains ? "true" : "false") + ",\"edit\":" +
+               rect({r.x + r.width - 292, r.y + 224 + (i - container_scroll_) * 88, 128, 36}) +
+               ",\"remove\":" +
+               rect({r.x + r.width - 156, r.y + 224 + (i - container_scroll_) * 88, 128, 36}) + "}";
+    }
+    return out + "]}";
+}
+} // namespace aura
+
+namespace aura {
+std::string BrowserUi::downloads_report() const {
+    if (panel_ != Downloads)
+        return "null";
+    auto r = panel_bounds();
+    auto rect = [](Rect b) {
+        return "[" + std::to_string(b.x) + "," + std::to_string(b.y) + "," +
+               std::to_string(b.width) + "," + std::to_string(b.height) + "]";
+    };
+    std::string out = "{\"items\":[";
+    const auto visible = app_.visible_downloads();
+    bool first = true;
+    for (int i = panel_scroll_; i < int(visible.size()); ++i) {
+        const int y = r.y + 141 + (i - panel_scroll_) * 75;
+        if (y + 50 > r.y + r.height - 14)
+            break;
+        if (!first)
+            out += ",";
+        first = false;
+        const auto &d = app_.downloads[visible[i]];
+        out += "{\"id\":" + std::to_string(d.id) +
+               ",\"source_window\":" + std::to_string(d.source_window) +
+               ",\"action\":" + rect({r.x + r.width - 149, y + 5, 124, 34}) +
+               ",\"pause\":" + rect({r.x + r.width - 98, y + 5, 36, 36}) +
+               ",\"cancel\":" + rect({r.x + r.width - 57, y + 5, 36, 36}) + "}";
     }
     return out + "]}";
 }

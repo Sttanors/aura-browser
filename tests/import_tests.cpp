@@ -295,6 +295,35 @@ TEST_F(Imports, AuraHtmlRoundTripPreservesFoldersTagsAndSafeText) {
     Profile restarted(directory / "profile");
     EXPECT_EQ(restarted.bookmark_folders.size(), 2);
 }
+TEST_F(Imports, HtmlImportReusesFoldersRegardlessOfLatinAndCyrillicCase) {
+    Profile profile(directory / "case-profile");
+    const int ru = profile.add_bookmark_folder("Работа"), en = profile.add_bookmark_folder("Work");
+    auto data = read(file("case-folders.html",
+                          "<DL><DT><H3>работа</H3><DL><DT><A HREF='https://ru.test/'>RU</A></DL>"
+                          "<DT><H3>WORK</H3><DL><DT><A HREF='https://en.test/'>EN</A></DL></DL>"));
+    auto result = apply_browser_import(profile, data, true, false);
+    ASSERT_EQ(result.bookmarks_added, 2);
+    ASSERT_EQ(profile.bookmark_folders.size(), 2);
+    EXPECT_EQ(profile.bookmarks[0].folder, ru);
+    EXPECT_EQ(profile.bookmarks[1].folder, en);
+    Profile restored(profile.directory);
+    ASSERT_EQ(restored.bookmarks.size(), 2);
+    EXPECT_EQ(restored.bookmarks[0].folder, ru);
+    EXPECT_EQ(restored.bookmarks[1].folder, en);
+}
+TEST_F(Imports, FolderLimitRejectsImportAtomicallyInsteadOfDroppingOrganization) {
+    Profile profile(directory / "full-folders");
+    for (int i = 0; i < 128; ++i)
+        ASSERT_GT(profile.add_bookmark_folder("Folder " + std::to_string(i)), 0);
+    profile.save();
+    auto before = bytes(profile.directory / "profile.toml");
+    auto data = read(file("new-folder.html", "<DL><DT><H3>New</H3><DL><DT><A "
+                                             "HREF='https://new.test/'>New</A></DL></DL>"));
+    EXPECT_THROW(apply_browser_import(profile, data, true, false), std::runtime_error);
+    EXPECT_TRUE(profile.bookmarks.empty());
+    EXPECT_EQ(profile.bookmark_folders.size(), 128);
+    EXPECT_EQ(bytes(profile.directory / "profile.toml"), before);
+}
 TEST_F(Imports, NestedHtmlFoldersAreFlattenedWithoutPromotingScriptOrUnknownLinks) {
     auto data = read(file("nested.html",
                           "<DL><p><DT><H3>Parent</H3><DL><DT><H3>Child</H3><DL><DT><A "

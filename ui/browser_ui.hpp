@@ -68,6 +68,7 @@ class BrowserUi {
     std::string groups_report() const;
     void open_containers(int tab_id = -1);
     std::string containers_report() const;
+    std::string downloads_report() const;
     void open_profiles();
     std::string profiles_report() const;
     void open_commands();
@@ -205,6 +206,12 @@ class BrowserUi {
     void draw_profiles(SkCanvas &, Rect);
     void profiles_pointer(Rect, int, int);
     std::vector<int> listed_profiles() const;
+    bool container_rules_mode_ = false, container_rule_subdomains_ = false;
+    int container_rule_target_ = 0;
+    void draw_container_rules(SkCanvas &, Rect);
+    void container_rules_pointer(Rect, int, int);
+    void container_rule_picker(Rect, int page = 0);
+    std::string container_rules_report() const;
     TextEditor container_input_;
     bool container_input_focus_ = false;
     int container_edit_ = -1, container_target_ = -1, container_color_ = 0, container_scroll_ = 0;

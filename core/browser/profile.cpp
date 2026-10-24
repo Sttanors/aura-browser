@@ -1,6 +1,7 @@
 #include "core/browser/profile.hpp"
 #include "common/config.hpp"
 #include "common/platform.hpp"
+#include "common/text.hpp"
 #include "core/browser/i18n.hpp"
 #include <algorithm>
 #include <cctype>
@@ -38,7 +39,7 @@ std::string encode(const std::string &text) {
     return out;
 }
 // Validate only the authority; query/path punctuation is not a hostname.
-bool bare_address(const std::string &input, bool &local) {
+bool bare_address(const std::string &input, bool &local, bool explicit_url = false) {
     if (input.find_first_of(" \t\r\n") != std::string::npos)
         return false;
     const auto authority = input.substr(0, input.find_first_of("/?#"));
@@ -99,9 +100,28 @@ bool bare_address(const std::string &input, bool &local) {
     }
     local = host == "localhost" || host.starts_with("127.") || host == "::1" ||
             (!ipv6 && host.find('.') == std::string::npos && has_port);
-    return ipv6 || has_port || host == "localhost" || host.find('.') != std::string::npos;
+    if (explicit_url && !ipv6 && std::all_of(host.begin(), host.end(), [](unsigned char c) {
+            return (c >= '0' && c <= '9') || c == '.';
+        })) {
+        auto ip = a2i_IPADDRESS(host.c_str());
+        const bool valid = ip && ASN1_STRING_length(ip) == 4;
+        ASN1_OCTET_STRING_free(ip);
+        if (!valid)
+            return false;
+    }
+    return explicit_url || ipv6 || has_port || host == "localhost" ||
+           host.find('.') != std::string::npos;
 }
 } // namespace
+bool valid_home_address(const std::string &value) {
+    const size_t offset = value.starts_with("https://") ? 8 : value.starts_with("http://") ? 7 : 0;
+    if (!offset || value.size() <= offset || value.size() > 16384 ||
+        std::any_of(value.begin(), value.end(),
+                    [](unsigned char c) { return c < 32 || c == 127 || c == '\\'; }))
+        return false;
+    bool local = false;
+    return bare_address(value.substr(offset), local, true);
+}
 std::string search_engine_name(const std::string &engine) {
     if (engine == "google")
         return "Google";
@@ -251,6 +271,28 @@ void Profile::load() {
                 std::find(container_trash.begin(), container_trash.end(), id) ==
                     container_trash.end())
                 container_trash.push_back(id);
+        }
+    container_rules.clear();
+    if (auto rows = table["container_rules"].as_array())
+        for (const auto &node : *rows)
+            if (const auto row = node.as_table()) {
+                const auto id = (*row)["container"].value<int>();
+                if (id && container(*id))
+                    set_container_rule(container_rules, (*row)["host"].value_or(std::string{}), *id,
+                                       (*row)["subdomains"].value_or(false));
+            }
+    site_zooms.clear();
+    if (auto rows = table["site_zooms"].as_array())
+        for (const auto &node : *rows) {
+            if (site_zooms.size() >= 1000)
+                break;
+            if (const auto row = node.as_table()) {
+                const auto identity = (*row)["container"].value<int>();
+                const auto level = (*row)["level"].value<double>();
+                if (identity && level && container(*identity))
+                    update_site_zoom(site_zooms, (*row)["site"].value_or(std::string{}), *identity,
+                                     *level);
+            }
         }
     groups.clear();
     site_permissions.clear();
@@ -512,6 +554,32 @@ void Profile::load() {
                 named_sessions.push_back(std::move(snapshot));
             }
         }
+    // Preserve legacy snapshots that differ only in Cyrillic case; give each a unique label.
+    std::vector<std::string> seen_names;
+    for (auto &snapshot : named_sessions) {
+        auto key = fold_text(snapshot.name);
+        if (std::find(seen_names.begin(), seen_names.end(), key) != seen_names.end()) {
+            auto base = snapshot.name;
+            if (base.size() > 96) {
+                size_t end = 96;
+                while (end && (static_cast<unsigned char>(base[end]) & 0xc0) == 0x80)
+                    --end;
+                base.resize(end);
+            }
+            for (int suffix = 2;; ++suffix) {
+                auto candidate = base + " (" + std::to_string(suffix) + ")";
+                if (std::none_of(named_sessions.begin(), named_sessions.end(),
+                                 [&](const auto &other) {
+                                     return fold_text(other.name) == fold_text(candidate);
+                                 })) {
+                    snapshot.name = std::move(candidate);
+                    break;
+                }
+            }
+            key = fold_text(snapshot.name);
+        }
+        seen_names.push_back(std::move(key));
+    }
     next_named_session = std::max(next_named_session,
                                   std::clamp(table["next_named_session"].value_or(1), 1, 1000001));
     auto validate_group = [this](SavedTab &t) {
@@ -527,7 +595,7 @@ void Profile::load() {
 }
 void Profile::save() const {
     toml::table root;
-    root.insert("schema", 14);
+    root.insert("schema", 16);
     toml::array keys;
     for (const auto &entry : hotkeys)
         keys.push_back(toml::table{{"action", entry.action},
@@ -546,6 +614,16 @@ void Profile::save() const {
                                           {"permission", rule.permission},
                                           {"value", rule.value}});
     root.insert("site_permissions", std::move(permissions));
+    toml::array route_rows;
+    for (const auto &rule : container_rules)
+        route_rows.push_back(toml::table{
+            {"host", rule.host}, {"container", rule.container}, {"subdomains", rule.subdomains}});
+    root.insert("container_rules", std::move(route_rows));
+    toml::array zoom_rows;
+    for (const auto &rule : site_zooms)
+        zoom_rows.push_back(
+            toml::table{{"site", rule.site}, {"container", rule.container}, {"level", rule.level}});
+    root.insert("site_zooms", std::move(zoom_rows));
     if (!profiles_root.empty())
         root.insert("profiles_root", profiles_root);
     toml::array container_rows;
@@ -845,7 +923,7 @@ void Profile::toggle_bookmark(std::string url, std::string title) {
         std::find_if(bookmarks.begin(), bookmarks.end(), [&](auto &b) { return b.url == url; });
     if (it != bookmarks.end())
         bookmarks.erase(it);
-    else if (url != "aura://newtab")
+    else if (valid_bookmark_address(url))
         bookmarks.insert(bookmarks.begin(), {std::move(url), std::move(title), 0});
 }
 std::vector<Visit> Profile::suggest(const std::string &query, std::size_t limit) const {
@@ -942,6 +1020,8 @@ bool Profile::remove_container(int id) {
         return false;
     std::erase_if(containers, [&](const auto &c) { return c.id == id; });
     std::erase_if(site_permissions, [&](const auto &rule) { return rule.container == id; });
+    std::erase_if(container_rules, [&](const auto &rule) { return rule.container == id; });
+    std::erase_if(site_zooms, [&](const auto &rule) { return rule.container == id; });
     container_trash.push_back(id);
     for (auto &w : windows)
         remove_container_tabs(w, id);

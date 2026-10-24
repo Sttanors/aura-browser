@@ -6,6 +6,8 @@
 #include "common/paint_buffer.hpp"
 #include "common/platform.hpp"
 #include "common/pump_schedule.hpp"
+#include "common/text.hpp"
+#include "core/browser/download_hash.hpp"
 #include "core/browser/profiles.hpp"
 #include "core/browser/screenshot.hpp"
 #include "core/browser/translation.hpp"
@@ -379,6 +381,51 @@ TEST(Preferences, CatalogRoundTripsEverySettingAndRejectsInvalidInput) {
     EXPECT_FALSE(set_setting(defaults, *find_setting("download_directory"), "relative/path"));
     EXPECT_FALSE(set_setting(defaults, *find_setting("minimum_font_size"), "500"));
     EXPECT_FALSE(set_setting(defaults, *find_setting("notifications"), "allow"));
+}
+TEST(Profile, SiteZoomPersistsSeparatesContainersValidatesAndResets) {
+    TemporaryProfile temp;
+    Profile p(temp.path);
+    const int work = p.add_container("Work");
+    ASSERT_TRUE(update_site_zoom(p.site_zooms, "example.test", 0, 1.0));
+    ASSERT_TRUE(update_site_zoom(p.site_zooms, "example.test", work, -1.0));
+    EXPECT_FALSE(update_site_zoom(p.site_zooms, "example.test:80", 0, 1));
+    EXPECT_FALSE(update_site_zoom(p.site_zooms, "[::1]:123", 0, 1));
+    EXPECT_FALSE(update_site_zoom(p.site_zooms, "bad/host", 0, 1));
+    EXPECT_FALSE(update_site_zoom(p.site_zooms, "example.test", 0,
+                                  std::numeric_limits<double>::quiet_NaN()));
+    EXPECT_FALSE(update_site_zoom(p.site_zooms, "example.test", 0, 6));
+    p.save();
+    Profile restored(temp.path);
+    EXPECT_DOUBLE_EQ(*find_site_zoom(restored.site_zooms, "example.test", 0), 1);
+    EXPECT_DOUBLE_EQ(*find_site_zoom(restored.site_zooms, "example.test", work), -1);
+    EXPECT_FALSE(find_site_zoom(restored.site_zooms, "other.test", 0));
+    ASSERT_TRUE(update_site_zoom(restored.site_zooms, "example.test", 0, {}));
+    EXPECT_FALSE(find_site_zoom(restored.site_zooms, "example.test", 0));
+    ASSERT_TRUE(restored.remove_container(work));
+    EXPECT_TRUE(restored.site_zooms.empty());
+    for (int i = 0; i < 1000; ++i)
+        ASSERT_TRUE(
+            update_site_zoom(restored.site_zooms, "site" + std::to_string(i) + ".test", 0, 1));
+    EXPECT_FALSE(update_site_zoom(restored.site_zooms, "overflow.test", 0, 1));
+    EXPECT_TRUE(update_site_zoom(restored.site_zooms, "site0.test", 0, 2));
+    EXPECT_EQ(restored.site_zooms.size(), 1000);
+}
+TEST(Preferences, HomeAddressValidatesAuthorityAndKeepsPreviousSettingOnFailure) {
+    for (const auto *address :
+         {"https://[broken", "https://example.com:99999/", "https://example.com:0/",
+          "https://bad..host/", "https://user@example.com/", "http://300.400.1.2/",
+          "http://[not-ip]/", "https://-bad.example/", "https://example.com\\@other.test/",
+          "https:///path"}) {
+        BrowserPreferences p;
+        const auto before = p.home_page;
+        EXPECT_FALSE(valid_home_address(address)) << address;
+        EXPECT_FALSE(set_setting(p, *find_setting("home_page"), address)) << address;
+        EXPECT_EQ(p.home_page, before);
+    }
+    for (const auto *address :
+         {"https://example.com:8443/path?q=1#part", "http://localhost/", "http://intranet/",
+          "http://127.0.0.1:8080/", "https://[2001:db8::1]:8443/", "https://пример.рф/"})
+        EXPECT_TRUE(valid_home_address(address)) << address;
 }
 TEST(Profile, RetentionAndSuggestionSourcesRespectPreferences) {
     TemporaryProfile temp;
@@ -1125,6 +1172,26 @@ TEST(Bookmarks, OldFormatUnknownFoldersAndLimitsAreHandledWithoutLosingUrls) {
     EXPECT_EQ(p.add_bookmark_folder("One more"), -1);
     EXPECT_FALSE(p.rename_bookmark_folder(0, "Root"));
 }
+TEST(Bookmarks, LocalFilesCanBeSavedEditedAndExportedAfterRestart) {
+    TemporaryProfile temp;
+    Profile p(temp.path);
+    const std::string address = "file:///tmp/Manual%20RU.html";
+    p.toggle_bookmark(address, "Manual");
+    ASSERT_TRUE(p.edit_bookmark(address, "Локальный справочник", address, 0, "offline"));
+    p.toggle_bookmark("javascript:alert(1)", "Unsafe");
+    p.save();
+    Profile restored(temp.path);
+    ASSERT_EQ(restored.bookmarks.size(), 1);
+    size_t skipped = 999;
+    const auto html = bookmarks_html(restored.bookmarks, restored.bookmark_folders, &skipped);
+    EXPECT_EQ(skipped, 0);
+    EXPECT_NE(html.find(address), std::string::npos);
+    EXPECT_NE(html.find("Локальный справочник"), std::string::npos);
+    EXPECT_NE(html.find("TAGS=\"offline\""), std::string::npos);
+    EXPECT_FALSE(valid_bookmark_address("file://"));
+    EXPECT_FALSE(valid_bookmark_address("data:text/html,unsafe"));
+    EXPECT_FALSE(valid_bookmark_address("file:///tmp/bad\nname"));
+}
 TEST(Bookmarks, ExportEscapesEveryHtmlContextAndExcludesExecutableSchemes) {
     const std::vector<Visit> links = {{"https://example.test/?q=\"<x>&y='ok'",
                                        "<script>alert(1)</script>",
@@ -1133,7 +1200,9 @@ TEST(Bookmarks, ExportEscapesEveryHtmlContextAndExcludesExecutableSchemes) {
                                        {"\"tag\"", "A&B"}},
                                       {"javascript:alert(1)", "Unsafe", 0},
                                       {"https://orphan.test/", "Orphan", 0, 999, {}}};
-    const auto html = bookmarks_html(links, {{7, "<Work & \"stuff\">"}});
+    size_t skipped = 0;
+    const auto html = bookmarks_html(links, {{7, "<Work & \"stuff\">"}}, &skipped);
+    EXPECT_EQ(skipped, 1);
     EXPECT_NE(html.find("&lt;script&gt;"), std::string::npos);
     EXPECT_NE(html.find("&quot;&lt;x&gt;&amp;y=&#39;ok&#39;"), std::string::npos);
     EXPECT_NE(html.find("TAGS=\"&quot;tag&quot;,A&amp;B\""), std::string::npos);
@@ -1162,6 +1231,34 @@ TEST(Exports, AtomicBinaryOverwriteAndFailurePreserveChosenFile) {
     EXPECT_THROW(write_export("relative.html", "x"), std::exception);
 }
 
+TEST(Sessions, RussianCaseMatchingIsSharedAndLegacyDuplicatesKeepTheirData) {
+    EXPECT_EQ(fold_text("ЁЖ Работа WORK"), "ёж работа work");
+    TemporaryProfile temp;
+    Profile p(temp.path);
+    SavedWindow w;
+    w.tabs = {{"https://normal.test/"}};
+    const int first = p.save_named_session("Работа", {w});
+    ASSERT_GT(first, 0);
+    EXPECT_LT(p.save_named_session("рАбОтА", {w}), 0);
+    const int second = p.save_named_session("Учёба", {w});
+    ASSERT_GT(second, 0);
+    EXPECT_FALSE(p.rename_named_session(second, "РАБОТА"));
+    // Simulate a legacy file written before Russian case matching was fixed.
+    p.named_sessions[1].name = "работа";
+    p.named_sessions[1].windows[0].tabs[0].url = "https://legacy-kept.test/";
+    p.save();
+    Profile restored(temp.path);
+    ASSERT_EQ(restored.named_sessions.size(), 2);
+    EXPECT_NE(fold_text(restored.named_sessions[0].name),
+              fold_text(restored.named_sessions[1].name));
+    EXPECT_EQ(restored.named_session(second)->windows[0].tabs[0].url, "https://legacy-kept.test/");
+    EXPECT_TRUE(restored.named_session_available(first));
+    EXPECT_TRUE(restored.named_session_available(second));
+    restored.save();
+    Profile again(temp.path);
+    ASSERT_EQ(again.named_sessions.size(), 2);
+    EXPECT_EQ(again.named_session(second)->name, restored.named_session(second)->name);
+}
 TEST(Sessions, RoundTripRestoresPinnedActiveSplitAndOrganization) {
     TemporaryProfile temp;
     Profile p(temp.path);
@@ -1397,4 +1494,68 @@ TEST(Hotkeys, ProfileRoundtripKeepsDisabledActionsAndRejectsConflictingConfigura
     restored.load();
     EXPECT_TRUE(restored.hotkeys.empty());
     EXPECT_EQ(effective_hotkey(restored.hotkeys, "new_tab"), (Hotkey{'T', 1}));
+}
+
+TEST(Containers, RulesMatchBoundariesSpecificHostsAndPersist) {
+    TemporaryProfile temp;
+    Profile p(temp.path);
+    int work = p.add_container("Work");
+    ASSERT_TRUE(set_container_rule(p.container_rules, "example.test", work, true));
+    ASSERT_TRUE(set_container_rule(p.container_rules, "personal.example.test", 0, false));
+    EXPECT_EQ(match_container_rule(p.container_rules, "docs.example.test")->container, work);
+    EXPECT_EQ(match_container_rule(p.container_rules, "personal.example.test")->container, 0);
+    EXPECT_FALSE(match_container_rule(p.container_rules, "badexample.test"));
+    EXPECT_FALSE(match_container_rule(p.container_rules, "example.test.evil.test"));
+    EXPECT_EQ(match_container_rule(p.container_rules, "sub.personal.example.test")->container,
+              work);
+    EXPECT_FALSE(set_container_rule(p.container_rules, "example.test:443", work, false));
+    EXPECT_FALSE(set_container_rule(p.container_rules, "user@example.test", work, false));
+    EXPECT_FALSE(set_container_rule(p.container_rules, "EXAMPLE.test", work, false));
+    EXPECT_FALSE(set_container_rule(p.container_rules, "example.test/path", work, false));
+    EXPECT_FALSE(set_container_rule(p.container_rules, "example.test", -1, false));
+    ASSERT_TRUE(set_container_rule(p.container_rules, "[::1]", work, false));
+    p.save();
+    Profile restored(temp.path);
+    EXPECT_EQ(restored.container_rules.size(), 3);
+    EXPECT_EQ(match_container_rule(restored.container_rules, "[::1]")->container, work);
+    ASSERT_TRUE(restored.remove_container(work));
+    EXPECT_EQ(restored.container_rules.size(), 1);
+    for (int i = 0; i < 255; ++i)
+        ASSERT_TRUE(set_container_rule(restored.container_rules,
+                                       "site" + std::to_string(i) + ".test", 0, false));
+    EXPECT_FALSE(set_container_rule(restored.container_rules, "overflow.test", 0, false));
+    EXPECT_TRUE(set_container_rule(restored.container_rules, "personal.example.test", 0, true));
+}
+
+TEST(Containers, LoadedRulesRejectMissingContainersAndInvalidHosts) {
+    TemporaryProfile temp;
+    std::ofstream(temp.path / "profile.toml") << R"TOML(schema=16
+[[container_rules]]
+host="orphan.test"
+container=77
+[[container_rules]]
+host="bad.test/path"
+container=0
+[[container_rules]]
+host="good.test"
+container=0
+subdomains=true
+)TOML";
+    Profile p(temp.path);
+    ASSERT_EQ(p.container_rules.size(), 1);
+    EXPECT_EQ(p.container_rules.front().host, "good.test");
+    EXPECT_EQ(match_container_rule(p.container_rules, "sub.good.test")->container, 0);
+}
+
+TEST(Downloads, HashesFileAndRejectsInvalidDigestAndMissingFile) {
+    TemporaryProfile temp;
+    const auto file = temp.path / "download.bin";
+    std::ofstream(file, std::ios::binary) << "abc";
+    EXPECT_EQ(download_sha256(file),
+              "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    EXPECT_EQ(normalize_sha256(std::string(64, 'A')), std::string(64, 'a'));
+    EXPECT_TRUE(normalize_sha256(std::string(63, 'a')).empty());
+    EXPECT_TRUE(normalize_sha256(std::string(64, 'z')).empty());
+    EXPECT_THROW(download_sha256(temp.path / "missing"), std::exception);
+    EXPECT_THROW(download_sha256(temp.path), std::exception);
 }

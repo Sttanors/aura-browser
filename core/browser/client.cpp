@@ -129,6 +129,8 @@ BrowserClient::GetResourceRequestHandler(CefRefPtr<CefBrowser>, CefRefPtr<CefFra
 bool BrowserClient::OnBeforeBrowse(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
                                    CefRefPtr<CefRequest> request, bool, bool) {
     const auto url = request->GetURL().ToString();
+    if (frame->IsMain() && owner_.route_container(id_, url, request->GetMethod().ToString()))
+        return true;
     if (url.starts_with("http://") || url.starts_with("https://"))
         owner_.configure_permissions(browser->GetHost()->GetRequestContext(), url,
                                      frame->IsMain() ? url
@@ -380,6 +382,7 @@ void BrowserClient::OnLoadStart(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame
     if (!frame->IsMain())
         return;
     if (auto t = owner_.tab(id_)) {
+        owner_.apply_site_zoom(*t, frame->GetURL().ToString());
         t->page.failed = false;
         t->page.error.clear();
         t->page.loaded = false;
@@ -408,8 +411,9 @@ void BrowserClient::OnLoadEnd(CefRefPtr<CefBrowser> b, CefRefPtr<CefFrame> f, in
     DiagnosticClient::OnLoadEnd(b, f, status);
     if (f->IsMain()) {
         if (auto t = owner_.tab(id_); t && t->browser && !t->ntp)
-            t->browser->GetHost()->SetZoomLevel(t->zoom);
+            owner_.apply_site_zoom(*t, f->GetURL().ToString());
         owner_.page_changed(id_, true);
+        owner_.begin_pending_download(id_);
     }
 }
 void BrowserClient::OnLoadError(CefRefPtr<CefBrowser> b, CefRefPtr<CefFrame> f, ErrorCode code,
@@ -469,12 +473,12 @@ bool BrowserClient::CanDownload(CefRefPtr<CefBrowser>, const CefString &, const 
 bool BrowserClient::OnBeforeDownload(CefRefPtr<CefBrowser>, CefRefPtr<CefDownloadItem> item,
                                      const CefString &suggested,
                                      CefRefPtr<CefBeforeDownloadCallback> callback) {
-    owner_.start_download(item, callback, suggested);
+    owner_.start_download(item, callback, suggested, id_);
     return true;
 }
 void BrowserClient::OnDownloadUpdated(CefRefPtr<CefBrowser>, CefRefPtr<CefDownloadItem> item,
                                       CefRefPtr<CefDownloadItemCallback> callback) {
-    owner_.download_updated(item, callback);
+    owner_.download_updated(item, callback, id_);
 }
 void BrowserClient::OnFindResult(CefRefPtr<CefBrowser>, int, int count, const CefRect &, int active,
                                  bool) {

@@ -5,9 +5,9 @@
 #include <algorithm>
 
 namespace aura {
-bool BrowserController::can_sleep(const Tab &t) const {
-    if (quitting || tab_visible(t.id) || t.ntp || t.private_tab || t.pinned || t.loading ||
-        t.closing || t.page.closed || !t.page.loaded || t.page.failed || t.sleeping ||
+bool BrowserController::can_sleep(const Tab &t, bool allow_visible) const {
+    if (quitting || (!allow_visible && tab_visible(t.id)) || t.ntp || t.private_tab || t.pinned ||
+        t.loading || t.closing || t.page.closed || !t.page.loaded || t.page.failed || t.sleeping ||
         t.sleep_pending || t.reader_pending || !t.browser || !t.devtools || !t.site_tools_ready ||
         t.media_capture || (screenshot.native_running && screenshot.job_tab == t.id) ||
         tools_open || site_exception(t.page.url, profile.tab_sleep_exceptions))
@@ -20,8 +20,10 @@ bool BrowserController::can_sleep(const Tab &t) const {
         return false;
     if (std::any_of(dialogs.begin(), dialogs.end(), [&](const auto &d) { return d.tab == t.id; }))
         return false;
-    return std::none_of(downloads.begin(), downloads.end(), [](const auto &d) {
-        return !d.complete && !d.cancelled && !d.interrupted;
+    return std::none_of(downloads.begin(), downloads.end(), [&](const auto &d) {
+        // Unknown sources remain protected until OnBeforeDownload identifies their tab.
+        return d.source_window == window_uid && (!d.source_tab || d.source_tab == t.id) &&
+               !d.complete && !d.cancelled && !d.interrupted;
     });
 }
 void BrowserController::wake_tab(int id) {
@@ -41,18 +43,7 @@ void BrowserController::sleep_tab(int id, bool manual) {
     auto t = tab(id);
     if (!t)
         return;
-    if (manual && t == current() && !t->pinned && !t->private_tab && !t->ntp && !t->loading) {
-        if (split_enabled())
-            end_split();
-        const auto visible = visible_tabs();
-        auto other =
-            std::find_if(visible.begin(), visible.end(), [&](int i) { return tabs[i]->id != id; });
-        if (other != visible.end())
-            activate(*other);
-        else
-            new_tab("aura://newtab", false, true, false, workspace, 0);
-    }
-    if (!can_sleep(*t)) {
+    if (!can_sleep(*t, manual && t == current())) {
         if (manual)
             ui->toast(tr("This tab is protected from sleep."));
         return;
@@ -121,7 +112,7 @@ void BrowserController::sleep_tab(int id, bool manual) {
                                               : nullptr;
                             if (!ok || !result || result->GetString("type") != "boolean" ||
                                 result->GetBool("value") || t->navigation_serial != serial ||
-                                !can_sleep(*t)) {
+                                !can_sleep(*t, manual && t == current())) {
                                 if (manual)
                                     ui->toast(tr("This tab is protected from sleep."));
                                 changed();
@@ -140,15 +131,34 @@ void BrowserController::sleep_tab(int id, bool manual) {
                                     t->sleep_pending = false;
                                     if (ok && requested && t->navigation_serial == serial &&
                                         (manual || profile.tab_sleep_minutes > 0) &&
-                                        can_sleep(*t)) {
+                                        can_sleep(*t, manual && t == current())) {
+                                        // Keep focus and split layout unchanged until freeze
+                                        // succeeds.
+                                        if (manual && t == current()) {
+                                            if (split_enabled())
+                                                end_split();
+                                            const auto visible = visible_tabs();
+                                            auto other = std::find_if(
+                                                visible.begin(), visible.end(),
+                                                [&](int i) { return tabs[i]->id != id; });
+                                            if (other != visible.end())
+                                                activate(*other);
+                                            else
+                                                new_tab("aura://newtab", false, true, false,
+                                                        workspace, 0);
+                                        }
                                         t->sleeping = true;
                                         t->page.view = PaintBuffer{};
                                         t->page.popup = PaintBuffer{};
                                         t->page.popup_visible = false;
                                         ++audit["tabs_slept"];
-                                    } else if (ok)
-                                        t->devtools->call("Page.setWebLifecycleState",
-                                                          "{\"state\":\"active\"}");
+                                    } else {
+                                        if (ok)
+                                            t->devtools->call("Page.setWebLifecycleState",
+                                                              "{\"state\":\"active\"}");
+                                        if (manual && requested)
+                                            ui->toast(tr("This tab is protected from sleep."));
+                                    }
                                     changed();
                                 });
                         });

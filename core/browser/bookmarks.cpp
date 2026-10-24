@@ -1,3 +1,4 @@
+#include "common/text.hpp"
 #include "core/browser/i18n.hpp"
 #include "core/browser/profile.hpp"
 #include <algorithm>
@@ -9,26 +10,8 @@ std::string trim(std::string value) {
     const auto a = value.find_first_not_of(" \t\r\n"), b = value.find_last_not_of(" \t\r\n");
     return a == std::string::npos ? "" : value.substr(a, b - a + 1);
 }
-std::string fold(std::string value) {
-    for (size_t i = 0; i < value.size(); ++i) {
-        auto c = static_cast<unsigned char>(value[i]);
-        if (c >= 'A' && c <= 'Z')
-            value[i] += 32;
-        else if (c == 0xd0 && i + 1 < value.size()) {
-            auto next = static_cast<unsigned char>(value[i + 1]);
-            if (next >= 0x90 && next <= 0x9f)
-                value[++i] = char(next + 32);
-            else if (next >= 0xa0 && next <= 0xaf) {
-                value[i] = char(0xd1);
-                value[++i] = char(next - 32);
-            } else if (next == 0x81) {
-                value[i] = char(0xd1);
-                value[++i] = char(0x91);
-            }
-        }
-    }
-    return value;
-}
+std::string fold(std::string value) { return fold_text(value); }
+
 bool reserved(const std::string &value) {
     const auto name = fold(value);
     return name == "unfiled" || name == "all folders" || name == "без папки" || name == "все папки";
@@ -38,7 +21,7 @@ bool text(const std::string &value, size_t limit) {
            std::none_of(value.begin(), value.end(),
                         [](unsigned char c) { return c < 32 || c == 127; });
 }
-bool url(const std::string &value) { return text(value, 16384) && valid_home_address(value); }
+bool url(const std::string &value) { return valid_bookmark_address(value); }
 std::string escaped(const std::string &value) {
     std::string out;
     for (unsigned char c : value) {
@@ -58,6 +41,21 @@ std::string escaped(const std::string &value) {
     return out;
 }
 } // namespace
+bool valid_bookmark_address(const std::string &value) {
+    if (!text(value, 16384))
+        return false;
+    if (valid_home_address(value) || value == "about:blank")
+        return true;
+    if (value.starts_with("file://"))
+        return value.size() > 7;
+    if (value.starts_with("chrome-extension://")) {
+        const auto end = value.find_first_of("/?#", 19);
+        const auto id = value.substr(19, end == std::string::npos ? end : end - 19);
+        return id.size() == 32 &&
+               std::all_of(id.begin(), id.end(), [](char c) { return c >= 'a' && c <= 'p'; });
+    }
+    return false;
+}
 std::optional<std::vector<std::string>> bookmark_tags(const std::string &input) {
     if (input.size() > 4096)
         return {};
@@ -85,6 +83,13 @@ std::optional<std::vector<std::string>> bookmark_tags(const std::string &input) 
 bool Profile::has_bookmark_folder(int id) const {
     return id == 0 || std::any_of(bookmark_folders.begin(), bookmark_folders.end(),
                                   [&](const auto &f) { return f.id == id; });
+}
+int Profile::bookmark_folder_id(std::string name) const {
+    const auto key = fold(trim(std::move(name)));
+    for (const auto &folder : bookmark_folders)
+        if (fold(folder.name) == key)
+            return folder.id;
+    return -1;
 }
 std::string Profile::bookmark_folder_label(int id) const {
     for (const auto &f : bookmark_folders)
@@ -148,7 +153,10 @@ bool Profile::edit_bookmark(const std::string &old, std::string title, std::stri
     return false;
 }
 std::string bookmarks_html(const std::vector<Visit> &bookmarks,
-                           const std::vector<BookmarkFolder> &folders) {
+                           const std::vector<BookmarkFolder> &folders, size_t *skipped) {
+    if (skipped)
+        *skipped = std::count_if(bookmarks.begin(), bookmarks.end(),
+                                 [](const auto &b) { return !url(b.url); });
     std::string html = "<!DOCTYPE NETSCAPE-Bookmark-file-1>\n<META HTTP-EQUIV=\"Content-Type\" "
                        "CONTENT=\"text/html; charset=UTF-8\">\n<TITLE>Aura "
                        "bookmarks</TITLE>\n<H1>Aura bookmarks</H1>\n<DL><p>\n";
