@@ -117,6 +117,10 @@ def main():
                         wait_until(lambda: not state()['settings']['remember_site_zoom'] and all(t['zoom_percent'] == 100 for t in state()['tabs']), 'Toggle did not disable remembered zoom')
                         subprocess.run(['import', '-window', str(w), str(out / 'ru-setting.png')], check=True, timeout=10)
                         key_at(w, 'Escape')
+                        key_at(w, '3', 4)
+                        wait_until(lambda: current()['container'] == 7, 'No container for disabled reset')
+                        key_at(w, '0', 4)
+                        zoom(100)
                     key_at(w, 'q', 4)
                     proc.wait(timeout=25)
                     assert proc.returncode == 0
@@ -126,9 +130,9 @@ def main():
                         proc.wait(timeout=5)
             saved = tomllib.loads(config.read_text())
             rules = saved.get('site_zooms', [])
-            assert len(rules) == (2 if launch == 0 else 1), rules
+            assert len(rules) == (2 if launch == 0 else 1 if launch == 1 else 0), rules
             assert all(rule['level'] != 2 for rule in rules), 'Private zoom was persisted'
-            if launch:
+            if launch == 1:
                 assert rules[0]['container'] == 7 and rules[0]['level'] == -1, rules
             for p in profile.glob('profile.toml*'):
                 assert 'PRIVATE_ZOOM_SENTINEL' not in p.read_text()

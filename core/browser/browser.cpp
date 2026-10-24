@@ -881,18 +881,24 @@ void BrowserController::zoom(double delta, bool reset) {
         const auto site = zoom_host(t->page.url);
         const double level = reset ? std::log(profile.default_zoom / 100.0) / std::log(1.2)
                                    : std::clamp(t->zoom + delta, -4.0, 5.0);
-        if (profile.remember_site_zoom && !site.empty()) {
+        if ((profile.remember_site_zoom || reset) && !site.empty()) {
             auto &rules = t->private_tab ? state_->private_site_zooms : profile.site_zooms;
             if (!update_site_zoom(rules, site, t->container,
                                   reset ? std::optional<double>{} : std::optional<double>{level})) {
+                t->zoom = level;
+                t->browser->GetHost()->SetZoomLevel(level);
                 ui->toast(tr("Could not remember site zoom. Reset a saved site first."));
+                changed();
                 return;
             }
             for (auto *window : state_->windows)
                 for (auto &other : window->tabs)
                     if (other->private_tab == t->private_tab && other->container == t->container &&
-                        zoom_host(other->page.url) == site)
+                        zoom_host(other->page.url) == site) {
+                        if (reset)
+                            other->zoom = level;
                         window->apply_site_zoom(*other);
+                    }
             changed(!t->private_tab);
         } else {
             t->zoom = level;
