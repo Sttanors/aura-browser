@@ -3,6 +3,19 @@
 namespace aura {
 namespace {
 constexpr Translation catalog[] = {
+    {"Remember zoom for each site", "Запоминать масштаб для каждого сайта"},
+    {"Keep zoom per host and container. Ctrl 0 resets this site. Private values stay in memory.",
+     "Масштаб для каждого хоста и контейнера. Ctrl 0 — сброс для сайта. Приватные значения "
+     "остаются в памяти."},
+    {"Could not remember site zoom. Reset a saved site first.",
+     "Не удалось запомнить масштаб. Сначала сбросьте масштаб одного из сохранённых сайтов."},
+    {"Export bookmarks", "Экспорт закладок"},
+    {"This page cannot be bookmarked.", "Эту страницу нельзя сохранить в закладки."},
+    {"Unsupported bookmark addresses will be skipped: ",
+     "Будет пропущено закладок с неподдерживаемыми адресами: "},
+    {"Cannot create an imported bookmark folder. Rename it or free a folder slot and try again.",
+     "Не удалось создать папку из импорта. Переименуйте её или освободите место для папки и "
+     "повторите."},
     {"Save a page using the star button.", "Сохраните страницу кнопкой со звездой."},
     {"No bookmarks here. Save a page or change the search.",
      "Здесь нет закладок. Сохраните страницу или измените поиск."},

@@ -380,6 +380,7 @@ void BrowserClient::OnLoadStart(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame
     if (!frame->IsMain())
         return;
     if (auto t = owner_.tab(id_)) {
+        owner_.apply_site_zoom(*t, frame->GetURL().ToString());
         t->page.failed = false;
         t->page.error.clear();
         t->page.loaded = false;
@@ -408,7 +409,7 @@ void BrowserClient::OnLoadEnd(CefRefPtr<CefBrowser> b, CefRefPtr<CefFrame> f, in
     DiagnosticClient::OnLoadEnd(b, f, status);
     if (f->IsMain()) {
         if (auto t = owner_.tab(id_); t && t->browser && !t->ntp)
-            t->browser->GetHost()->SetZoomLevel(t->zoom);
+            owner_.apply_site_zoom(*t, f->GetURL().ToString());
         owner_.page_changed(id_, true);
     }
 }
@@ -469,7 +470,7 @@ bool BrowserClient::CanDownload(CefRefPtr<CefBrowser>, const CefString &, const 
 bool BrowserClient::OnBeforeDownload(CefRefPtr<CefBrowser>, CefRefPtr<CefDownloadItem> item,
                                      const CefString &suggested,
                                      CefRefPtr<CefBeforeDownloadCallback> callback) {
-    owner_.start_download(item, callback, suggested);
+    owner_.start_download(item, callback, suggested, id_);
     return true;
 }
 void BrowserClient::OnDownloadUpdated(CefRefPtr<CefBrowser>, CefRefPtr<CefDownloadItem> item,

@@ -583,13 +583,13 @@ BrowserImportResult apply_browser_import(Profile &profile, const BrowserImportDa
         for (const auto &folder : data.bookmark_folders) {
             if (folder.id <= 0)
                 continue;
-            auto found =
-                std::find_if(updated.bookmark_folders.begin(), updated.bookmark_folders.end(),
-                             [&](const auto &f) { return f.name == folder.name; });
-            const int id = found == updated.bookmark_folders.end()
-                               ? updated.add_bookmark_folder(folder.name)
-                               : found->id;
-            folder_map[folder.id] = std::max(0, id);
+            int id = updated.bookmark_folder_id(folder.name);
+            if (id < 0)
+                id = updated.add_bookmark_folder(folder.name);
+            if (id < 0)
+                throw std::runtime_error("Cannot create an imported bookmark folder. Rename it or "
+                                         "free a folder slot and try again.");
+            folder_map[folder.id] = id;
         }
     auto merge = [&](std::vector<Visit> &target, const std::vector<Visit> &source, size_t &count) {
         std::unordered_set<std::string> seen;

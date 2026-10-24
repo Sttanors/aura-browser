@@ -8,6 +8,7 @@
 #include "include/cef_cookie.h"
 #include "include/cef_frame.h"
 #include "include/cef_image.h"
+#include "include/cef_parser.h"
 #include "ui/browser_ui.hpp"
 #include <algorithm>
 #include <cerrno>
@@ -248,8 +249,7 @@ void BrowserController::apply_settings(bool update_zoom, bool propagate) {
             t->page.title = tr(t->private_tab ? "Private tab" : "New tab");
         if (update_zoom) {
             t->zoom = std::log(profile.default_zoom / 100.0) / std::log(1.2);
-            if (t->browser)
-                t->browser->GetHost()->SetZoomLevel(t->zoom);
+            apply_site_zoom(*t);
         }
     }
     if (split_enabled())
@@ -852,17 +852,63 @@ void BrowserController::reload(bool ignore) {
         ++audit["reload"];
     }
 }
+namespace {
+std::string zoom_host(const std::string &url) {
+    CefURLParts parts;
+    if (!CefParseURL(url, parts))
+        return {};
+    const auto scheme = CefString(&parts.scheme).ToString();
+    if (scheme != "http" && scheme != "https")
+        return {};
+    auto host = CefString(&parts.host).ToString();
+    if (host.find(':') != std::string::npos && !host.starts_with('['))
+        host = "[" + host + "]";
+    return host;
+}
+} // namespace
+void BrowserController::apply_site_zoom(Tab &t, const std::string &url) {
+    if (profile.remember_site_zoom) {
+        const auto site = zoom_host(url.empty() ? t.page.url : url);
+        const auto &rules = t.private_tab ? state_->private_site_zooms : profile.site_zooms;
+        t.zoom = find_site_zoom(rules, site, t.container)
+                     .value_or(std::log(profile.default_zoom / 100.0) / std::log(1.2));
+    }
+    if (t.browser)
+        t.browser->GetHost()->SetZoomLevel(t.zoom);
+}
 void BrowserController::zoom(double delta, bool reset) {
     if (auto t = current(); t && t->browser) {
-        t->zoom = reset ? std::log(profile.default_zoom / 100.0) / std::log(1.2)
-                        : std::clamp(t->zoom + delta, -4.0, 5.0);
-        t->browser->GetHost()->SetZoomLevel(t->zoom);
+        const auto site = zoom_host(t->page.url);
+        const double level = reset ? std::log(profile.default_zoom / 100.0) / std::log(1.2)
+                                   : std::clamp(t->zoom + delta, -4.0, 5.0);
+        if (profile.remember_site_zoom && !site.empty()) {
+            auto &rules = t->private_tab ? state_->private_site_zooms : profile.site_zooms;
+            if (!update_site_zoom(rules, site, t->container,
+                                  reset ? std::optional<double>{} : std::optional<double>{level})) {
+                ui->toast(tr("Could not remember site zoom. Reset a saved site first."));
+                return;
+            }
+            for (auto *window : state_->windows)
+                for (auto &other : window->tabs)
+                    if (other->private_tab == t->private_tab && other->container == t->container &&
+                        zoom_host(other->page.url) == site)
+                        window->apply_site_zoom(*other);
+            changed(!t->private_tab);
+        } else {
+            t->zoom = level;
+            t->browser->GetHost()->SetZoomLevel(t->zoom);
+        }
         ui->toast(tr("Page zoom  ") +
                   std::to_string(static_cast<int>(std::round(std::pow(1.2, t->zoom) * 100))) + "%");
     }
 }
+
 void BrowserController::bookmark() {
     if (auto t = current(); t && !t->ntp) {
+        if (!valid_bookmark_address(t->page.url)) {
+            ui->toast(tr("This page cannot be bookmarked."));
+            return;
+        }
         profile.toggle_bookmark(t->page.url, t->page.title);
         ui->toast(tr(profile.bookmarked(t->page.url) ? "Bookmark saved" : "Bookmark removed"));
         ++audit["bookmark"];
@@ -1338,6 +1384,7 @@ std::string BrowserController::report() const {
         first = false;
         out << "{\"name\":\"" << json_escape(d.name)
             << "\",\"complete\":" << (d.complete ? "true" : "false")
+            << ",\"source_tab\":" << d.source_tab
             << ",\"interrupted\":" << (d.interrupted ? "true" : "false")
             << ",\"received\":" << d.received << '}';
     }
@@ -1472,9 +1519,16 @@ void BrowserController::update_favicon(int id, const std::string &url) {
 }
 void BrowserController::start_download(CefRefPtr<CefDownloadItem> item,
                                        CefRefPtr<CefBeforeDownloadCallback> callback,
-                                       const std::string &suggested) {
+                                       const std::string &suggested, int source_tab) {
     spdlog::info("Download {} accepted", item->GetId());
-    (void)item;
+    auto it = std::find_if(downloads.begin(), downloads.end(),
+                           [&](const auto &d) { return d.id == item->GetId(); });
+    if (it == downloads.end()) {
+        downloads.insert(downloads.begin(), Download{});
+        it = downloads.begin();
+        it->id = item->GetId();
+    }
+    it->source_tab = source_tab;
     if (profile.ask_download_name) {
         BrowserDialog dialog;
         dialog.origin = "Download filename";
@@ -1614,6 +1668,8 @@ void BrowserController::clear_data(const std::string &kind) {
     if (kind == "reset") {
         static_cast<BrowserPreferences &>(profile) = BrowserPreferences{};
         profile.hotkeys.clear();
+        profile.site_zooms.clear();
+        state_->private_site_zooms.clear();
         for (auto &rule : profile.site_permissions)
             rule.value = "default";
         for (auto &rule : state_->private_site_permissions)

@@ -16,6 +16,7 @@ struct BrowserPreferences {
     bool ntp_image_theme = true;
     bool ntp_logo = true, ntp_subtitle_visible = true, ntp_link_icons = true;
     int ui_zoom = 100;
+    bool remember_site_zoom = true;
     int tab_sleep_minutes = 0;
     int split_percent = 50;
     int reader_font_size = 20, reader_width = 720;

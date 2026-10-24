@@ -2,6 +2,7 @@
 #include "core/browser/hotkeys.hpp"
 #include "core/browser/permissions.hpp"
 #include "core/browser/preferences.hpp"
+#include "core/browser/site_zoom.hpp"
 #include <array>
 #include <cstdint>
 #include <filesystem>
@@ -23,7 +24,9 @@ struct BookmarkFolder {
     std::string name;
 };
 std::optional<std::vector<std::string>> bookmark_tags(const std::string &text);
-std::string bookmarks_html(const std::vector<Visit> &, const std::vector<BookmarkFolder> &);
+bool valid_bookmark_address(const std::string &value);
+std::string bookmarks_html(const std::vector<Visit> &, const std::vector<BookmarkFolder> &,
+                           size_t *skipped = nullptr);
 struct Shortcut {
     std::string title, url;
 };
@@ -73,11 +76,13 @@ class Profile : public BrowserPreferences {
     std::filesystem::path directory;
     std::string profiles_root;
     std::vector<SitePermission> site_permissions;
+    std::vector<SiteZoom> site_zooms;
     std::vector<HotkeyOverride> hotkeys;
     std::vector<Visit> history, bookmarks;
     std::vector<BookmarkFolder> bookmark_folders;
     int next_bookmark_folder = 1;
     bool has_bookmark_folder(int id) const;
+    int bookmark_folder_id(std::string name) const;
     std::string bookmark_folder_label(int id) const;
     int add_bookmark_folder(std::string name, int assigned_id = 0);
     bool rename_bookmark_folder(int id, std::string name);

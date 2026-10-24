@@ -4,6 +4,7 @@
 #include "common/config.hpp"
 #include "common/exports.hpp"
 #include "common/platform.hpp"
+#include "common/text.hpp"
 #include "common/update_key.hpp"
 #include "core/browser/translation.hpp"
 #include "include/cef_frame.h"
@@ -1135,30 +1136,8 @@ namespace {
 constexpr const char *settings_sections[] = {"General", "Tabs",        "Appearance", "Webpages",
                                              "Privacy", "Permissions", "Downloads",  "Protection",
                                              "Data",    "Start page"};
-std::string fold_settings(std::string text) {
-    std::string out;
-    for (std::size_t i = 0; i < text.size(); ++i) {
-        const auto c = static_cast<unsigned char>(text[i]);
-        if (c == 0xD0 && i + 1 < text.size()) {
-            auto next = static_cast<unsigned char>(text[++i]);
-            if (next == 0x81) {
-                out += '\xD1';
-                out += '\x91';
-            } else if (next >= 0x90 && next <= 0x9F) {
-                out += '\xD0';
-                out += static_cast<char>(next + 32);
-            } else if (next >= 0xA0 && next <= 0xAF) {
-                out += '\xD1';
-                out += static_cast<char>(next - 32);
-            } else {
-                out += static_cast<char>(c);
-                out += static_cast<char>(next);
-            }
-        } else
-            out += c < 128 ? static_cast<char>(std::tolower(c)) : static_cast<char>(c);
-    }
-    return out;
-}
+std::string fold_settings(std::string text) { return fold_text(text); }
+
 } // namespace
 int BrowserUi::choice_columns(const SettingSpec &spec, Rect r) const {
     float minimum = 116;
@@ -2544,7 +2523,7 @@ void BrowserUi::settings_pointer(Rect r, int x, int y) {
         if (update) {
             if (spec->id == "language")
                 toast_.clear();
-            app_.apply_settings(spec->id == "default_zoom");
+            app_.apply_settings(spec->id == "default_zoom" || spec->id == "remember_site_zoom");
         }
         settings_edit_.clear();
         return;
@@ -8074,10 +8053,21 @@ void BrowserUi::bookmarks_pointer(Rect r, int x, int y) {
         bookmark_focus_ = 4;
         bookmark_error_.clear();
         app_.changed();
-    } else if (hit({r.x + 184, r.y + r.height - 64, 180, 34}) && !app_.profile.bookmarks.empty())
-        save_export(bookmarks_html(app_.profile.bookmarks, app_.profile.bookmark_folders),
-                    "aura-bookmarks.html", "HTML | *.html");
-    else if (hit({r.x + r.width - 128, r.y + r.height - 64, 100, 34}))
+    } else if (hit({r.x + 184, r.y + r.height - 64, 180, 34}) && !app_.profile.bookmarks.empty()) {
+        size_t skipped = 0;
+        auto payload =
+            bookmarks_html(app_.profile.bookmarks, app_.profile.bookmark_folders, &skipped);
+        auto save = [this, payload = std::move(payload)] {
+            save_export(payload, "aura-bookmarks.html", "HTML | *.html");
+        };
+        if (skipped)
+            app_.confirm_action(app_.tr("Export bookmarks"),
+                                app_.tr("Unsupported bookmark addresses will be skipped: ") +
+                                    std::to_string(skipped),
+                                std::move(save));
+        else
+            save();
+    } else if (hit({r.x + r.width - 128, r.y + r.height - 64, 100, 34}))
         dismiss();
 }
 std::string BrowserUi::bookmarks_report() const {

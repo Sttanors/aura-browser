@@ -1,3 +1,4 @@
+#include "common/text.hpp"
 #include "core/browser/profile.hpp"
 #include <algorithm>
 #include <cctype>
@@ -10,12 +11,7 @@ std::string trim(std::string s) {
     auto a = s.find_first_not_of(" \t\r\n"), b = s.find_last_not_of(" \t\r\n");
     return a == std::string::npos ? "" : s.substr(a, b - a + 1);
 }
-std::string lower(std::string s) {
-    for (auto &c : s)
-        if (c >= 'A' && c <= 'Z')
-            c += 32;
-    return s;
-}
+std::string lower(std::string s) { return fold_text(s); }
 bool name(const std::string &s) {
     return !s.empty() && s.size() <= 120 &&
            std::none_of(s.begin(), s.end(), [](unsigned char c) { return c < 32 || c == 127; });

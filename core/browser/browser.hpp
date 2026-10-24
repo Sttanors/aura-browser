@@ -87,6 +87,7 @@ struct ExtensionPopup {
 };
 struct Download {
     uint32_t id = 0;
+    int source_tab = 0;
     std::string name, path;
     int percent = 0;
     long long received = 0, total = 0;
@@ -129,6 +130,7 @@ struct BrowserState {
     uint64_t profile_revision = 0;
     ProfileCatalog profiles;
     std::vector<SitePermission> private_site_permissions;
+    std::vector<SiteZoom> private_site_zooms;
     bool private_permissions_initialized = false;
     ExtensionManager extensions;
     UpdateManager updates;
@@ -252,10 +254,11 @@ class BrowserController {
     void forward();
     void reload(bool ignore_cache = false);
     void zoom(double delta, bool reset = false);
+    void apply_site_zoom(Tab &tab, const std::string &url = {});
     void bookmark();
     void pin();
     void mute();
-    bool can_sleep(const Tab &tab) const;
+    bool can_sleep(const Tab &tab, bool allow_visible = false) const;
     void sleep_tab(int id, bool manual = true);
     void toggle_reader();
     void reader_event(Tab &, CefRefPtr<CefDictionaryValue>);
@@ -289,8 +292,8 @@ class BrowserController {
     void download_updated(CefRefPtr<CefDownloadItem> item,
                           CefRefPtr<CefDownloadItemCallback> callback);
     void start_download(CefRefPtr<CefDownloadItem> item,
-                        CefRefPtr<CefBeforeDownloadCallback> callback,
-                        const std::string &suggested);
+                        CefRefPtr<CefBeforeDownloadCallback> callback, const std::string &suggested,
+                        int source_tab);
     void download_action(std::size_t index, bool cancel);
     void open_folder();
     void open_directory(const std::filesystem::path &directory);

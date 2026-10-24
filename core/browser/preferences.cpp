@@ -5,6 +5,10 @@
 namespace aura {
 std::span<const SettingSpec> settings_catalog() {
     static const std::vector<SettingSpec> catalog = {
+        {"remember_site_zoom", "Webpages", "Remember zoom for each site",
+         "Keep zoom per host and container. Ctrl 0 resets this site. Private values stay in "
+         "memory.",
+         &BrowserPreferences::remember_site_zoom},
         {"split_percent",
          "Tabs",
          "Split view left pane width",
@@ -511,11 +515,6 @@ std::string setting_value(const BrowserPreferences &p, const SettingSpec &s) {
                 return std::to_string(p.*member);
         },
         s.member);
-}
-bool valid_home_address(const std::string &v) {
-    const auto start = v.starts_with("https://") ? 8u : v.starts_with("http://") ? 7u : 0u;
-    return start && v.size() > start && v.find_first_of(" \t\r\n") == std::string::npos &&
-           v[start] != '/' && v[start] != '?' && v[start] != '#';
 }
 bool set_setting(BrowserPreferences &p, const SettingSpec &s, const std::string &value) {
     if (s.kind == SettingKind::Choice &&
