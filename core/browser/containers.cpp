@@ -1,5 +1,6 @@
 #include "common/config.hpp"
 #include "core/browser/browser.hpp"
+#include "include/cef_parser.h"
 #include "include/cef_request_context_handler.h"
 #include "ui/browser_ui.hpp"
 #include <algorithm>
@@ -53,6 +54,81 @@ CefRefPtr<CefRequestContext> BrowserController::request_context(int id, bool pri
         }
     }
     return context;
+}
+namespace {
+std::string rule_host(const std::string &url) {
+    CefURLParts parts;
+    if (!CefParseURL(url, parts))
+        return {};
+    auto scheme = CefString(&parts.scheme).ToString();
+    if (scheme != "http" && scheme != "https")
+        return {};
+    auto host = CefString(&parts.host).ToString();
+    if (host.find(':') != std::string::npos && !host.starts_with('['))
+        host = "[" + host + "]";
+    while (host.ends_with('.') && !host.empty())
+        host.pop_back();
+    return host;
+}
+} // namespace
+bool BrowserController::save_container_rule(const std::string &input, int container,
+                                            bool subdomains) {
+    // The editor accepts a hostname, not an address that silently discards path/credentials.
+    if (input.empty() || input.find_first_of("/@?#\\ \t\r\n") != std::string::npos ||
+        (input.starts_with('[') ? !input.ends_with(']') : input.find(':') != std::string::npos))
+        return false;
+    auto host = rule_host("https://" + input);
+    if (!profile.container(container) ||
+        !set_container_rule(profile.container_rules, host, container, subdomains))
+        return false;
+    changed(true);
+    return true;
+}
+bool BrowserController::route_container(int tab_id, const std::string &url,
+                                        const std::string &method) {
+    auto source = tab(tab_id);
+    if (!source || source->private_tab || private_window || source->closing)
+        return false;
+    const auto rule = match_container_rule(profile.container_rules, rule_host(url));
+    if (!rule || rule->container == source->container || !profile.container(rule->container))
+        return false;
+    if (method != "GET") {
+        ui->toast(tr("This form targets another container. Open the site in that container before "
+                     "submitting."));
+        return true;
+    }
+    // A single pending request per source tab. The original document remains loaded.
+    for (const auto &dialog : dialogs)
+        if (dialog.container_route && dialog.tab == tab_id)
+            return true;
+    BrowserDialog dialog;
+    dialog.tab = tab_id;
+    dialog.owned = true;
+    dialog.container_route = true;
+    dialog.origin = tr("Open in another container?");
+    dialog.accept_label = tr("Open tab");
+    dialog.message = rule_host(url) + " → " + profile.container_label(rule->container) + "\n" +
+                     tr("The original tab stays open. This address will open in a new tab with "
+                        "separate cookies.");
+    auto weak = std::weak_ptr<void>(callback_lifetime);
+    const auto serial = source->navigation_serial;
+    dialog.action = [this, weak, tab_id, url, rule = *rule, serial](bool accept,
+                                                                    const std::string &) {
+        if (weak.expired() || !accept)
+            return;
+        auto source = tab(tab_id);
+        const auto current_rule = match_container_rule(profile.container_rules, rule_host(url));
+        if (!source || source->closing || source->private_tab ||
+            source->navigation_serial != serial || !profile.container(rule.container) ||
+            !current_rule || current_rule->host != rule.host ||
+            current_rule->container != rule.container ||
+            current_rule->subdomains != rule.subdomains)
+            return;
+        new_tab(url, false, true, false, source->workspace, source->group, rule.container);
+    };
+    dialogs.push_back(std::move(dialog));
+    changed();
+    return true;
 }
 bool BrowserController::container_in_use(int id) const {
     for (const auto *window : state_->windows)

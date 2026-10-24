@@ -1494,3 +1494,54 @@ TEST(Hotkeys, ProfileRoundtripKeepsDisabledActionsAndRejectsConflictingConfigura
     EXPECT_TRUE(restored.hotkeys.empty());
     EXPECT_EQ(effective_hotkey(restored.hotkeys, "new_tab"), (Hotkey{'T', 1}));
 }
+
+TEST(Containers, RulesMatchBoundariesSpecificHostsAndPersist) {
+    TemporaryProfile temp;
+    Profile p(temp.path);
+    int work = p.add_container("Work");
+    ASSERT_TRUE(set_container_rule(p.container_rules, "example.test", work, true));
+    ASSERT_TRUE(set_container_rule(p.container_rules, "personal.example.test", 0, false));
+    EXPECT_EQ(match_container_rule(p.container_rules, "docs.example.test")->container, work);
+    EXPECT_EQ(match_container_rule(p.container_rules, "personal.example.test")->container, 0);
+    EXPECT_FALSE(match_container_rule(p.container_rules, "badexample.test"));
+    EXPECT_FALSE(match_container_rule(p.container_rules, "example.test.evil.test"));
+    EXPECT_EQ(match_container_rule(p.container_rules, "sub.personal.example.test")->container,
+              work);
+    EXPECT_FALSE(set_container_rule(p.container_rules, "example.test:443", work, false));
+    EXPECT_FALSE(set_container_rule(p.container_rules, "user@example.test", work, false));
+    EXPECT_FALSE(set_container_rule(p.container_rules, "EXAMPLE.test", work, false));
+    EXPECT_FALSE(set_container_rule(p.container_rules, "example.test/path", work, false));
+    EXPECT_FALSE(set_container_rule(p.container_rules, "example.test", -1, false));
+    ASSERT_TRUE(set_container_rule(p.container_rules, "[::1]", work, false));
+    p.save();
+    Profile restored(temp.path);
+    EXPECT_EQ(restored.container_rules.size(), 3);
+    EXPECT_EQ(match_container_rule(restored.container_rules, "[::1]")->container, work);
+    ASSERT_TRUE(restored.remove_container(work));
+    EXPECT_EQ(restored.container_rules.size(), 1);
+    for (int i = 0; i < 255; ++i)
+        ASSERT_TRUE(set_container_rule(restored.container_rules,
+                                       "site" + std::to_string(i) + ".test", 0, false));
+    EXPECT_FALSE(set_container_rule(restored.container_rules, "overflow.test", 0, false));
+    EXPECT_TRUE(set_container_rule(restored.container_rules, "personal.example.test", 0, true));
+}
+
+TEST(Containers, LoadedRulesRejectMissingContainersAndInvalidHosts) {
+    TemporaryProfile temp;
+    std::ofstream(temp.path / "profile.toml") << R"TOML(schema=16
+[[container_rules]]
+host="orphan.test"
+container=77
+[[container_rules]]
+host="bad.test/path"
+container=0
+[[container_rules]]
+host="good.test"
+container=0
+subdomains=true
+)TOML";
+    Profile p(temp.path);
+    ASSERT_EQ(p.container_rules.size(), 1);
+    EXPECT_EQ(p.container_rules.front().host, "good.test");
+    EXPECT_EQ(match_container_rule(p.container_rules, "sub.good.test")->container, 0);
+}

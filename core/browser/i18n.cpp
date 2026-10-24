@@ -3,6 +3,27 @@
 namespace aura {
 namespace {
 constexpr Translation catalog[] = {
+    {"Container", "Контейнер"},
+    {"Previous", "Назад"},
+    {"Next", "Далее"},
+    {"Site rules", "Правила сайтов"},
+    {"Back to containers", "К контейнерам"},
+    {"Hostname (example.org)", "Домен (example.org)"},
+    {"Include subdomains", "Включая поддомены"},
+    {"Confirm before opening a matching site in its assigned container.",
+     "Aura запросит подтверждение перед открытием сайта в назначенном контейнере."},
+    {"Enter a hostname without a path or port. Up to 256 rules.",
+     "Введите домен без пути и порта. Допускается до 256 правил."},
+    {"Add a hostname above to create the first rule.",
+     "Введите домен выше, чтобы создать первое правило."},
+    {"Private tabs ignore rules. Forms are never resubmitted across containers.",
+     "Приватные вкладки игнорируют правила. Формы между контейнерами не пересылаются."},
+    {"Open in another container?", "Открыть в другом контейнере?"},
+    {"Open tab", "Открыть вкладку"},
+    {"The original tab stays open. This address will open in a new tab with separate cookies.",
+     "Исходная вкладка останется открытой. Адрес откроется в новой вкладке с отдельными cookies."},
+    {"This form targets another container. Open the site in that container before submitting.",
+     "Форма направлена в другой контейнер. Откройте сайт в этом контейнере перед отправкой."},
     {"Remember zoom for each site", "Запоминать масштаб для каждого сайта"},
     {"Keep zoom per host and container. Ctrl 0 resets this site. Private values stay in memory.",
      "Масштаб для каждого хоста и контейнера. Ctrl 0 — сброс для сайта. Приватные значения "

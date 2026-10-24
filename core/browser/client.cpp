@@ -129,6 +129,8 @@ BrowserClient::GetResourceRequestHandler(CefRefPtr<CefBrowser>, CefRefPtr<CefFra
 bool BrowserClient::OnBeforeBrowse(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
                                    CefRefPtr<CefRequest> request, bool, bool) {
     const auto url = request->GetURL().ToString();
+    if (frame->IsMain() && owner_.route_container(id_, url, request->GetMethod().ToString()))
+        return true;
     if (url.starts_with("http://") || url.starts_with("https://"))
         owner_.configure_permissions(browser->GetHost()->GetRequestContext(), url,
                                      frame->IsMain() ? url

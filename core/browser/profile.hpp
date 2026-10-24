@@ -1,4 +1,5 @@
 #pragma once
+#include "core/browser/container_rules.hpp"
 #include "core/browser/hotkeys.hpp"
 #include "core/browser/permissions.hpp"
 #include "core/browser/preferences.hpp"
@@ -77,6 +78,7 @@ class Profile : public BrowserPreferences {
     std::string profiles_root;
     std::vector<SitePermission> site_permissions;
     std::vector<SiteZoom> site_zooms;
+    std::vector<ContainerRule> container_rules;
     std::vector<HotkeyOverride> hotkeys;
     std::vector<Visit> history, bookmarks;
     std::vector<BookmarkFolder> bookmark_folders;

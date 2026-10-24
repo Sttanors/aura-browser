@@ -417,7 +417,10 @@ Rect BrowserUi::panel_bounds() const {
         : panel_ == Translation ? 520
         : panel_ == Profiles    ? std::clamp(236 + int(listed_profiles().size()) * 84, 340, 700)
         : panel_ == Containers
-            ? std::clamp(260 + int(app_.profile.containers.size()) * 88, 440, 700)
+            ? std::clamp(260 + int(container_rules_mode_ ? app_.profile.container_rules.size()
+                                                         : app_.profile.containers.size()) *
+                                   88,
+                         440, 700)
         : panel_ == Groups
             ? std::clamp(
                   260 + int(std::count_if(app_.profile.groups.begin(), app_.profile.groups.end(),
@@ -847,7 +850,7 @@ void BrowserUi::draw(SkCanvas &c) {
                                       app_.tr("Filter lists"),
                                       app_.tr("Workspaces"),
                                       app_.tr("Tab groups"),
-                                      app_.tr("Site containers"),
+                                      app_.tr(container_rules_mode_ ? "Site rules" : "Site containers"),
                                       app_.tr("Profiles"),
                                       app_.tr("Command palette"),
                                       app_.tr("Translate"),
@@ -2770,7 +2773,8 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
                 (live != &filter_input_ || live->value.size() + text.size() <= 4096) &&
                 (live != &workspace_input_ || live->value.size() + text.size() <= 120) &&
                 (live != &group_input_ || live->value.size() + text.size() <= 120) &&
-                (live != &container_input_ || live->value.size() + text.size() <= 120) &&
+                (live != &container_input_ ||
+                 live->value.size() + text.size() <= (container_rules_mode_ ? 253u : 120u)) &&
                 (live != &permissions_search_ || live->value.size() + text.size() <= 512) &&
                 (live != &data_search_ || live->value.size() + text.size() <= 512) &&
                 (panel_ != Bookmarks || live->value.size() + text.size() <= 16384) &&
@@ -3451,7 +3455,10 @@ bool BrowserUi::key_default(const CefKeyEvent &key) {
         if (panel_ == Containers && !container_input_focus_ &&
             (code == 0x21 || code == 0x22 || code == 0x24 || code == 0x23)) {
             const int capacity = std::max(1, (panel_bounds().height - 260) / 88);
-            const int maximum = std::max(0, int(app_.profile.containers.size()) - capacity);
+            const int maximum =
+                std::max(0, int(container_rules_mode_ ? app_.profile.container_rules.size()
+                                                      : app_.profile.containers.size()) -
+                                capacity);
             container_scroll_ = std::clamp(
                 code == 0x24   ? 0
                 : code == 0x23 ? maximum
@@ -3953,7 +3960,8 @@ void BrowserUi::text(const std::string &value) {
         if (profile_input_focus_ && profile_input_.value.size() + clean.size() <= 120)
             profile_input_.insert(clean);
     } else if (panel_ == Containers) {
-        if (container_input_focus_ && container_input_.value.size() + clean.size() <= 120)
+        if (container_input_focus_ &&
+            container_input_.value.size() + clean.size() <= (container_rules_mode_ ? 253u : 120u))
             container_input_.insert(clean);
     } else if (panel_ == Groups) {
         if (group_input_focus_ && group_input_.value.size() + clean.size() <= 120)
@@ -4203,8 +4211,11 @@ void BrowserUi::pointer(const PointerInput &input) {
     }
     if (input.kind == PointerInput::Wheel && panel_ == Containers) {
         const int capacity = std::max(1, (panel_bounds().height - 260) / 88);
-        container_scroll_ = std::clamp(container_scroll_ + (input.dy < 0 ? 1 : -1), 0,
-                                       std::max(0, int(app_.profile.containers.size()) - capacity));
+        container_scroll_ =
+            std::clamp(container_scroll_ + (input.dy < 0 ? 1 : -1), 0,
+                       std::max(0, int(container_rules_mode_ ? app_.profile.container_rules.size()
+                                                             : app_.profile.containers.size()) -
+                                       capacity));
         return;
     }
     if (input.kind == PointerInput::Wheel && panel_ == Groups) {
@@ -6227,6 +6238,7 @@ void BrowserUi::open_containers(int id) {
         app_.ui->toast(app_.tr("Containers are unavailable in private tabs."));
         return;
     }
+    container_rules_mode_ = false;
     container_target_ = id >= 0 ? id : (app_.current() ? app_.current()->id : -1);
     container_edit_ = -1;
     container_color_ = 0;
@@ -6239,6 +6251,19 @@ void BrowserUi::open_containers(int id) {
 void BrowserUi::save_container() {
     if (app_.private_window)
         return;
+    if (container_rules_mode_) {
+        if (!app_.save_container_rule(container_input_.value, container_rule_target_,
+                                      container_rule_subdomains_)) {
+            container_error_ = app_.tr("Enter a hostname without a path or port. Up to 256 rules.");
+            app_.changed();
+            return;
+        }
+        container_input_.set("");
+        container_error_.clear();
+        container_input_focus_ = false;
+        app_.changed(true);
+        return;
+    }
     bool success = false;
     if (container_edit_ > 0)
         success = app_.profile.rename_container(container_edit_, container_input_.value,
@@ -6257,6 +6282,18 @@ void BrowserUi::save_container() {
     app_.changed(true);
 }
 void BrowserUi::draw_containers(SkCanvas &canvas, Rect r) {
+    const auto &theme = interface_theme(app_.profile);
+    Rect mode{r.x + r.width - 254, r.y + 20, 194, 32};
+    focus_target(mode);
+    fill(canvas, mode, 8, SkColorSetA(theme.accent, 16));
+    border(canvas, mode, 8, SkColorSetA(theme.accent, 100));
+    centered_label(canvas, medium_,
+                   app_.tr(container_rules_mode_ ? "Back to containers" : "Site rules"), mode, 12,
+                   theme.text, 5, 5);
+    if (container_rules_mode_) {
+        draw_container_rules(canvas, r);
+        return;
+    }
     const auto &t = interface_theme(app_.profile);
     auto &c = canvas;
     const bool enabled = !app_.private_window;
@@ -6294,8 +6331,11 @@ void BrowserUi::draw_containers(SkCanvas &canvas, Rect r) {
     }
     label(c, regular_, container_error_, r.x + 28, r.y + 205, 11, t.text, r.width - 56);
     const int capacity = std::max(1, (r.height - 260) / 88);
-    container_scroll_ = std::clamp(container_scroll_, 0,
-                                   std::max(0, int(app_.profile.containers.size()) - capacity));
+    container_scroll_ =
+        std::clamp(container_scroll_, 0,
+                   std::max(0, int(container_rules_mode_ ? app_.profile.container_rules.size()
+                                                         : app_.profile.containers.size()) -
+                                   capacity));
     for (int i = container_scroll_;
          i < int(app_.profile.containers.size()) && i < container_scroll_ + capacity; i++) {
         const auto &item = app_.profile.containers[i];
@@ -6317,6 +6357,21 @@ void BrowserUi::draw_containers(SkCanvas &canvas, Rect r) {
 void BrowserUi::containers_pointer(Rect r, int x, int y) {
     if (app_.private_window)
         return;
+    if (inside({r.x + r.width - 254, r.y + 20, 194, 32}, x, y)) {
+        container_rules_mode_ = !container_rules_mode_;
+        container_scroll_ = 0;
+        container_input_.set("");
+        container_error_.clear();
+        container_input_focus_ = false;
+        if (!app_.profile.container(container_rule_target_))
+            container_rule_target_ = 0;
+        app_.changed();
+        return;
+    }
+    if (container_rules_mode_) {
+        container_rules_pointer(r, x, y);
+        return;
+    }
     if (inside({r.x + 28, r.y + 108, r.width - 196, 36}, x, y)) {
         container_input_focus_ = true;
         keyboard_focus_ = -1;
@@ -6368,12 +6423,15 @@ void BrowserUi::containers_pointer(Rect r, int x, int y) {
 std::string BrowserUi::containers_report() const {
     if (panel_ != Containers)
         return "null";
+    if (container_rules_mode_)
+        return container_rules_report();
     const auto r = panel_bounds();
     auto rect = [](Rect b) {
         return "[" + std::to_string(b.x) + "," + std::to_string(b.y) + "," +
                std::to_string(b.width) + "," + std::to_string(b.height) + "]";
     };
-    std::string out = "{\"input\":" + rect({r.x + 28, r.y + 108, r.width - 196, 36}) +
+    std::string out = "{\"rules_button\":" + rect({r.x + r.width - 254, r.y + 20, 194, 32}) +
+                      ",\"input\":" + rect({r.x + 28, r.y + 108, r.width - 196, 36}) +
                       ",\"save\":" + rect({r.x + r.width - 156, r.y + 108, 128, 36}) +
                       ",\"input_length\":" + std::to_string(container_input_.value.size()) +
                       ",\"error\":" + json_quote(container_error_) + ",\"items\":[";
@@ -8819,6 +8877,156 @@ std::string BrowserUi::hotkeys_report() const {
                ",\"bind\":" + rect({r.x + r.width - 398, y, 164, 34}) +
                ",\"reset\":" + rect({r.x + r.width - 226, y, 88, 34}) +
                ",\"disable\":" + rect({r.x + r.width - 130, y, 102, 34}) + "}";
+    }
+    return out + "]}";
+}
+} // namespace aura
+
+namespace aura {
+void BrowserUi::draw_container_rules(SkCanvas &c, Rect r) {
+    const auto &t = interface_theme(app_.profile);
+    auto button = [&](Rect b, const std::string &text, bool dropdown = false) {
+        focus_target(b);
+        fill(c, b, 8, SkColorSetA(t.accent, inside(b, hover_x_, hover_y_) ? 35 : 16));
+        border(c, b, 8, SkColorSetA(t.accent, 120));
+        centered_label(c, medium_, text, b, 12, t.text, 5, dropdown ? 28 : 5);
+        if (dropdown)
+            icon(c, "collapse", b.x + b.width - 22, b.y + 12, 12, t.text);
+    };
+    label(c, regular_, app_.tr("Confirm before opening a matching site in its assigned container."),
+          r.x + 28, r.y + 73, 12, t.muted, r.width - 56);
+    label(c, regular_, app_.tr("Hostname (example.org)"), r.x + 28, r.y + 99, 11, t.muted);
+    Rect input{r.x + 28, r.y + 108, r.width - 196, 36};
+    focus_target(input);
+    fill(c, input, 8, t.background);
+    border(c, input, 8, SkColorSetA(t.accent, container_input_focus_ ? 220 : 85));
+    draw_editor(c, container_input_, {input.x + 10, input.y + 2, input.width - 20, 32}, 13,
+                container_input_focus_);
+    button({r.x + r.width - 156, r.y + 108, 128, 36}, app_.tr("Save rule"));
+    const int half = (r.width - 64) / 2;
+    button({r.x + 28, r.y + 154, half, 36},
+           app_.tr("Container") + ": " + app_.profile.container_label(container_rule_target_), true);
+    button({r.x + 36 + half, r.y + 154, half, 36},
+           std::string(container_rule_subdomains_ ? "✓ " : "○ ") + app_.tr("Include subdomains"));
+    label(c, regular_, container_error_, r.x + 28, r.y + 205, 11, t.text, r.width - 56);
+    const int capacity = std::max(1, (r.height - 260) / 88);
+    container_scroll_ = std::clamp(
+        container_scroll_, 0, std::max(0, int(app_.profile.container_rules.size()) - capacity));
+    if (app_.profile.container_rules.empty())
+        label(c, regular_, app_.tr("Add a hostname above to create the first rule."), r.x + 28,
+              r.y + 242, 13, t.muted, r.width - 56);
+    for (int i = container_scroll_;
+         i < int(app_.profile.container_rules.size()) && i < container_scroll_ + capacity; ++i) {
+        const auto &rule = app_.profile.container_rules[i];
+        const int y = r.y + 212 + (i - container_scroll_) * 88;
+        label(c, medium_, rule.host, r.x + 28, y + 22, 13, t.text, r.width - 310);
+        label(c, regular_,
+              app_.profile.container_label(rule.container) +
+                  (rule.subdomains ? " · " + app_.tr("Include subdomains") : ""),
+              r.x + 28, y + 51, 12, t.muted, r.width - 310);
+        button({r.x + r.width - 292, y + 12, 128, 36}, app_.tr("Edit"));
+        button({r.x + r.width - 156, y + 12, 128, 36}, app_.tr("Remove"));
+    }
+    label(c, regular_,
+          app_.tr("Private tabs ignore rules. Forms are never resubmitted across containers."),
+          r.x + 28, r.y + r.height - 22, 10, t.muted, r.width - 56);
+}
+void BrowserUi::container_rules_pointer(Rect r, int x, int y) {
+    if (inside({r.x + 28, r.y + 108, r.width - 196, 36}, x, y)) {
+        container_input_focus_ = true;
+        keyboard_focus_ = -1;
+        return;
+    }
+    container_input_focus_ = false;
+    if (inside({r.x + r.width - 156, r.y + 108, 128, 36}, x, y)) {
+        save_container();
+        return;
+    }
+    const int half = (r.width - 64) / 2;
+    if (inside({r.x + 28, r.y + 154, half, 36}, x, y)) {
+        container_rule_picker(r);
+        return;
+    }
+    if (inside({r.x + 36 + half, r.y + 154, half, 36}, x, y)) {
+        container_rule_subdomains_ = !container_rule_subdomains_;
+        app_.changed();
+        return;
+    }
+    const int capacity = std::max(1, (r.height - 260) / 88);
+    for (int i = container_scroll_;
+         i < int(app_.profile.container_rules.size()) && i < container_scroll_ + capacity; ++i) {
+        const int top = r.y + 212 + (i - container_scroll_) * 88;
+        if (inside({r.x + r.width - 292, top + 12, 128, 36}, x, y)) {
+            const auto rule = app_.profile.container_rules[i];
+            container_input_.set(rule.host, true);
+            container_rule_target_ = rule.container;
+            container_rule_subdomains_ = rule.subdomains;
+            container_input_focus_ = true;
+            container_error_.clear();
+            app_.changed();
+            return;
+        }
+        if (inside({r.x + r.width - 156, top + 12, 128, 36}, x, y)) {
+            app_.profile.container_rules.erase(app_.profile.container_rules.begin() + i);
+            app_.changed(true);
+            return;
+        }
+    }
+}
+void BrowserUi::container_rule_picker(Rect r, int page) {
+    app_.close_menu();
+    keyboard_focus_ = -1;
+    const int half = (r.width - 64) / 2;
+    app_.menu_x = r.x + 28;
+    app_.menu_y = r.y + 194;
+    app_.menu_width = half;
+    const auto &items = app_.profile.containers;
+    page = std::clamp(page, 0, std::max(0, (int(items.size()) - 1) / 6));
+    if (page)
+        app_.menu.push_back({-1, app_.tr("Previous")});
+    for (int i = page * 6; i < std::min(int(items.size()), page * 6 + 6); ++i)
+        app_.menu.push_back({items[i].id + 1, app_.profile.container_label(items[i].id)});
+    if ((page + 1) * 6 < int(items.size()))
+        app_.menu.push_back({-2, app_.tr("Next")});
+    app_.menu_action = [this, r, page](int id) {
+        if (id < 0) {
+            container_rule_picker(r, page + (id == -1 ? -1 : 1));
+            return;
+        }
+        if (app_.profile.container(id - 1))
+            container_rule_target_ = id - 1;
+        app_.changed();
+    };
+    app_.changed();
+}
+std::string BrowserUi::container_rules_report() const {
+    const auto r = panel_bounds();
+    auto rect = [](Rect b) {
+        return "[" + std::to_string(b.x) + "," + std::to_string(b.y) + "," +
+               std::to_string(b.width) + "," + std::to_string(b.height) + "]";
+    };
+    const int half = (r.width - 64) / 2;
+    std::string out =
+        "{\"rules_mode\":true,\"input\":" + rect({r.x + 28, r.y + 108, r.width - 196, 36}) +
+        ",\"save\":" + rect({r.x + r.width - 156, r.y + 108, 128, 36}) +
+        ",\"selector\":" + rect({r.x + 28, r.y + 154, half, 36}) +
+        ",\"subdomains_button\":" + rect({r.x + 36 + half, r.y + 154, half, 36}) +
+        ",\"target\":" + std::to_string(container_rule_target_) +
+        ",\"subdomains\":" + (container_rule_subdomains_ ? "true" : "false") +
+        ",\"input_length\":" + std::to_string(container_input_.value.size()) +
+        ",\"error\":" + json_quote(container_error_) + ",\"items\":[";
+    const int capacity = std::max(1, (r.height - 260) / 88);
+    for (int i = container_scroll_;
+         i < int(app_.profile.container_rules.size()) && i < container_scroll_ + capacity; ++i) {
+        if (i != container_scroll_)
+            out += ",";
+        const auto &rule = app_.profile.container_rules[i];
+        out += "{\"host\":" + json_quote(rule.host) +
+               ",\"container\":" + std::to_string(rule.container) +
+               ",\"subdomains\":" + (rule.subdomains ? "true" : "false") + ",\"edit\":" +
+               rect({r.x + r.width - 292, r.y + 224 + (i - container_scroll_) * 88, 128, 36}) +
+               ",\"remove\":" +
+               rect({r.x + r.width - 156, r.y + 224 + (i - container_scroll_) * 88, 128, 36}) + "}";
     }
     return out + "]}";
 }

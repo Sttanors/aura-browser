@@ -799,6 +799,8 @@ void BrowserController::navigate(std::string input) {
         const auto url = navigation_url(std::move(input), profile.search_engine);
         ui->editing = false;
         ui->panel(BrowserUi::None);
+        if (route_container(t->id, url))
+            return;
         if (url == "aura://newtab") {
             if (t->browser) {
                 // A real history entry unloads the old document and honours
@@ -1653,7 +1655,7 @@ void BrowserController::confirm_action(std::string title, std::string message,
 void BrowserController::cancel_permissions(int tab_id) {
     std::vector<std::function<void(bool, const std::string &)>> actions;
     for (auto it = dialogs.begin(); it != dialogs.end();) {
-        if (it->permission && it->tab == tab_id) {
+        if ((it->permission || it->container_route) && it->tab == tab_id) {
             actions.push_back(std::move(it->action));
             it = dialogs.erase(it);
         } else

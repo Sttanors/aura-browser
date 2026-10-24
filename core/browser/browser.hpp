@@ -105,6 +105,7 @@ struct BrowserDialog {
     std::function<void(bool)> user_decision;
     std::vector<SitePermission> permission_rules;
     bool permission_private = false;
+    bool container_route = false;
     bool owned = false, permission = false, sensitive = false;
     uint64_t permission_id = ~uint64_t{0};
 };
@@ -205,6 +206,8 @@ class BrowserController {
     CefRefPtr<CefRequestContext> request_context(int container, bool private_tab = false);
     bool container_in_use(int id) const;
     void remove_container(int id);
+    bool route_container(int tab_id, const std::string &url, const std::string &method = "GET");
+    bool save_container_rule(const std::string &host, int container, bool subdomains);
     std::string permission_value(const Tab &, const std::string &requesting,
                                  const std::string &id) const;
     std::string permission_site(const Tab &, const std::string &requesting,

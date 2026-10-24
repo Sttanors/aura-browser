@@ -272,6 +272,15 @@ void Profile::load() {
                     container_trash.end())
                 container_trash.push_back(id);
         }
+    container_rules.clear();
+    if (auto rows = table["container_rules"].as_array())
+        for (const auto &node : *rows)
+            if (const auto row = node.as_table()) {
+                const auto id = (*row)["container"].value<int>();
+                if (id && container(*id))
+                    set_container_rule(container_rules, (*row)["host"].value_or(std::string{}), *id,
+                                       (*row)["subdomains"].value_or(false));
+            }
     site_zooms.clear();
     if (auto rows = table["site_zooms"].as_array())
         for (const auto &node : *rows) {
@@ -586,7 +595,7 @@ void Profile::load() {
 }
 void Profile::save() const {
     toml::table root;
-    root.insert("schema", 15);
+    root.insert("schema", 16);
     toml::array keys;
     for (const auto &entry : hotkeys)
         keys.push_back(toml::table{{"action", entry.action},
@@ -605,6 +614,11 @@ void Profile::save() const {
                                           {"permission", rule.permission},
                                           {"value", rule.value}});
     root.insert("site_permissions", std::move(permissions));
+    toml::array route_rows;
+    for (const auto &rule : container_rules)
+        route_rows.push_back(toml::table{
+            {"host", rule.host}, {"container", rule.container}, {"subdomains", rule.subdomains}});
+    root.insert("container_rules", std::move(route_rows));
     toml::array zoom_rows;
     for (const auto &rule : site_zooms)
         zoom_rows.push_back(
@@ -1006,6 +1020,7 @@ bool Profile::remove_container(int id) {
         return false;
     std::erase_if(containers, [&](const auto &c) { return c.id == id; });
     std::erase_if(site_permissions, [&](const auto &rule) { return rule.container == id; });
+    std::erase_if(container_rules, [&](const auto &rule) { return rule.container == id; });
     std::erase_if(site_zooms, [&](const auto &rule) { return rule.container == id; });
     container_trash.push_back(id);
     for (auto &w : windows)
