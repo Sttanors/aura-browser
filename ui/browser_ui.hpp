@@ -68,6 +68,7 @@ class BrowserUi {
     std::string groups_report() const;
     void open_containers(int tab_id = -1);
     std::string containers_report() const;
+    std::string downloads_report() const;
     void open_profiles();
     std::string profiles_report() const;
     void open_commands();

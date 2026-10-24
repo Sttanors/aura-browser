@@ -3,6 +3,23 @@
 namespace aura {
 namespace {
 constexpr Translation catalog[] = {
+    {"Calculated SHA-256. Select the value to copy.",
+     "Вычисленный SHA-256. Выделите значение, чтобы скопировать."},
+    {"Retry", "Повторить"},
+    {"Downloads from all windows of this profile. Private downloads stay in their window.",
+     "Загрузки всех окон профиля. Приватные загрузки видны только в своём окне."},
+    {"Verify SHA-256", "Проверить SHA-256"},
+    {"Paste the expected 64-digit SHA-256. Leave empty to calculate only.",
+     "Вставьте ожидаемый SHA-256 (64 символа). Оставьте пустым, чтобы только вычислить хеш."},
+    {"Use exactly 64 hexadecimal characters.", "Введите ровно 64 шестнадцатеричных символа."},
+    {"SHA-256 matches", "SHA-256 совпадает"},
+    {"SHA-256 does not match", "SHA-256 не совпадает"},
+    {"SHA-256 calculated", "SHA-256 вычислен"},
+    {"Hashing…", "Вычисление хеша…"},
+    {"Could not hash this file. Check that it exists and is unchanged.",
+     "Не удалось вычислить хеш. Проверьте, что файл существует и не меняется."},
+    {"min", "мин"},
+    {"sec", "с"},
     {"Container", "Контейнер"},
     {"Previous", "Назад"},
     {"Next", "Далее"},

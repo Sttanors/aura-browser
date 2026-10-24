@@ -7,6 +7,7 @@
 #include "common/platform.hpp"
 #include "common/pump_schedule.hpp"
 #include "common/text.hpp"
+#include "core/browser/download_hash.hpp"
 #include "core/browser/profiles.hpp"
 #include "core/browser/screenshot.hpp"
 #include "core/browser/translation.hpp"
@@ -1544,4 +1545,17 @@ subdomains=true
     ASSERT_EQ(p.container_rules.size(), 1);
     EXPECT_EQ(p.container_rules.front().host, "good.test");
     EXPECT_EQ(match_container_rule(p.container_rules, "sub.good.test")->container, 0);
+}
+
+TEST(Downloads, HashesFileAndRejectsInvalidDigestAndMissingFile) {
+    TemporaryProfile temp;
+    const auto file = temp.path / "download.bin";
+    std::ofstream(file, std::ios::binary) << "abc";
+    EXPECT_EQ(download_sha256(file),
+              "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    EXPECT_EQ(normalize_sha256(std::string(64, 'A')), std::string(64, 'a'));
+    EXPECT_TRUE(normalize_sha256(std::string(63, 'a')).empty());
+    EXPECT_TRUE(normalize_sha256(std::string(64, 'z')).empty());
+    EXPECT_THROW(download_sha256(temp.path / "missing"), std::exception);
+    EXPECT_THROW(download_sha256(temp.path), std::exception);
 }

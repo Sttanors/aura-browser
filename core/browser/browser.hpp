@@ -68,7 +68,7 @@ struct Tab {
     bool ntp = true, private_tab = false, pinned = false, loading = false, back = false,
          forward = false, muted = false, closing = false;
     double progress = 0, zoom = 0;
-    std::string icon_url, pending_url;
+    std::string icon_url, pending_url, pending_download_url;
     bool site_tools_ready = false;
     bool popup_pending = false, creation_pending = false;
     std::chrono::steady_clock::time_point context_wait_since{};
@@ -87,8 +87,12 @@ struct ExtensionPopup {
 };
 struct Download {
     uint32_t id = 0;
-    int source_tab = 0;
-    std::string name, path;
+    int source_tab = 0, container = 0;
+    uint64_t source_window = 0;
+    bool private_mode = false;
+    std::string name, path, url, sha256, checksum_status;
+    long long speed = 0;
+    uint64_t checksum_generation = 0;
     int percent = 0;
     long long received = 0, total = 0;
     bool complete = false, cancelled = false, paused = false, interrupted = false;
@@ -128,6 +132,9 @@ struct WindowRequest {
 struct BrowserState {
     explicit BrowserState(const std::filesystem::path &path);
     Profile profile;
+    std::vector<Download> downloads;
+    std::vector<std::filesystem::path> download_paths;
+    uint64_t next_window_uid = 0;
     uint64_t profile_revision = 0;
     ProfileCatalog profiles;
     std::vector<SitePermission> private_site_permissions;
@@ -178,7 +185,8 @@ class BrowserController {
     std::unique_ptr<BrowserWindow> window;
     std::unique_ptr<BrowserUi> ui;
     std::vector<std::unique_ptr<Tab>> tabs;
-    std::vector<Download> downloads;
+    std::vector<Download> &downloads;
+    const uint64_t window_uid;
     std::deque<BrowserDialog> dialogs;
     std::vector<MenuEntry> menu;
     CefRefPtr<CefRunContextMenuCallback> menu_callback;
@@ -293,11 +301,16 @@ class BrowserController {
     void abort_popup(int source, int popup_id);
     void update_favicon(int id, const std::string &url);
     void download_updated(CefRefPtr<CefDownloadItem> item,
-                          CefRefPtr<CefDownloadItemCallback> callback);
+                          CefRefPtr<CefDownloadItemCallback> callback, int source_tab);
     void start_download(CefRefPtr<CefDownloadItem> item,
                         CefRefPtr<CefBeforeDownloadCallback> callback, const std::string &suggested,
                         int source_tab);
     void download_action(std::size_t index, bool cancel);
+    std::vector<std::size_t> visible_downloads() const;
+    bool download_visible(const Download &) const;
+    void retry_download(std::size_t index);
+    void begin_pending_download(int tab_id);
+    void verify_download(std::size_t index);
     void open_folder();
     void open_directory(const std::filesystem::path &directory);
     std::string tr(std::string_view english) const;
@@ -331,7 +344,6 @@ class BrowserController {
     CefRefPtr<CefRequestContext> &private_context_;
     std::vector<SavedTab> recently_closed_;
     std::map<int, int> workspace_selection_;
-    std::vector<std::filesystem::path> download_paths_;
     std::map<std::pair<int, int>, int> pending_popups_;
     std::vector<std::function<void()>> pending_;
     std::string quit_snapshot_;
@@ -343,6 +355,7 @@ class BrowserController {
     int data_tasks_ = 0;
     int browser_frame_rate_ = 60;
     void ensure_browser(Tab &tab, const std::string &url);
-    void finish_download(CefRefPtr<CefBeforeDownloadCallback> callback, std::string name);
+    void finish_download(CefRefPtr<CefBeforeDownloadCallback> callback, std::string name,
+                         uint32_t id);
 };
 } // namespace aura

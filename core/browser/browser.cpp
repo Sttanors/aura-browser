@@ -157,10 +157,10 @@ BrowserController::BrowserController(std::filesystem::path path, std::filesystem
                                      double factor, bool accelerated,
                                      std::shared_ptr<BrowserState> shared, bool private_mode)
     : state_(shared ? std::move(shared) : std::make_shared<BrowserState>(path)),
-      profile(state_->profile), private_window(private_mode), scale(factor),
-      extensions(state_->extensions), updates(state_->updates), importer(state_->importer),
-      passwords(state_->passwords), request_policy(state_->policy),
-      private_context_(state_->private_context) {
+      profile(state_->profile), private_window(private_mode), downloads(state_->downloads),
+      window_uid(++state_->next_window_uid), scale(factor), extensions(state_->extensions),
+      updates(state_->updates), importer(state_->importer), passwords(state_->passwords),
+      request_policy(state_->policy), private_context_(state_->private_context) {
     resources = font.parent_path().parent_path();
     if (!request_policy->protection)
         request_policy->protection = std::make_shared<Protection>();
@@ -1139,7 +1139,17 @@ void BrowserController::detach_window() {
     close_menu();
     dialogs.clear();
     for (auto &d : downloads)
-        d.callback = nullptr;
+        if (d.source_window == window_uid) {
+            if (d.callback)
+                d.callback->Cancel();
+            d.callback = nullptr;
+            if (!d.complete && !d.cancelled) {
+                d.interrupted = true;
+                d.speed = 0;
+            }
+        }
+    std::erase_if(downloads,
+                  [&](const auto &d) { return d.private_mode && d.source_window == window_uid; });
     for (auto &t : tabs) {
         t->browser = nullptr;
         t->client = nullptr;
@@ -1384,9 +1394,12 @@ std::string BrowserController::report() const {
             out << '"';
     }
     out << '}' << ",\"history_count\":" << profile.history.size()
+        << ",\"downloads_ui\":" << ui->downloads_report()
         << ",\"bookmark_count\":" << profile.bookmarks.size() << ",\"downloads\":[";
     bool first = true;
     for (auto &d : downloads) {
+        if (!download_visible(d))
+            continue;
         if (!first)
             out << ',';
         first = false;
@@ -1394,7 +1407,12 @@ std::string BrowserController::report() const {
             << "\",\"complete\":" << (d.complete ? "true" : "false")
             << ",\"source_tab\":" << d.source_tab
             << ",\"interrupted\":" << (d.interrupted ? "true" : "false")
-            << ",\"received\":" << d.received << '}';
+            << ",\"received\":" << d.received << ",\"speed\":" << d.speed
+            << ",\"total\":" << d.total << ",\"cancelled\":" << (d.cancelled ? "true" : "false")
+            << ",\"paused\":" << (d.paused ? "true" : "false") << ",\"id\":" << d.id
+            << ",\"source_window\":" << d.source_window
+            << ",\"checksum_status\":" << json_quote(d.checksum_status)
+            << ",\"sha256\":" << json_quote(d.sha256) << '}';
     }
     out << "],\"audit\":{";
     first = true;
@@ -1436,6 +1454,7 @@ void BrowserController::browser_created(int id, CefRefPtr<CefBrowser> browser) {
                 t->pending_url.clear();
                 if (!initial.empty() && (!t->ntp || initial == "about:blank#aura-newtab"))
                     t->browser->GetMainFrame()->LoadURL(initial);
+                begin_pending_download(id);
             }
         });
         ++created_;
@@ -1529,14 +1548,29 @@ void BrowserController::start_download(CefRefPtr<CefDownloadItem> item,
                                        CefRefPtr<CefBeforeDownloadCallback> callback,
                                        const std::string &suggested, int source_tab) {
     spdlog::info("Download {} accepted", item->GetId());
-    auto it = std::find_if(downloads.begin(), downloads.end(),
-                           [&](const auto &d) { return d.id == item->GetId(); });
+    auto it = std::find_if(downloads.begin(), downloads.end(), [&](const auto &d) {
+        return d.id == item->GetId() && d.source_window == window_uid;
+    });
     if (it == downloads.end()) {
         downloads.insert(downloads.begin(), Download{});
         it = downloads.begin();
         it->id = item->GetId();
+        it->source_window = window_uid;
     }
     it->source_tab = source_tab;
+    if (!suggested.empty())
+        it->name = suggested;
+    it->url = item->GetOriginalUrl().ToString();
+    if (it->url.empty())
+        it->url = item->GetURL().ToString();
+    if (auto source = tab(source_tab)) {
+        it->container = source->container;
+        it->private_mode = source->private_tab;
+    }
+    if (!it->path.empty()) {
+        callback->Continue(it->path, false);
+        return;
+    }
     if (profile.ask_download_name) {
         BrowserDialog dialog;
         dialog.origin = "Download filename";
@@ -1544,21 +1578,22 @@ void BrowserController::start_download(CefRefPtr<CefDownloadItem> item,
         dialog.owned = true;
         dialog.prompt = true;
         dialog.input.set(suggested, true);
-        dialog.action = [this, callback, suggested](bool accept, const std::string &name) {
+        dialog.action = [this, callback, suggested, id = item->GetId()](bool accept,
+                                                                        const std::string &name) {
             if (accept)
-                finish_download(callback, name.empty() ? suggested : name);
+                finish_download(callback, name.empty() ? suggested : name, id);
         };
         dialogs.push_back(std::move(dialog));
         changed();
     } else
-        finish_download(callback, suggested);
+        finish_download(callback, suggested, item->GetId());
 }
 std::filesystem::path BrowserController::downloads_directory() const {
     return profile.download_directory.empty() ? profile.directory / "downloads"
                                               : path_from_utf8(profile.download_directory);
 }
 void BrowserController::finish_download(CefRefPtr<CefBeforeDownloadCallback> callback,
-                                        std::string input) {
+                                        std::string input, uint32_t id) {
     auto folder = downloads_directory();
     std::error_code error;
     std::filesystem::create_directories(folder, error);
@@ -1579,10 +1614,18 @@ void BrowserController::finish_download(CefRefPtr<CefBeforeDownloadCallback> cal
     auto path = folder / name;
     int suffix = 1;
     while (std::filesystem::exists(path) ||
-           std::find(download_paths_.begin(), download_paths_.end(), path) != download_paths_.end())
+           std::find(state_->download_paths.begin(), state_->download_paths.end(), path) !=
+               state_->download_paths.end())
         path = folder / path_from_utf8(utf8_path(name.stem()) + " (" + std::to_string(suffix++) +
                                        ")" + utf8_path(name.extension()));
-    download_paths_.push_back(path);
+    state_->download_paths.push_back(path);
+    auto record = std::find_if(downloads.begin(), downloads.end(), [&](const auto &d) {
+        return d.id == id && d.source_window == window_uid;
+    });
+    if (record != downloads.end()) {
+        record->path = utf8_path(path);
+        record->name = utf8_path(path.filename());
+    }
     callback->Continue(utf8_path(path), false);
     ++audit["download_started"];
     if (profile.open_downloads)
@@ -1590,27 +1633,50 @@ void BrowserController::finish_download(CefRefPtr<CefBeforeDownloadCallback> cal
     ui->toast(tr("Download started"));
 }
 void BrowserController::download_updated(CefRefPtr<CefDownloadItem> item,
-                                         CefRefPtr<CefDownloadItemCallback> callback) {
+                                         CefRefPtr<CefDownloadItemCallback> callback,
+                                         int source_tab) {
     if (!item->IsValid())
         return;
     if (item->IsComplete() || item->IsCanceled() || item->IsInterrupted())
         spdlog::info("Download {} complete={} canceled={} interrupted={} reason={}", item->GetId(),
                      item->IsComplete(), item->IsCanceled(), item->IsInterrupted(),
                      static_cast<int>(item->GetInterruptReason()));
-    auto it = std::find_if(downloads.begin(), downloads.end(),
-                           [&](auto &d) { return d.id == item->GetId(); });
+    auto it = std::find_if(downloads.begin(), downloads.end(), [&](auto &d) {
+        return d.id == item->GetId() && d.source_window == window_uid;
+    });
     if (it == downloads.end()) {
         downloads.insert(downloads.begin(), Download{});
         it = downloads.begin();
         it->id = item->GetId();
+        it->source_window = window_uid;
     }
     auto &d = *it;
-    d.name = item->GetSuggestedFileName();
-    d.path = item->GetFullPath();
+    d.source_tab = source_tab;
+    if (auto url = item->GetOriginalUrl().ToString(); !url.empty())
+        d.url = url;
+    if (d.url.empty())
+        d.url = item->GetURL().ToString();
+    if (auto source = tab(source_tab)) {
+        d.container = source->container;
+        d.private_mode = source->private_tab;
+    }
+    d.speed = item->IsInProgress() && !item->IsPaused()
+                  ? std::max<int64_t>(0, item->GetCurrentSpeed())
+                  : 0;
+    if (auto name = item->GetSuggestedFileName().ToString(); !name.empty())
+        d.name = name;
+    if (auto path = item->GetFullPath().ToString(); !path.empty())
+        d.path = path;
     if (!d.path.empty())
         d.name = utf8_path(path_from_utf8(d.path).filename());
+    if (d.name.empty()) {
+        CefURLParts parts;
+        if (CefParseURL(d.url, parts))
+            d.name = utf8_path(path_from_utf8(CefString(&parts.path).ToString()).filename());
+    }
     d.percent = item->GetPercentComplete();
-    d.received = item->GetReceivedBytes();
+    d.received = item->IsCanceled() ? std::max<long long>(d.received, item->GetReceivedBytes())
+                                    : item->GetReceivedBytes();
     d.total = item->GetTotalBytes();
     const bool just_completed = !d.complete && item->IsComplete();
     d.complete = item->IsComplete();
@@ -1622,13 +1688,20 @@ void BrowserController::download_updated(CefRefPtr<CefDownloadItem> item,
     if (just_completed && profile.notify_downloads)
         ui->toast(tr("Download complete") + " · " + d.name);
     if (just_completed && profile.close_downloads && ui->visible_panel() == BrowserUi::Downloads &&
-        std::all_of(downloads.begin(), downloads.end(),
-                    [](auto &v) { return v.complete || v.cancelled; }))
+        std::all_of(downloads.begin(), downloads.end(), [&](auto &v) {
+            return !download_visible(v) || v.complete || v.cancelled || v.interrupted;
+        }))
         ui->panel(BrowserUi::None);
     changed();
 }
 void BrowserController::download_action(std::size_t i, bool cancel) {
-    if (i >= downloads.size() || !downloads[i].callback)
+    if (i >= downloads.size() || !download_visible(downloads[i]))
+        return;
+    if (!cancel && (downloads[i].cancelled || downloads[i].interrupted)) {
+        retry_download(i);
+        return;
+    }
+    if (!downloads[i].callback)
         return;
     auto &d = downloads[i];
     if (cancel)
@@ -1687,7 +1760,8 @@ void BrowserController::clear_data(const std::string &kind) {
         return;
     }
     if (kind == "downloads") {
-        std::erase_if(downloads, [](auto &d) { return d.complete || d.cancelled; });
+        std::erase_if(downloads,
+                      [&](auto &d) { return download_visible(d) && (d.complete || d.cancelled); });
         changed();
         return;
     }

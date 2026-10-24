@@ -705,8 +705,9 @@ void BrowserUi::draw(SkCanvas &c) {
             fill(c, r, 9, SkColorSetA(t.surface, 180));
         icon(c, icons[i], 28, r.y + 7, 18, muted);
         label(c, regular_, labels[i], 58, r.y + 21, 12, ink);
-        if (i == 2 && !app_.downloads.empty())
-            label(c, medium_, std::to_string(app_.downloads.size()), 204, r.y + 20, 10, t.accent);
+        if (i == 2 && !app_.visible_downloads().empty())
+            label(c, medium_, std::to_string(app_.visible_downloads().size()), 204, r.y + 20, 10,
+                  t.accent);
     }
     focus_target({16, height_ - 60, 208, 54});
     fill(c, {20, height_ - 48, 28, 28}, 10, SkColorSetA(t.accent, 35));
@@ -896,27 +897,31 @@ void BrowserUi::draw(SkCanvas &c) {
             c.restore();
         }
         if (panel_ == Downloads) {
-            label(c, regular_, app_.tr("Files are saved in your local profile's downloads folder."),
+            const auto visible = app_.visible_downloads();
+            label(c, regular_,
+                  app_.tr("Downloads from all windows of this profile. Private downloads stay in "
+                          "their window."),
                   r.x + 28, r.y + 75, 12, muted);
             fill(c, {r.x + 25, r.y + 91, 132, 31}, 8, SkColorSetA(t.accent, 25));
             icon(c, "folder", r.x + 35, r.y + 98, 17, t.accent);
             centered_label(c, medium_, app_.tr("Show folder"), {r.x + 25, r.y + 91, 132, 31}, 11,
                            ink, 34, 8);
             focus_target({r.x + 25, r.y + 91, 132, 31});
-            if (app_.downloads.empty())
+            if (visible.empty())
                 label(c, regular_, app_.tr("Your downloads will appear here."), r.x + 28, r.y + 169,
                       14, muted);
             c.save();
             c.clipRect(
                 SkRect::MakeLTRB(r.x + 12, r.y + 132, r.x + r.width - 12, r.y + r.height - 14));
-            for (std::size_t i = panel_scroll_; i < app_.downloads.size(); ++i) {
-                auto &d = app_.downloads[i];
+            for (std::size_t i = panel_scroll_; i < visible.size(); ++i) {
+                auto &d = app_.downloads[visible[i]];
                 int y = r.y + 141 + (static_cast<int>(i) - panel_scroll_) * 75;
                 if (y > r.y + r.height - 20)
                     break;
                 icon(c, d.complete ? "check" : "download", r.x + 29, y + 7, 20, t.accent);
                 label(c, medium_, d.name.empty() ? app_.tr("Downloading…") : d.name, r.x + 62,
-                      y + 21, 13, ink, r.width - 170);
+                      y + 21, 13, ink,
+                      r.width - (d.complete || d.cancelled || d.interrupted ? 230 : 170));
                 label(c, regular_,
                       d.cancelled  ? app_.tr("Cancelled")
                       : d.complete ? app_.tr("Complete · ") + bytes(d.received)
@@ -925,7 +930,39 @@ void BrowserUi::draw(SkCanvas &c) {
                       : d.paused ? app_.tr("Paused")
                                  : bytes(d.received) + " / " + bytes(d.total),
                       r.x + 62, y + 42, 11, muted);
-                if (!d.complete && !d.cancelled) {
+                if (d.complete || d.cancelled || d.interrupted) {
+                    Rect action{r.x + r.width - 149, y + 5, 124, 34};
+                    if (y + 50 <= r.y + r.height - 14 && d.checksum_status != "hashing")
+                        focus_target(action);
+                    fill(c, action, 8,
+                         SkColorSetA(t.accent, d.checksum_status == "hashing" ? 8 : 20));
+                    centered_label(c, medium_,
+                                   app_.tr(d.checksum_status == "hashing" ? "Hashing…"
+                                           : d.complete                   ? "SHA-256"
+                                                                          : "Retry"),
+                                   action, 12, d.checksum_status == "hashing" ? muted : ink, 5, 5);
+                    if (!d.checksum_status.empty()) {
+                        const char *status =
+                            d.checksum_status == "hashing"    ? "Hashing…"
+                            : d.checksum_status == "match"    ? "SHA-256 matches"
+                            : d.checksum_status == "mismatch" ? "SHA-256 does not match"
+                            : d.checksum_status == "computed" ? "SHA-256 calculated"
+                                                              : "Could not hash this file. Check "
+                                                                "that it exists and is unchanged.";
+                        label(c, regular_, app_.tr(status), r.x + 62, y + 62, 11, muted,
+                              r.width - 95);
+                    }
+                } else {
+                    if (!d.paused && d.speed > 0) {
+                        std::string status = bytes(d.speed) + "/s";
+                        if (d.total > d.received) {
+                            const auto seconds = (d.total - d.received) / d.speed +
+                                                 ((d.total - d.received) % d.speed != 0);
+                            status += " · ~" + std::to_string(seconds / 60) + " " + app_.tr("min") +
+                                      " " + std::to_string(seconds % 60) + " " + app_.tr("sec");
+                        }
+                        label(c, regular_, status, r.x + 62, y + 61, 11, muted, r.width - 95);
+                    }
                     if (y + 50 <= r.y + r.height - 14) {
                         focus_target({r.x + r.width - 98, y + 5, 36, 36});
                         focus_target({r.x + r.width - 57, y + 5, 36, 36});
@@ -933,9 +970,9 @@ void BrowserUi::draw(SkCanvas &c) {
                     icon(c, d.paused || d.interrupted ? "play" : "pause", r.x + r.width - 89,
                          y + 13, 18, muted);
                     icon(c, "close", r.x + r.width - 48, y + 13, 18, muted);
-                    fill(c, {r.x + 62, y + 52, r.width - 94, 3}, 2, SkColorSetA(t.accent, 30));
+                    fill(c, {r.x + 62, y + 67, r.width - 94, 3}, 2, SkColorSetA(t.accent, 30));
                     fill(c,
-                         {r.x + 62, y + 52,
+                         {r.x + 62, y + 67,
                           static_cast<int>((r.width - 94) * std::max(0, d.percent) / 100.f), 3},
                          2, t.accent);
                 }
@@ -3828,7 +3865,7 @@ bool BrowserUi::key_default(const CefKeyEvent &key) {
             (code == 0x21 || code == 0x22 || code == 0x24 || code == 0x23)) {
             const int count = panel_ == History     ? int(app_.profile.history.size())
                               : panel_ == Bookmarks ? int(app_.profile.bookmarks.size())
-                              : panel_ == Downloads ? int(app_.downloads.size())
+                              : panel_ == Downloads ? int(app_.visible_downloads().size())
                               : panel_ == Shortcuts ? int(app_.profile.shortcuts.size())
                               : panel_ == Filters   ? int(filter_lines_.size())
                               : app_.extensions.candidate
@@ -4266,7 +4303,7 @@ void BrowserUi::pointer(const PointerInput &input) {
         if (inside(r, x, y)) {
             int count = panel_ == History     ? app_.profile.history.size()
                         : panel_ == Bookmarks ? app_.profile.bookmarks.size()
-                                              : app_.downloads.size();
+                                              : app_.visible_downloads().size();
             panel_scroll_ =
                 std::clamp(panel_scroll_ + (input.dy < 0 ? 2 : -2), 0, std::max(0, count - 4));
             return;
@@ -4397,8 +4434,21 @@ void BrowserUi::pointer(const PointerInput &input) {
                     app_.open_folder();
                 else if (y >= r.y + 141) {
                     int i = (y - r.y - 141) / 75 + panel_scroll_;
-                    if (x > r.x + r.width - 110)
-                        app_.download_action(i, x > r.x + r.width - 64);
+                    const auto visible = app_.visible_downloads();
+                    if (i >= 0 && i < int(visible.size())) {
+                        const auto index = visible[i];
+                        const auto &d = app_.downloads[index];
+                        if (d.complete || d.cancelled || d.interrupted) {
+                            const int top = r.y + 141 + (i - panel_scroll_) * 75;
+                            if (inside({r.x + r.width - 149, top + 5, 124, 34}, x, y)) {
+                                if (d.complete)
+                                    app_.verify_download(index);
+                                else
+                                    app_.retry_download(index);
+                            }
+                        } else if (x > r.x + r.width - 110)
+                            app_.download_action(index, x > r.x + r.width - 64);
+                    }
                 }
             } else if (panel_ == Settings)
                 settings_pointer(r, x, y);
@@ -9027,6 +9077,36 @@ std::string BrowserUi::container_rules_report() const {
                rect({r.x + r.width - 292, r.y + 224 + (i - container_scroll_) * 88, 128, 36}) +
                ",\"remove\":" +
                rect({r.x + r.width - 156, r.y + 224 + (i - container_scroll_) * 88, 128, 36}) + "}";
+    }
+    return out + "]}";
+}
+} // namespace aura
+
+namespace aura {
+std::string BrowserUi::downloads_report() const {
+    if (panel_ != Downloads)
+        return "null";
+    auto r = panel_bounds();
+    auto rect = [](Rect b) {
+        return "[" + std::to_string(b.x) + "," + std::to_string(b.y) + "," +
+               std::to_string(b.width) + "," + std::to_string(b.height) + "]";
+    };
+    std::string out = "{\"items\":[";
+    const auto visible = app_.visible_downloads();
+    bool first = true;
+    for (int i = panel_scroll_; i < int(visible.size()); ++i) {
+        const int y = r.y + 141 + (i - panel_scroll_) * 75;
+        if (y + 50 > r.y + r.height - 14)
+            break;
+        if (!first)
+            out += ",";
+        first = false;
+        const auto &d = app_.downloads[visible[i]];
+        out += "{\"id\":" + std::to_string(d.id) +
+               ",\"source_window\":" + std::to_string(d.source_window) +
+               ",\"action\":" + rect({r.x + r.width - 149, y + 5, 124, 34}) +
+               ",\"pause\":" + rect({r.x + r.width - 98, y + 5, 36, 36}) +
+               ",\"cancel\":" + rect({r.x + r.width - 57, y + 5, 36, 36}) + "}";
     }
     return out + "]}";
 }

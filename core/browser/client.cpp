@@ -413,6 +413,7 @@ void BrowserClient::OnLoadEnd(CefRefPtr<CefBrowser> b, CefRefPtr<CefFrame> f, in
         if (auto t = owner_.tab(id_); t && t->browser && !t->ntp)
             owner_.apply_site_zoom(*t, f->GetURL().ToString());
         owner_.page_changed(id_, true);
+        owner_.begin_pending_download(id_);
     }
 }
 void BrowserClient::OnLoadError(CefRefPtr<CefBrowser> b, CefRefPtr<CefFrame> f, ErrorCode code,
@@ -477,7 +478,7 @@ bool BrowserClient::OnBeforeDownload(CefRefPtr<CefBrowser>, CefRefPtr<CefDownloa
 }
 void BrowserClient::OnDownloadUpdated(CefRefPtr<CefBrowser>, CefRefPtr<CefDownloadItem> item,
                                       CefRefPtr<CefDownloadItemCallback> callback) {
-    owner_.download_updated(item, callback);
+    owner_.download_updated(item, callback, id_);
 }
 void BrowserClient::OnFindResult(CefRefPtr<CefBrowser>, int, int count, const CefRect &, int active,
                                  bool) {

@@ -22,8 +22,8 @@ bool BrowserController::can_sleep(const Tab &t, bool allow_visible) const {
         return false;
     return std::none_of(downloads.begin(), downloads.end(), [&](const auto &d) {
         // Unknown sources remain protected until OnBeforeDownload identifies their tab.
-        return (!d.source_tab || d.source_tab == t.id) && !d.complete && !d.cancelled &&
-               !d.interrupted;
+        return d.source_window == window_uid && (!d.source_tab || d.source_tab == t.id) &&
+               !d.complete && !d.cancelled && !d.interrupted;
     });
 }
 void BrowserController::wake_tab(int id) {
