@@ -10,6 +10,7 @@
 #include "core/browser/download_hash.hpp"
 #include "core/browser/process_tasks.hpp"
 #include "core/browser/profiles.hpp"
+#include "core/browser/reading_list.hpp"
 #include "core/browser/screenshot.hpp"
 #include "core/browser/translation.hpp"
 #include <climits>
@@ -1608,4 +1609,81 @@ TEST(Processes, RendererKeyUsesCefFramePrefixAndRejectsUnknownFormats) {
     for (auto value :
          {"", "-token", "A-", "unknown", "G-token", "FFFFFFFFF-token", "80000000-token"})
         EXPECT_EQ(renderer_process_key(value), 0);
+}
+
+TEST(ReadingList, PersistsTextSearchReadStateAndReplacement) {
+    const auto dir = std::filesystem::temp_directory_path() / "aura-reading-unit";
+    std::filesystem::remove_all(dir);
+    ReadingList list(dir);
+    SavedArticle a;
+    a.url = "https://example.com/story";
+    a.title = "Статья";
+    a.blocks = {{"p", "Секретный ЁЖ и offline text"}, {"h2", "Heading"}};
+    ASSERT_TRUE(list.save(a));
+    ASSERT_EQ(list.items().size(), 1u);
+    const int id = list.items()[0].id;
+    EXPECT_EQ(list.search("ёж"), std::vector<int>{id});
+    EXPECT_EQ(list.search("OFFLINE"), std::vector<int>{id});
+    ASSERT_TRUE(list.mark(id, true));
+    a.title = "Updated";
+    ASSERT_TRUE(list.save(a));
+    EXPECT_EQ(list.items().size(), 1u);
+    EXPECT_TRUE(list.find(id)->read);
+    ReadingList reloaded(dir);
+    ASSERT_TRUE(reloaded.available());
+    ASSERT_NE(reloaded.find(id), nullptr);
+    EXPECT_TRUE(reloaded.find(id)->read);
+    EXPECT_EQ(reloaded.find(id)->blocks.size(), 2u);
+    ASSERT_TRUE(reloaded.remove(id));
+    EXPECT_FALSE(ReadingList(dir).find(id));
+    ReadingList after_delete(dir);
+    ASSERT_TRUE(after_delete.save(a));
+    EXPECT_GT(after_delete.items()[0].id, id);
+    std::filesystem::remove_all(dir);
+}
+TEST(ReadingList, EscapesActiveContentAndBoundsStorage) {
+    SavedArticle a;
+    a.id = 1;
+    a.url = "https://example.com/";
+    a.title = "</title><script>attack()</script>";
+    a.blocks = {{"p", "<img src=x onerror=attack()> & text"}};
+    auto html = offline_article_html(a, true, 900, 1, true);
+    EXPECT_EQ(html.find("<script>"), std::string::npos);
+    EXPECT_EQ(html.find("<img"), std::string::npos);
+    EXPECT_NE(html.find("&lt;img"), std::string::npos);
+    EXPECT_NE(html.find("default-src 'none'"), std::string::npos);
+    EXPECT_NE(html.find("32px/1.7"), std::string::npos);
+    a.blocks[0].tag = "script";
+    EXPECT_FALSE(valid_article(a));
+    a.blocks = {{"p", std::string(513 * 1024, 'x')}};
+    EXPECT_FALSE(valid_article(a));
+    a.blocks = {{"p", "text"}};
+    a.url = "file:///etc/passwd";
+    EXPECT_FALSE(valid_article(a));
+}
+TEST(ReadingList, PreservesMalformedFileAndRollsBackFailedWrites) {
+    auto dir = std::filesystem::temp_directory_path() / "aura-reading-failure-unit";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    std::ofstream(dir / "reading-list.toml") << "not valid [";
+    ReadingList damaged(dir);
+    EXPECT_FALSE(damaged.available());
+    SavedArticle a;
+    a.url = "https://example.com/";
+    a.title = "Title";
+    a.blocks = {{"p", "Text"}};
+    EXPECT_FALSE(damaged.save(a));
+    std::ifstream in(dir / "reading-list.toml");
+    std::string text((std::istreambuf_iterator<char>(in)), {});
+    EXPECT_EQ(text, "not valid [");
+    in.close();
+    std::filesystem::remove_all(dir);
+    ReadingList list(dir);
+    ASSERT_TRUE(list.save(a));
+    std::filesystem::create_directory(dir / "reading-list.toml.tmp");
+    EXPECT_FALSE(list.mark(list.items()[0].id, true));
+    EXPECT_FALSE(list.items()[0].read);
+    EXPECT_FALSE(list.remove(list.items()[0].id));
+    EXPECT_EQ(list.items().size(), 1u);
+    std::filesystem::remove_all(dir);
 }

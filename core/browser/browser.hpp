@@ -10,6 +10,7 @@
 #include "core/browser/profile.hpp"
 #include "core/browser/profiles.hpp"
 #include "core/browser/protection.hpp"
+#include "core/browser/reading_list.hpp"
 #include "core/browser/screenshot.hpp"
 #include "core/browser/updates.hpp"
 #include "core/cef/diagnostic_client.hpp"
@@ -55,7 +56,8 @@ struct Tab {
     bool sleeping = false, sleep_pending = false, media_capture = false;
     bool media_video = false, media_audio = false;
     std::set<std::string> permission_origins;
-    bool reader_active = false, reader_pending = false;
+    bool reader_active = false, reader_pending = false, reading_pending = false;
+    uint64_t reading_generation = 0;
     int reader_context = 0;
     std::string reader_ui = "null";
     std::string selected_text;
@@ -134,6 +136,7 @@ struct WindowRequest {
 struct BrowserState {
     explicit BrowserState(const std::filesystem::path &path);
     Profile profile;
+    ReadingList reading_list;
     std::vector<Download> downloads;
     std::vector<std::filesystem::path> download_paths;
     CefRefPtr<CefTaskManager> task_manager;
@@ -274,6 +277,8 @@ class BrowserController {
     void mute();
     bool can_sleep(const Tab &tab, bool allow_visible = false) const;
     void sleep_tab(int id, bool manual = true);
+    void save_reading_article();
+    void open_reading_article(int id);
     void toggle_reader();
     void reader_event(Tab &, CefRefPtr<CefDictionaryValue>);
     void wake_tab(int id);

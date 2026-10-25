@@ -31,7 +31,8 @@ class BrowserUi {
         Sessions,
         Screenshot,
         Hotkeys,
-        TaskManager
+        TaskManager,
+        ReadingListPanel
     };
     BrowserUi(BrowserController &owner, const std::filesystem::path &font);
     ~BrowserUi();
@@ -88,6 +89,8 @@ class BrowserUi {
     void begin_screenshot_area();
     std::string screenshot_report() const;
     std::string bookmarks_report() const;
+    void open_reading_list();
+    std::string reading_report() const;
     void open_sessions();
     std::string sessions_report() const;
     void open_task_manager();
@@ -118,6 +121,16 @@ class BrowserUi {
     void draw_screenshot_area(SkCanvas &);
     void screenshot_area_pointer(const PointerInput &);
     void finish_screenshot_area(bool accept);
+    const std::vector<int> &reading_results() const;
+    mutable uint64_t reading_revision_ = ~uint64_t{0};
+    mutable std::string reading_query_;
+    mutable std::vector<int> reading_ids_;
+    TextEditor reading_search_;
+    bool reading_focus_ = false;
+    int reading_scroll_ = 0;
+    void draw_reading_list(SkCanvas &, Rect);
+    void reading_pointer(Rect, int, int);
+    std::array<Rect, 3> reading_buttons(Rect, int) const;
     TextEditor session_name_;
     bool session_input_focus_ = false;
     int session_edit_ = 0, session_scroll_ = 0;

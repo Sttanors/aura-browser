@@ -376,25 +376,26 @@ Rect BrowserUi::address_bounds() const {
 }
 Rect BrowserUi::panel_bounds() const {
     const auto r = web_bounds();
-    const int w = std::min(panel_ == Settings      ? 1000
-                           : panel_ == Extensions  ? 900
-                           : panel_ == Shortcuts   ? 900
-                           : panel_ == Passwords   ? 900
-                           : panel_ == Import      ? 900
-                           : panel_ == Groups      ? 900
-                           : panel_ == Containers  ? 900
-                           : panel_ == Commands    ? 900
-                           : panel_ == Hotkeys     ? 900
-                           : panel_ == TaskManager ? 900
-                           : panel_ == Screenshot  ? 900
-                           : panel_ == Sessions    ? 900
-                           : panel_ == Bookmarks   ? 900
-                           : panel_ == SiteData    ? 900
-                           : panel_ == Permissions ? 900
-                           : panel_ == Translation ? 900
-                           : panel_ == Profiles    ? 900
-                           : panel_ == Filters     ? 900
-                                                   : 660,
+    const int w = std::min(panel_ == Settings           ? 1000
+                           : panel_ == Extensions       ? 900
+                           : panel_ == Shortcuts        ? 900
+                           : panel_ == Passwords        ? 900
+                           : panel_ == Import           ? 900
+                           : panel_ == Groups           ? 900
+                           : panel_ == Containers       ? 900
+                           : panel_ == Commands         ? 900
+                           : panel_ == Hotkeys          ? 900
+                           : panel_ == ReadingListPanel ? 900
+                           : panel_ == TaskManager      ? 900
+                           : panel_ == Screenshot       ? 900
+                           : panel_ == Sessions         ? 900
+                           : panel_ == Bookmarks        ? 900
+                           : panel_ == SiteData         ? 900
+                           : panel_ == Permissions      ? 900
+                           : panel_ == Translation      ? 900
+                           : panel_ == Profiles         ? 900
+                           : panel_ == Filters          ? 900
+                                                        : 660,
                            r.width - 24);
     const int h = std::min(
         panel_ == Settings     ? 760
@@ -412,8 +413,9 @@ Rect BrowserUi::panel_bounds() const {
                          512, 620)
         : panel_ == Hotkeys
             ? std::clamp(280 + int(std::min<size_t>(7, hotkey_results().size())) * 56, 392, 700)
-        : panel_ == TaskManager ? 700
-        : panel_ == Screenshot  ? 520
+        : panel_ == ReadingListPanel ? 700
+        : panel_ == TaskManager      ? 700
+        : panel_ == Screenshot       ? 520
         : panel_ == Sessions
             ? std::clamp(268 + int(app_.profile.named_sessions.size()) * 90, 390, 700)
         : panel_ == Permissions ? 700
@@ -864,8 +866,15 @@ void BrowserUi::draw(SkCanvas &c) {
             app_.tr("Session snapshots"),
             app_.tr("Screenshot"),
             app_.tr("Keyboard shortcuts"),
-            app_.tr("Task manager")};
+            app_.tr("Task manager"),
+            app_.tr("Read later")};
         label(c, medium_, titles[panel_], r.x + 28, r.y + 47, 23, ink);
+        if (panel_ == Bookmarks) {
+            Rect button{r.x + r.width - 220, r.y + 21, 160, 32};
+            focus_target(button);
+            border(c, button, 8, muted);
+            centered_label(c, medium_, app_.tr("Read later"), button, 12, ink, 8, 8);
+        }
         icon(c, "close", r.x + r.width - 43, r.y + 26, 19, muted);
         if (panel_ == Bookmarks)
             draw_bookmarks(c, r);
@@ -1018,6 +1027,8 @@ void BrowserUi::draw(SkCanvas &c) {
             draw_sessions(c, r);
         if (panel_ == Hotkeys)
             draw_hotkeys(c, r);
+        if (panel_ == ReadingListPanel)
+            draw_reading_list(c, r);
         if (panel_ == TaskManager)
             draw_task_manager(c, r);
         if (panel_ == Screenshot)
@@ -2631,6 +2642,7 @@ void BrowserUi::focus_address(bool select) {
     if (panel_ == Screenshot || app_.screenshot.pending || app_.screenshot.selecting)
         app_.cancel_screenshot();
     session_input_focus_ = false;
+    reading_focus_ = false;
     data_search_focus_ = false;
     clear_password_fields();
     app_.close_extension_popup();
@@ -2666,6 +2678,7 @@ void BrowserUi::panel(Panel value) {
     if (value != Screenshot &&
         (panel_ == Screenshot || app_.screenshot.pending || app_.screenshot.selecting))
         app_.cancel_screenshot();
+    reading_focus_ = false;
     if (value != Sessions)
         session_input_focus_ = false;
     hotkey_search_focus_ = false;
@@ -2732,6 +2745,7 @@ void BrowserUi::dismiss() {
     if (panel_ == Screenshot || app_.screenshot.pending || app_.screenshot.selecting)
         app_.cancel_screenshot();
     session_input_focus_ = false;
+    reading_focus_ = false;
     data_search_focus_ = false;
     clear_password_fields();
     editing = false;
@@ -2770,6 +2784,8 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
                 std::remove_if(text.begin(), text.end(), [](unsigned char c) { return c < 32; }),
                 text.end());
             TextEditor *live = nullptr;
+            if (panel_ == ReadingListPanel && reading_focus_ && target == &reading_search_)
+                live = &reading_search_;
             if (target == &address && editing)
                 live = &address;
             else if (target == &find && find_open)
@@ -2832,6 +2848,7 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
                  live->value.size() + text.size() <= (container_rules_mode_ ? 253u : 120u)) &&
                 (live != &permissions_search_ || live->value.size() + text.size() <= 512) &&
                 (live != &data_search_ || live->value.size() + text.size() <= 512) &&
+                (live != &reading_search_ || live->value.size() + text.size() <= 512) &&
                 (panel_ != Bookmarks || live->value.size() + text.size() <= 16384) &&
                 (live != &session_name_ || live->value.size() + text.size() <= 4096) &&
                 (live != &command_query_ || live->value.size() + text.size() <= 512) &&
@@ -3140,6 +3157,7 @@ bool BrowserUi::key_default(const CefKeyEvent &key) {
         data_search_focus_ = false;
         bookmark_focus_ = -1;
         session_input_focus_ = false;
+        reading_focus_ = false;
         hotkey_search_focus_ = false;
         if (auto tab = app_.current(); tab && tab->browser)
             tab->browser->GetHost()->SetFocus(false);
@@ -3159,7 +3177,7 @@ bool BrowserUi::key_default(const CefKeyEvent &key) {
         !import_input_focus_ && !filter_input_focus_ && shortcut_focus_ < 0 &&
         password_focus_ < 0 && !workspace_input_focus_ && !group_input_focus_ &&
         !container_input_focus_ && !profile_input_focus_ && !permissions_search_focus_ &&
-        !data_search_focus_ && bookmark_focus_ < 0 && !session_input_focus_ &&
+        !data_search_focus_ && bookmark_focus_ < 0 && !session_input_focus_ && !reading_focus_ &&
         !hotkey_search_focus_ && !editing) {
         const auto r = focus_targets_[keyboard_focus_];
         const int previous = keyboard_focus_;
@@ -3251,6 +3269,29 @@ bool BrowserUi::key_default(const CefKeyEvent &key) {
                 app_.changed();
                 return code < 0x20 || ctrl || (code >= 0x21 && code <= 0x2E);
             }
+            return true;
+        }
+        if (panel_ == ReadingListPanel && reading_focus_ &&
+            (!ctrl || (code != 'L' && code != 'T' && code != 'W' && code != 'Q' && code != 'N'))) {
+            if (code == 0x1B) {
+                dismiss();
+                return true;
+            }
+            editor_key(reading_search_, key);
+            reading_scroll_ = 0;
+            app_.changed();
+            return code < 0x20 || ctrl || (code >= 0x21 && code <= 0x2E);
+        }
+        if (panel_ == ReadingListPanel &&
+            (code == 0x21 || code == 0x22 || code == 0x24 || code == 0x23)) {
+            int cap = std::max(1, (panel_bounds().height - 228) / 104);
+            int maximum = std::max(0, int(reading_results().size()) - cap);
+            reading_scroll_ =
+                std::clamp(code == 0x24   ? 0
+                           : code == 0x23 ? maximum
+                                          : reading_scroll_ + (code == 0x21 ? -cap : cap),
+                           0, maximum);
+            app_.changed();
             return true;
         }
         if (panel_ == Sessions && session_input_focus_) {
@@ -3993,6 +4034,10 @@ void BrowserUi::text(const std::string &value) {
         if (hotkey_search_.value.size() + clean.size() <= 512)
             hotkey_search_.insert(clean);
         hotkey_scroll_ = 0;
+    } else if (panel_ == ReadingListPanel && reading_focus_) {
+        if (reading_search_.value.size() + clean.size() <= 512)
+            reading_search_.insert(clean);
+        reading_scroll_ = 0;
     } else if (panel_ == Sessions && session_input_focus_) {
         if (session_name_.value.size() + clean.size() <= 4096)
             session_name_.insert(clean);
@@ -4232,6 +4277,13 @@ void BrowserUi::pointer(const PointerInput &input) {
         const int cap = std::max(1, (panel_bounds().height - 280) / 56),
                   maximum = std::max(0, int(hotkey_results().size()) - cap);
         hotkey_scroll_ = std::clamp(hotkey_scroll_ + (input.dy < 0 ? 1 : -1), 0, maximum);
+        app_.changed();
+        return;
+    }
+    if (input.kind == PointerInput::Wheel && panel_ == ReadingListPanel) {
+        int cap = std::max(1, (panel_bounds().height - 228) / 104);
+        reading_scroll_ = std::clamp(reading_scroll_ + (input.dy < 0 ? 1 : -1), 0,
+                                     std::max(0, int(reading_results().size()) - cap));
         app_.changed();
         return;
     }
@@ -4525,8 +4577,13 @@ void BrowserUi::pointer(const PointerInput &input) {
                 permissions_pointer(r, x, y);
             else if (panel_ == SiteData)
                 site_data_pointer(r, x, y);
-            else if (panel_ == Bookmarks)
-                bookmarks_pointer(r, x, y);
+            else if (panel_ == Bookmarks) {
+                if (inside({r.x + r.width - 220, r.y + 21, 160, 32}, x, y))
+                    open_reading_list();
+                else
+                    bookmarks_pointer(r, x, y);
+            } else if (panel_ == ReadingListPanel)
+                reading_pointer(r, x, y);
             else if (panel_ == Sessions)
                 sessions_pointer(r, x, y);
             else if (panel_ == TaskManager)
@@ -6835,6 +6892,8 @@ std::vector<BrowserUi::CommandResult> BrowserUi::command_results() const {
         {"screenshot", "Screenshot", "Ctrl+Shift+S", page},
         {"devtools", "Developer tools", "F12", page},
         {"task_manager", "Task manager", "Shift+Esc", true},
+        {"read_later", "Read later", "", true},
+        {"save_article", "Save article offline", "", page && !private_mode},
     };
     for (const auto &action : actions)
         add({"action", action.id, app_.tr(action.title), app_.tr("Action"),
@@ -6998,6 +7057,10 @@ void BrowserUi::run_command(int index) {
         open_sessions();
     else if (id == "screenshot")
         open_screenshot();
+    else if (id == "read_later")
+        open_reading_list();
+    else if (id == "save_article")
+        app_.save_reading_article();
     else if (id == "task_manager")
         open_task_manager();
     else if (id == "hotkeys")
@@ -9294,6 +9357,165 @@ std::string BrowserUi::task_manager_report() const {
                    "}";
         }
         out += "]}";
+    }
+    return out + "]}";
+}
+} // namespace aura
+
+namespace aura {
+const std::vector<int> &BrowserUi::reading_results() const {
+    const auto &library = app_.state()->reading_list;
+    if (reading_revision_ != library.revision() || reading_query_ != reading_search_.value) {
+        reading_ids_ = library.search(reading_search_.value);
+        reading_query_ = reading_search_.value;
+        reading_revision_ = library.revision();
+    }
+    return reading_ids_;
+}
+void BrowserUi::open_reading_list() {
+    app_.close_menu();
+    panel(ReadingListPanel);
+    reading_search_.set("");
+    reading_focus_ = true;
+    reading_scroll_ = 0;
+    if (auto t = app_.current(); t && t->browser)
+        t->browser->GetHost()->SetFocus(false);
+    app_.changed();
+}
+std::array<Rect, 3> BrowserUi::reading_buttons(Rect r, int y) const {
+    int width = std::min(160, (r.width - 72) / 3);
+    return {{{r.x + 28, y, width, 30},
+             {r.x + 36 + width, y, width, 30},
+             {r.x + 44 + width * 2, y, width, 30}}};
+}
+void BrowserUi::draw_reading_list(SkCanvas &c, Rect r) {
+    const auto &theme = interface_theme(app_.profile);
+    auto button = [&](Rect b, const std::string &title, bool enabled = true) {
+        if (enabled)
+            focus_target(b);
+        if (enabled && inside(b, hover_x_, hover_y_))
+            fill(c, b, 8, SkColorSetA(theme.accent, 28));
+        border(c, b, 8, SkColorSetA(theme.accent, enabled ? 140 : 45));
+        centered_label(c, medium_, app_.tr(title), b, 12, enabled ? theme.text : theme.muted, 8, 8);
+    };
+    const auto tab = app_.current();
+    const bool pending = tab && (tab->reading_pending || tab->reader_pending);
+    button({r.x + 28, r.y + 66, r.width - 56, 34},
+           pending ? "Saving article…" : "Save article offline", !pending);
+    label(c, regular_, app_.tr("Search saved text"), r.x + 28, r.y + 123, 11, theme.muted);
+    Rect search{r.x + 28, r.y + 132, r.width - 56, 36};
+    focus_target(search);
+    fill(c, search, 8, theme.background);
+    border(c, search, 8, SkColorSetA(theme.accent, reading_focus_ ? 255 : 110));
+    draw_editor(c, reading_search_, {search.x + 10, search.y + 2, search.width - 20, 32}, 13,
+                reading_focus_);
+    auto &library = app_.state()->reading_list;
+    const auto ids = reading_results();
+    int cap = std::max(1, (r.height - 228) / 104);
+    reading_scroll_ = std::clamp(reading_scroll_, 0, std::max(0, int(ids.size()) - cap));
+    if (ids.empty())
+        label(c, regular_,
+              app_.tr(library.available()
+                          ? "No saved articles match. Open an article and save it here."
+                          : "Reading list is damaged or unavailable. The file has been preserved."),
+              r.x + 28, r.y + 210, 12, theme.muted, r.width - 56);
+    for (int i = reading_scroll_; i < int(ids.size()) && i < reading_scroll_ + cap; ++i) {
+        const auto a = library.find(ids[i]);
+        int top = r.y + 188 + (i - reading_scroll_) * 104;
+        label(c, medium_, a->title, r.x + 28, top + 16, 13, theme.text, r.width - 56);
+        const auto time = local_time(std::time_t(a->saved));
+        char date[32]{};
+        std::strftime(date, sizeof(date), "%Y-%m-%d", &time);
+        label(c, regular_, app_.tr(a->read ? "Read" : "Unread") + " / " + date + " / " + a->url,
+              r.x + 28, top + 34, 11, theme.muted, r.width - 56);
+        const auto buttons = reading_buttons(r, top + 44);
+        button(buttons[0], "Open offline");
+        button(buttons[1], a->read ? "Mark unread" : "Mark read");
+        button(buttons[2], "Delete");
+    }
+    label(c, regular_,
+          std::to_string(ids.size()) + " / " + std::to_string(library.items().size()) + "  " +
+              app_.tr("Saved articles"),
+          r.x + 28, r.y + r.height - 26, 11, theme.muted, r.width - 56);
+    if (int(ids.size()) > cap) {
+        int h = cap * 104, thumb = std::max(20, h * cap / int(ids.size()));
+        fill(c,
+             {r.x + r.width - 14,
+              r.y + 188 + (h - thumb) * reading_scroll_ / (int(ids.size()) - cap), 3, thumb},
+             1, theme.accent);
+    }
+}
+void BrowserUi::reading_pointer(Rect r, int x, int y) {
+    reading_focus_ = false;
+    if (inside({r.x + 28, r.y + 66, r.width - 56, 34}, x, y)) {
+        app_.save_reading_article();
+        return;
+    }
+    if (inside({r.x + 28, r.y + 132, r.width - 56, 36}, x, y)) {
+        reading_focus_ = true;
+        reading_search_.select_all();
+        return;
+    }
+    const auto ids = reading_results();
+    int index = reading_scroll_ + (y - r.y - 188) / 104, cap = std::max(1, (r.height - 228) / 104);
+    if (y < r.y + 188 || index < reading_scroll_ || index >= int(ids.size()) ||
+        index >= reading_scroll_ + cap)
+        return;
+    const int id = ids[index];
+    const auto a = app_.state()->reading_list.find(id);
+    if (!a)
+        return;
+    const auto buttons = reading_buttons(r, r.y + 188 + (index - reading_scroll_) * 104 + 44);
+    if (inside(buttons[0], x, y))
+        app_.open_reading_article(id);
+    else if (inside(buttons[1], x, y)) {
+        if (!app_.state()->reading_list.mark(id, !a->read))
+            app_.ui->toast(
+                app_.tr("Could not update the reading list. Check available disk space."));
+    } else if (inside(buttons[2], x, y)) {
+        BrowserDialog dialog;
+        dialog.origin = app_.tr("Delete offline article");
+        dialog.owned = true;
+        dialog.accept_label = app_.tr("Delete");
+        dialog.message =
+            a->title + "\n" + app_.tr("This removes the saved text from your reading list.");
+        const auto weak = std::weak_ptr<void>(app_.callback_lifetime);
+        const auto saved = *a;
+        dialog.action = [this, weak, saved](bool accept, const std::string &) {
+            if (weak.expired() || !accept)
+                return;
+            const auto current = app_.state()->reading_list.find(saved.id);
+            if (current && *current == saved && !app_.state()->reading_list.remove(saved.id))
+                toast(app_.tr("Could not update the reading list. Check available disk space."));
+            app_.changed();
+        };
+        app_.dialogs.push_back(std::move(dialog));
+    }
+    app_.changed();
+}
+std::string BrowserUi::reading_report() const {
+    if (panel_ != ReadingListPanel)
+        return "null";
+    Rect r = panel_bounds();
+    auto ids = reading_results();
+    int cap = std::max(1, (r.height - 228) / 104);
+    auto rect = [](Rect b) {
+        return "[" + std::to_string(b.x) + "," + std::to_string(b.y) + "," +
+               std::to_string(b.width) + "," + std::to_string(b.height) + "]";
+    };
+    std::string out = "{\"query\":" + json_quote(reading_search_.value) +
+                      ",\"count\":" + std::to_string(ids.size()) +
+                      ",\"save\":" + rect({r.x + 28, r.y + 66, r.width - 56, 34}) +
+                      ",\"search\":" + rect({r.x + 28, r.y + 132, r.width - 56, 36}) +
+                      ",\"items\":[";
+    for (int i = reading_scroll_; i < int(ids.size()) && i < reading_scroll_ + cap; ++i) {
+        if (i != reading_scroll_)
+            out += ",";
+        const auto a = app_.state()->reading_list.find(ids[i]);
+        auto buttons = reading_buttons(r, r.y + 188 + (i - reading_scroll_) * 104 + 44);
+        out += "{\"id\":" + std::to_string(a->id) + ",\"title\":" + json_quote(a->title) +
+               ",\"read\":" + (a->read ? "true" : "false") + ",\"open\":" + rect(buttons[0]) +
+               ",\"mark\":" + rect(buttons[1]) + ",\"delete\":" + rect(buttons[2]) + "}";
     }
     return out + "]}";
 }

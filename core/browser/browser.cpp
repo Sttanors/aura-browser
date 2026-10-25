@@ -146,8 +146,8 @@ class ToolsClient final : public CefClient, public CefLifeSpanHandler {
 };
 } // namespace
 BrowserState::BrowserState(const std::filesystem::path &path)
-    : profile(path), profiles(path, profile.profiles_root), extensions(path), updates(path),
-      passwords(path / "passwords.aura") {
+    : profile(path), reading_list(path), profiles(path, profile.profiles_root), extensions(path),
+      updates(path), passwords(path / "passwords.aura") {
     previous_windows = profile.windows;
     if (previous_windows.empty() && !profile.session.empty())
         previous_windows.push_back({profile.session, profile.active});
@@ -422,14 +422,18 @@ void BrowserController::defer(std::function<void()> action) {
 void BrowserController::tick() {
     const auto now = std::chrono::steady_clock::now();
     for (auto &t : tabs)
-        if (t->reader_pending && now - t->reader_started > std::chrono::seconds(30)) {
-            t->reader_pending = false;
-            if (t->devtools && t->reader_context)
+        if ((t->reader_pending || t->reading_pending) &&
+            now - t->reader_started > std::chrono::seconds(30)) {
+            const bool saving = t->reading_pending;
+            t->reader_pending = t->reading_pending = false;
+            if (!saving && t->devtools && t->reader_context)
                 t->devtools->call("Runtime.evaluate",
                                   "{\"contextId\":" + std::to_string(t->reader_context) +
                                       ",\"expression\":\"globalThis.__auraReader?.close()\"}");
             if (t.get() == current())
-                ui->toast(tr("Could not prepare reader view. Try again after the page loads."));
+                ui->toast(tr(
+                    saving ? "Could not save the article. Check the page and available disk space."
+                           : "Could not prepare reader view. Try again after the page loads."));
             changed();
         }
     if (profile.tab_sleep_minutes > 0 && !quitting)
@@ -1401,6 +1405,7 @@ std::string BrowserController::report() const {
             out << '"';
     }
     out << '}' << ",\"history_count\":" << profile.history.size()
+        << ",\"reading_ui\":" << ui->reading_report()
         << ",\"tasks_ui\":" << ui->task_manager_report()
         << ",\"downloads_ui\":" << ui->downloads_report()
         << ",\"bookmark_count\":" << profile.bookmarks.size() << ",\"downloads\":[";

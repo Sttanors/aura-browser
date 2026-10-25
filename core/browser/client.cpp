@@ -142,7 +142,7 @@ bool BrowserClient::OnBeforeBrowse(CefRefPtr<CefBrowser> browser, CefRefPtr<CefF
     if (frame->IsMain()) {
         if (auto t = owner_.tab(id_)) {
             ++t->navigation_serial;
-            t->reader_active = t->reader_pending = false;
+            t->reader_active = t->reader_pending = t->reading_pending = false;
             t->reader_context = 0;
             t->reader_ui = "null";
             t->selected_text.clear();
