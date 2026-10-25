@@ -8,6 +8,7 @@
 #include "common/pump_schedule.hpp"
 #include "common/text.hpp"
 #include "core/browser/download_hash.hpp"
+#include "core/browser/process_tasks.hpp"
 #include "core/browser/profiles.hpp"
 #include "core/browser/screenshot.hpp"
 #include "core/browser/translation.hpp"
@@ -1558,4 +1559,53 @@ TEST(Downloads, HashesFileAndRejectsInvalidDigestAndMissingFile) {
     EXPECT_TRUE(normalize_sha256(std::string(64, 'z')).empty());
     EXPECT_THROW(download_sha256(temp.path / "missing"), std::exception);
     EXPECT_THROW(download_sha256(temp.path), std::exception);
+}
+
+TEST(Processes, GroupsSharedMetricsProtectsHiddenTabsAndRejectsStaleTargets) {
+    ProcessTask first{10, 123, "Page process", 12.0, 4096, true, false, {{1, 1, 7, "First"}}};
+    ProcessTask second{11, 123, "Page process", 12.0, 4096, true, false, {{2, 1, 8, "Second"}}};
+    auto rows = group_process_tasks({first, second});
+    ASSERT_EQ(rows.size(), 1);
+    EXPECT_EQ(rows[0].memory, 4096);
+    EXPECT_EQ(rows[0].cpu, 12.0);
+    ASSERT_EQ(rows[0].tabs.size(), 2);
+    EXPECT_TRUE(rows[0].killable);
+    EXPECT_TRUE(same_process_target(rows[0], rows[0]));
+    auto changed = rows[0];
+    changed.tabs[0].navigation++;
+    EXPECT_FALSE(same_process_target(rows[0], changed));
+    changed = rows[0];
+    changed.task++;
+    EXPECT_FALSE(same_process_target(rows[0], changed));
+    second.hidden_tabs = true;
+    second.tabs.clear();
+    rows = group_process_tasks({first, second});
+    ASSERT_EQ(rows.size(), 1);
+    EXPECT_FALSE(rows[0].killable);
+    EXPECT_EQ(rows[0].tabs.size(), 1);
+    EXPECT_TRUE(group_process_tasks({second}).empty());
+    first.process = 0;
+    rows = group_process_tasks({first});
+    EXPECT_FALSE(rows[0].killable);
+    first.process = 123;
+    first.kind = "Browser process";
+    rows = group_process_tasks({first});
+    EXPECT_FALSE(rows[0].killable);
+}
+
+TEST(Hotkeys, TaskManagerChordHasReadableLabelAndCanBeReassigned) {
+    EXPECT_TRUE(allowed_hotkey({0x1B, 2}));
+    EXPECT_EQ(hotkey_label({0x1B, 2}), "Shift+Esc");
+    std::vector<HotkeyOverride> keys;
+    EXPECT_EQ(assign_hotkey(keys, "task_manager", {'M', 3}), "");
+    EXPECT_EQ(effective_hotkey(keys, "task_manager"), (Hotkey{'M', 3}));
+}
+
+TEST(Processes, RendererKeyUsesCefFramePrefixAndRejectsUnknownFormats) {
+    EXPECT_EQ(renderer_process_key("A-00000000000000000000000000000001"), 10);
+    EXPECT_EQ(renderer_process_key("B-00000000000000000000000000000001"), 11);
+    EXPECT_EQ(renderer_process_key("A-00000000000000000000000000000002"), 10);
+    for (auto value :
+         {"", "-token", "A-", "unknown", "G-token", "FFFFFFFFF-token", "80000000-token"})
+        EXPECT_EQ(renderer_process_key(value), 0);
 }

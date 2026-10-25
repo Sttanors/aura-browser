@@ -60,6 +60,7 @@ std::string tabs_json(const std::vector<std::unique_ptr<Tab>> &tabs) {
             << ",\"container\":" << t->container << ",\"workspace\":" << t->workspace
             << ",\"group\":" << t->group << ",\"loaded\":" << (t->page.loaded ? "true" : "false")
             << ",\"failed\":" << (t->page.failed ? "true" : "false")
+            << ",\"process_ended\":" << (t->process_ended ? "true" : "false")
             << ",\"http_status\":" << t->page.http_status << ",\"frame_rate\":"
             << (t->browser ? t->browser->GetHost()->GetWindowlessFrameRate() : 0)
             << ",\"popup_visible\":" << (t->page.popup_visible ? "true" : "false")
@@ -1122,6 +1123,7 @@ bool BrowserController::finished() {
     return browsers_closed && data_tasks_ == 0;
 }
 void BrowserController::prepare_shutdown() {
+    state_->task_manager = nullptr;
     importer.shutdown();
     passwords.shutdown();
     updates.shutdown();
@@ -1133,6 +1135,11 @@ void BrowserController::prepare_shutdown() {
     state_->container_contexts_ready.clear();
 }
 void BrowserController::detach_window() {
+    if (std::none_of(state_->windows.begin(), state_->windows.end(), [&](auto *w) {
+            return w != this && !w->quitting && w->ui &&
+                   w->ui->visible_panel() == BrowserUi::TaskManager;
+        }))
+        state_->task_manager = nullptr;
     ui->passwords_locked();
     closing_popups_.clear();
     extension_popup.reset();
@@ -1394,6 +1401,7 @@ std::string BrowserController::report() const {
             out << '"';
     }
     out << '}' << ",\"history_count\":" << profile.history.size()
+        << ",\"tasks_ui\":" << ui->task_manager_report()
         << ",\"downloads_ui\":" << ui->downloads_report()
         << ",\"bookmark_count\":" << profile.bookmarks.size() << ",\"downloads\":[";
     bool first = true;

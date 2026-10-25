@@ -6,6 +6,7 @@
 #include "core/browser/i18n.hpp"
 #include "core/browser/imports.hpp"
 #include "core/browser/passwords.hpp"
+#include "core/browser/process_tasks.hpp"
 #include "core/browser/profile.hpp"
 #include "core/browser/profiles.hpp"
 #include "core/browser/protection.hpp"
@@ -15,6 +16,7 @@
 #include "include/cef_context_menu_handler.h"
 #include "include/cef_download_handler.h"
 #include "include/cef_jsdialog_handler.h"
+#include "include/cef_task_manager.h"
 #include "platform/browser_window.hpp"
 #include <atomic>
 #include <deque>
@@ -69,7 +71,7 @@ struct Tab {
          forward = false, muted = false, closing = false;
     double progress = 0, zoom = 0;
     std::string icon_url, pending_url, pending_download_url;
-    bool site_tools_ready = false;
+    bool site_tools_ready = false, process_ended = false;
     bool popup_pending = false, creation_pending = false;
     std::chrono::steady_clock::time_point context_wait_since{};
     bool remember_on_close = false;
@@ -134,6 +136,7 @@ struct BrowserState {
     Profile profile;
     std::vector<Download> downloads;
     std::vector<std::filesystem::path> download_paths;
+    CefRefPtr<CefTaskManager> task_manager;
     uint64_t next_window_uid = 0;
     uint64_t profile_revision = 0;
     ProfileCatalog profiles;
@@ -310,6 +313,8 @@ class BrowserController {
     bool download_visible(const Download &) const;
     void retry_download(std::size_t index);
     void begin_pending_download(int tab_id);
+    std::vector<ProcessTask> process_tasks(bool *available = nullptr) const;
+    void end_process(const ProcessTask &);
     void verify_download(std::size_t index);
     void open_folder();
     void open_directory(const std::filesystem::path &directory);

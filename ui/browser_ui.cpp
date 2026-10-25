@@ -31,6 +31,7 @@
 #include <cmath>
 #include <ctime>
 #include <fstream>
+#include <iomanip>
 #include <map>
 #include <sstream>
 #include <tuple>
@@ -384,6 +385,7 @@ Rect BrowserUi::panel_bounds() const {
                            : panel_ == Containers  ? 900
                            : panel_ == Commands    ? 900
                            : panel_ == Hotkeys     ? 900
+                           : panel_ == TaskManager ? 900
                            : panel_ == Screenshot  ? 900
                            : panel_ == Sessions    ? 900
                            : panel_ == Bookmarks   ? 900
@@ -410,7 +412,8 @@ Rect BrowserUi::panel_bounds() const {
                          512, 620)
         : panel_ == Hotkeys
             ? std::clamp(280 + int(std::min<size_t>(7, hotkey_results().size())) * 56, 392, 700)
-        : panel_ == Screenshot ? 520
+        : panel_ == TaskManager ? 700
+        : panel_ == Screenshot  ? 520
         : panel_ == Sessions
             ? std::clamp(268 + int(app_.profile.named_sessions.size()) * 90, 390, 700)
         : panel_ == Permissions ? 700
@@ -838,28 +841,30 @@ void BrowserUi::draw(SkCanvas &c) {
         shadow(c, r, design::radii::overlay);
         fill(c, r, design::radii::overlay, t.surface);
         border(c, r, design::radii::overlay, SkColorSetA(ink, 30));
-        const std::string titles[] = {"",
-                                      app_.tr("Bookmarks"),
-                                      app_.tr("History"),
-                                      app_.tr("Downloads"),
-                                      app_.tr("Settings"),
-                                      app_.tr("Extensions"),
-                                      app_.tr("Quick links"),
-                                      app_.tr("About Aura and updates"),
-                                      app_.tr("Import browser data"),
-                                      app_.tr("Passwords"),
-                                      app_.tr("Filter lists"),
-                                      app_.tr("Workspaces"),
-                                      app_.tr("Tab groups"),
-                                      app_.tr(container_rules_mode_ ? "Site rules" : "Site containers"),
-                                      app_.tr("Profiles"),
-                                      app_.tr("Command palette"),
-                                      app_.tr("Translate"),
-                                      app_.tr("Site permissions"),
-                                      app_.tr("Site data"),
-                                      app_.tr("Session snapshots"),
-                                      app_.tr("Screenshot"),
-                                      app_.tr("Keyboard shortcuts")};
+        const std::string titles[] = {
+            "",
+            app_.tr("Bookmarks"),
+            app_.tr("History"),
+            app_.tr("Downloads"),
+            app_.tr("Settings"),
+            app_.tr("Extensions"),
+            app_.tr("Quick links"),
+            app_.tr("About Aura and updates"),
+            app_.tr("Import browser data"),
+            app_.tr("Passwords"),
+            app_.tr("Filter lists"),
+            app_.tr("Workspaces"),
+            app_.tr("Tab groups"),
+            app_.tr(container_rules_mode_ ? "Site rules" : "Site containers"),
+            app_.tr("Profiles"),
+            app_.tr("Command palette"),
+            app_.tr("Translate"),
+            app_.tr("Site permissions"),
+            app_.tr("Site data"),
+            app_.tr("Session snapshots"),
+            app_.tr("Screenshot"),
+            app_.tr("Keyboard shortcuts"),
+            app_.tr("Task manager")};
         label(c, medium_, titles[panel_], r.x + 28, r.y + 47, 23, ink);
         icon(c, "close", r.x + r.width - 43, r.y + 26, 19, muted);
         if (panel_ == Bookmarks)
@@ -1013,6 +1018,8 @@ void BrowserUi::draw(SkCanvas &c) {
             draw_sessions(c, r);
         if (panel_ == Hotkeys)
             draw_hotkeys(c, r);
+        if (panel_ == TaskManager)
+            draw_task_manager(c, r);
         if (panel_ == Screenshot)
             draw_screenshot(c, r);
     }
@@ -2619,6 +2626,8 @@ std::vector<Visit> BrowserUi::suggestions() const {
         address.value, std::min(app_.profile.suggestion_limit, std::max(1, (height_ - 205) / 54)));
 }
 void BrowserUi::focus_address(bool select) {
+    if (panel_ == TaskManager)
+        panel(None);
     if (panel_ == Screenshot || app_.screenshot.pending || app_.screenshot.selecting)
         app_.cancel_screenshot();
     session_input_focus_ = false;
@@ -2645,6 +2654,13 @@ void BrowserUi::toast(std::string message) {
     app_.changed();
 }
 void BrowserUi::panel(Panel value) {
+    if (panel_ == TaskManager && value != TaskManager) {
+        const auto &windows = app_.state()->windows;
+        if (std::none_of(windows.begin(), windows.end(), [&](auto *w) {
+                return w != &app_ && w->ui && w->ui->visible_panel() == TaskManager;
+            }))
+            app_.state()->task_manager = nullptr;
+    }
     if (value != Hotkeys)
         hotkey_recording_.clear();
     if (value != Screenshot &&
@@ -2710,6 +2726,8 @@ void BrowserUi::commit_address() {
     app_.navigate(value);
 }
 void BrowserUi::dismiss() {
+    if (panel_ == TaskManager)
+        panel(None);
     hotkey_recording_.clear();
     if (panel_ == Screenshot || app_.screenshot.pending || app_.screenshot.selecting)
         app_.cancel_screenshot();
@@ -2863,7 +2881,7 @@ bool BrowserUi::key(const CefKeyEvent &incoming) {
     if (panel_ == Hotkeys && !hotkey_recording_.empty() && app_.dialogs.empty()) {
         if (!down)
             return true;
-        if (code == 0x1B) {
+        if (code == 0x1B && mods == 0) {
             hotkey_recording_.clear();
             hotkey_error_.clear();
             app_.changed();
@@ -2931,6 +2949,10 @@ bool BrowserUi::key(const CefKeyEvent &incoming) {
                 app_.close_extension_popup();
             if (std::string_view(spec.id) == "settings") {
                 panel(Settings);
+                return true;
+            }
+            if (std::string_view(spec.id) == "task_manager") {
+                open_task_manager();
                 return true;
             }
             if (std::string_view(spec.id) == "hotkeys") {
@@ -3470,6 +3492,18 @@ bool BrowserUi::key_default(const CefKeyEvent &key) {
                 : code == 0x23 ? maximum
                                : profiles_scroll_ + (code == 0x22 ? capacity : -capacity),
                 0, maximum);
+            app_.changed();
+            return true;
+        }
+        if (panel_ == TaskManager &&
+            (code == 0x21 || code == 0x22 || code == 0x24 || code == 0x23)) {
+            const int cap = std::max(1, (panel_bounds().height - 194) / 82);
+            const int maximum = std::max(0, int(process_rows_.size()) - cap);
+            process_scroll_ =
+                std::clamp(code == 0x24   ? 0
+                           : code == 0x23 ? maximum
+                                          : process_scroll_ + (code == 0x21 ? -cap : cap),
+                           0, maximum);
             app_.changed();
             return true;
         }
@@ -4035,6 +4069,10 @@ void BrowserUi::text(const std::string &value) {
     app_.changed();
 }
 bool BrowserUi::tick() {
+    if (panel_ == TaskManager && std::chrono::steady_clock::now() >= process_refresh_) {
+        refresh_task_manager();
+        app_.changed();
+    }
     auto &shot = app_.screenshot;
     if (shot.native_running) {
         const auto job = app_.tab(shot.job_tab);
@@ -4181,6 +4219,13 @@ void BrowserUi::pointer(const PointerInput &input) {
         else
             start_scroll_ = std::clamp(start_scroll_ + (input.dy < 0 ? 64 : -64), 0,
                                        start_page_layout().maximum);
+        return;
+    }
+    if (input.kind == PointerInput::Wheel && panel_ == TaskManager) {
+        const int cap = std::max(1, (panel_bounds().height - 194) / 82);
+        process_scroll_ = std::clamp(process_scroll_ + (input.dy < 0 ? 1 : -1), 0,
+                                     std::max(0, int(process_rows_.size()) - cap));
+        app_.changed();
         return;
     }
     if (input.kind == PointerInput::Wheel && panel_ == Hotkeys) {
@@ -4484,6 +4529,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                 bookmarks_pointer(r, x, y);
             else if (panel_ == Sessions)
                 sessions_pointer(r, x, y);
+            else if (panel_ == TaskManager)
+                task_manager_pointer(r, x, y);
             else if (panel_ == Hotkeys)
                 hotkeys_pointer(r, x, y);
             else if (panel_ == Screenshot)
@@ -4531,22 +4578,25 @@ void BrowserUi::pointer(const PointerInput &input) {
                 {15, app_.tr("Site data"), true, "Ctrl+Alt+D"},
                 {16, app_.tr("Session snapshots"), true, "Ctrl+Alt+E"},
                 {17, app_.tr("Screenshot"), true, "Ctrl+Shift+S"},
-                {18, app_.tr("Keyboard shortcuts"), true}};
+                {18, app_.tr("Keyboard shortcuts"), true},
+                {19, app_.tr("Task manager"), true}};
             const std::map<int, std::string> actions = {
                 {1, "new_window"},   {2, "private_window"}, {3, "close_window"},
                 {4, "quit"},         {6, "workspaces"},     {7, "groups"},
                 {8, "split"},        {9, "containers"},     {10, "profiles"},
                 {11, "commands"},    {12, "reader"},        {13, "translate_page"},
                 {14, "permissions"}, {15, "site_data"},     {16, "sessions"},
-                {17, "screenshot"},  {18, "hotkeys"}};
+                {17, "screenshot"},  {18, "hotkeys"},       {19, "task_manager"}};
             for (auto &item : app_.menu)
                 if (auto found = actions.find(item.id); found != actions.end())
                     item.shortcut = shortcut_hint(found->second);
             app_.menu_width = 320;
             app_.menu_x = 16;
-            app_.menu_y = std::clamp(76, 8, std::max(8, height_ - int(app_.menu.size()) * 32 - 20));
+            app_.menu_y = std::clamp(76, 0, std::max(0, height_ - int(app_.menu.size()) * 32 - 12));
             app_.menu_action = [this](int command) {
-                if (command == 1 || command == 2)
+                if (command == 19)
+                    open_task_manager();
+                else if (command == 1 || command == 2)
                     app_.new_window(command == 2);
                 else if (command == 3)
                     app_.request_quit();
@@ -6189,12 +6239,15 @@ void BrowserUi::draw_page(SkCanvas &c, const Tab &tab, Rect web) {
     if (tab.page.failed) {
         fill(c, web, 0, t.background);
         icon(c, "globe", web.x + 64, web.y + 70, 38, t.accent);
-        label(c, medium_, app_.tr("This page couldn't be reached"), web.x + 64, web.y + 158, 29,
-              ink, web.width - 100);
-        label(c, regular_, tab.page.error, web.x + 64, web.y + 195, 13, muted, web.width - 100);
+        label(c, medium_,
+              app_.tr(tab.process_ended ? "Page process ended" : "This page couldn't be reached"),
+              web.x + 64, web.y + 158, 29, ink, web.width - 100);
+        label(c, regular_,
+              tab.process_ended ? app_.tr("Reload this tab to restore the page.") : tab.page.error,
+              web.x + 64, web.y + 195, 13, muted, web.width - 100);
         fill(c, {web.x + 64, web.y + 225, 125, 38}, 10, t.accent);
-        centered_label(c, medium_, app_.tr("Try again"), {web.x + 64, web.y + 225, 125, 38}, 12,
-                       t.background);
+        centered_label(c, medium_, app_.tr(tab.process_ended ? "Reload" : "Try again"),
+                       {web.x + 64, web.y + 225, 125, 38}, 12, t.background);
     } else if (!tab.page.view.generation()) {
         label(c, regular_, app_.tr("Opening ") + url_host(tab.page.url) + "…", web.x + 40,
               web.y + 65, 14, muted);
@@ -6781,6 +6834,7 @@ std::vector<BrowserUi::CommandResult> BrowserUi::command_results() const {
         {"sessions", "Session snapshots", "Ctrl+Alt+E", true},
         {"screenshot", "Screenshot", "Ctrl+Shift+S", page},
         {"devtools", "Developer tools", "F12", page},
+        {"task_manager", "Task manager", "Shift+Esc", true},
     };
     for (const auto &action : actions)
         add({"action", action.id, app_.tr(action.title), app_.tr("Action"),
@@ -6944,6 +6998,8 @@ void BrowserUi::run_command(int index) {
         open_sessions();
     else if (id == "screenshot")
         open_screenshot();
+    else if (id == "task_manager")
+        open_task_manager();
     else if (id == "hotkeys")
         open_hotkeys();
     else if (id == "devtools")
@@ -9107,6 +9163,137 @@ std::string BrowserUi::downloads_report() const {
                ",\"action\":" + rect({r.x + r.width - 149, y + 5, 124, 34}) +
                ",\"pause\":" + rect({r.x + r.width - 98, y + 5, 36, 36}) +
                ",\"cancel\":" + rect({r.x + r.width - 57, y + 5, 36, 36}) + "}";
+    }
+    return out + "]}";
+}
+} // namespace aura
+
+namespace aura {
+void BrowserUi::open_task_manager() {
+    app_.close_menu();
+    panel(TaskManager);
+    if (!app_.state()->task_manager)
+        app_.state()->task_manager = CefTaskManager::GetTaskManager();
+    process_scroll_ = 0;
+    keyboard_focus_ = -1;
+    refresh_task_manager();
+    app_.changed();
+}
+void BrowserUi::refresh_task_manager() {
+    process_rows_ = app_.process_tasks(&process_available_);
+    process_refresh_ = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+}
+void BrowserUi::draw_task_manager(SkCanvas &c, Rect r) {
+    const auto &t = interface_theme(app_.profile);
+    label(c, regular_, app_.tr("CPU 100% = one core."), r.x + 28, r.y + 76, 11, t.muted,
+          r.width - 190);
+    label(c, regular_, app_.tr("Shared tabs count memory once per process."), r.x + 28, r.y + 95,
+          11, t.muted, r.width - 190);
+    auto button = [&](Rect b, const char *text, bool enabled = true) {
+        if (enabled)
+            focus_target(b);
+        fill(c, b, 8,
+             SkColorSetA(t.accent, enabled && inside(b, hover_x_, hover_y_) ? 35
+                                   : enabled                                ? 16
+                                                                            : 7));
+        border(c, b, 8, SkColorSetA(t.accent, enabled ? 120 : 35));
+        centered_label(c, medium_, app_.tr(text), b, 11, enabled ? t.text : t.muted, 5, 5);
+    };
+    button({r.x + r.width - 140, r.y + 66, 112, 34}, "Refresh");
+    label(c, medium_, app_.tr("Process / tabs"), r.x + 28, r.y + 124, 11, t.muted, r.width - 390);
+    label(c, medium_, "CPU", r.x + r.width - 336, r.y + 124, 11, t.muted, 75);
+    label(c, medium_, app_.tr("Memory"), r.x + r.width - 250, r.y + 124, 11, t.muted, 100);
+    const int cap = std::max(1, (r.height - 194) / 82);
+    process_scroll_ = std::clamp(process_scroll_, 0, std::max(0, int(process_rows_.size()) - cap));
+    if (process_rows_.empty())
+        label(c, regular_,
+              app_.tr(process_available_ ? "Collecting process data…"
+                                         : "Process metrics are unavailable."),
+              r.x + 28, r.y + 169, 13, t.muted, r.width - 56);
+    for (int i = process_scroll_; i < int(process_rows_.size()) && i < process_scroll_ + cap; ++i) {
+        const auto &row = process_rows_[i];
+        const int y = r.y + 136 + (i - process_scroll_) * 82;
+        const auto title = row.tabs.empty() ? app_.tr(row.kind) : row.tabs.front().title;
+        label(c, medium_, title, r.x + 28, y + 20, 13, t.text, r.width - 394);
+        std::string detail = row.tabs.empty() ? "" : app_.tr(row.kind);
+        if (!row.tabs.empty())
+            detail += "  " + app_.tr("Tabs: ") + std::to_string(row.tabs.size());
+        label(c, regular_, detail, r.x + 28, y + 42, 10, t.muted, r.width - 394);
+        if (row.tabs.size() > 1) {
+            std::string others;
+            for (size_t n = 1; n < row.tabs.size(); ++n) {
+                if (!others.empty())
+                    others += ", ";
+                others += row.tabs[n].title;
+            }
+            label(c, regular_, others, r.x + 28, y + 62, 10, t.muted, r.width - 394);
+        }
+        std::ostringstream cpu;
+        if (row.cpu < 0)
+            cpu << "—";
+        else
+            cpu << std::fixed << std::setprecision(1) << row.cpu << "%";
+        label(c, regular_, cpu.str(), r.x + r.width - 336, y + 25, 12, t.text, 80);
+        label(c, regular_, row.memory < 0 ? app_.tr("Unavailable") : bytes(row.memory),
+              r.x + r.width - 250, y + 25, 12, t.text, 102);
+        button({r.x + r.width - 140, y + 8, 112, 34}, row.killable ? "End process" : "Protected",
+               row.killable);
+        fill(c, {r.x + 28, y + 76, r.width - 56, 1}, 0, SkColorSetA(t.muted, 24));
+    }
+    label(c, regular_,
+          app_.tr("Only identified page processes can be ended. All their tabs stop together."),
+          r.x + 28, r.y + r.height - 22, 10, t.muted, r.width - 56);
+}
+void BrowserUi::task_manager_pointer(Rect r, int x, int y) {
+    if (inside({r.x + r.width - 140, r.y + 66, 112, 34}, x, y)) {
+        refresh_task_manager();
+        app_.changed();
+        return;
+    }
+    const int cap = std::max(1, (r.height - 194) / 82);
+    for (int i = process_scroll_; i < int(process_rows_.size()) && i < process_scroll_ + cap; ++i) {
+        const int top = r.y + 136 + (i - process_scroll_) * 82;
+        if (inside({r.x + r.width - 140, top + 8, 112, 34}, x, y) && process_rows_[i].killable) {
+            app_.end_process(process_rows_[i]);
+            return;
+        }
+    }
+}
+std::string BrowserUi::task_manager_report() const {
+    if (panel_ != TaskManager)
+        return "null";
+    auto rect = [](Rect b) {
+        return "[" + std::to_string(b.x) + "," + std::to_string(b.y) + "," +
+               std::to_string(b.width) + "," + std::to_string(b.height) + "]";
+    };
+    const auto r = panel_bounds();
+    const int cap = std::max(1, (r.height - 194) / 82);
+    std::string out = "{\"available\":" + std::string(process_available_ ? "true" : "false") +
+                      ",\"refresh\":" + rect({r.x + r.width - 140, r.y + 66, 112, 34}) +
+                      ",\"rows\":[";
+    for (size_t i = 0; i < process_rows_.size(); ++i) {
+        if (i)
+            out += ",";
+        const auto &row = process_rows_[i];
+        out += "{\"task\":" + std::to_string(row.task) +
+               ",\"process\":" + std::to_string(row.process) + ",\"kind\":" + json_quote(row.kind) +
+               ",\"cpu\":" + std::to_string(row.cpu) + ",\"memory\":" + std::to_string(row.memory) +
+               ",\"killable\":" + (row.killable ? "true" : "false") + ",\"end\":";
+        if (int(i) >= process_scroll_ && int(i) < process_scroll_ + cap)
+            out +=
+                rect({r.x + r.width - 140, r.y + 144 + (int(i) - process_scroll_) * 82, 112, 34});
+        else
+            out += "null";
+        out += ",\"tabs\":[";
+        for (size_t n = 0; n < row.tabs.size(); ++n) {
+            if (n)
+                out += ",";
+            const auto &tab = row.tabs[n];
+            out += "{\"window\":" + std::to_string(tab.window) +
+                   ",\"tab\":" + std::to_string(tab.tab) + ",\"title\":" + json_quote(tab.title) +
+                   "}";
+        }
+        out += "]}";
     }
     return out + "]}";
 }

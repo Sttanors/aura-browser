@@ -334,6 +334,8 @@ void BrowserClient::OnRenderProcessTerminated(CefRefPtr<CefBrowser> b, Terminati
                                               int code, const CefString &text) {
     DiagnosticClient::OnRenderProcessTerminated(b, status, code, text);
     if (auto t = owner_.tab(id_); t && !t->closing) {
+        t->loading = false;
+        t->progress = 0;
         ++owner_.audit["renderer_crashes"];
         owner_.changed();
     }
@@ -384,6 +386,7 @@ void BrowserClient::OnLoadStart(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame
     if (auto t = owner_.tab(id_)) {
         owner_.apply_site_zoom(*t, frame->GetURL().ToString());
         t->page.failed = false;
+        t->process_ended = false;
         t->page.error.clear();
         t->page.loaded = false;
         t->progress = 0.08;

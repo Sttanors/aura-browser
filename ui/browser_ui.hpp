@@ -30,7 +30,8 @@ class BrowserUi {
         SiteData,
         Sessions,
         Screenshot,
-        Hotkeys
+        Hotkeys,
+        TaskManager
     };
     BrowserUi(BrowserController &owner, const std::filesystem::path &font);
     ~BrowserUi();
@@ -89,6 +90,8 @@ class BrowserUi {
     std::string bookmarks_report() const;
     void open_sessions();
     std::string sessions_report() const;
+    void open_task_manager();
+    std::string task_manager_report() const;
     std::string sidebar_report() const;
     void passwords_locked() {
         clear_password_fields();
@@ -212,6 +215,13 @@ class BrowserUi {
     void container_rules_pointer(Rect, int, int);
     void container_rule_picker(Rect, int page = 0);
     std::string container_rules_report() const;
+    std::vector<ProcessTask> process_rows_;
+    int process_scroll_ = 0;
+    bool process_available_ = false;
+    std::chrono::steady_clock::time_point process_refresh_{};
+    void refresh_task_manager();
+    void draw_task_manager(SkCanvas &, Rect);
+    void task_manager_pointer(Rect, int, int);
     TextEditor container_input_;
     bool container_input_focus_ = false;
     int container_edit_ = -1, container_target_ = -1, container_color_ = 0, container_scroll_ = 0;
