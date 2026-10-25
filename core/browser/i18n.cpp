@@ -3,6 +3,26 @@
 namespace aura {
 namespace {
 constexpr Translation catalog[] = {
+    {"Search engines", "Поисковики"},
+    {"Engine name", "Название поисковика"},
+    {"Keyword command", "Короткая команда"},
+    {"Search URL with {searchTerms}", "URL поиска с {searchTerms}"},
+    {"Save search engine", "Сохранить поисковик"},
+    {"Add search engine", "Добавить поисковик"},
+    {"Default search", "Поиск по умолчанию"},
+    {"Use as default", "По умолчанию"},
+    {"Use built-in search engine", "Использовать встроенный поисковик"},
+    {"Delete search engine", "Удалить поисковик"},
+    {"Removing the default returns search to the built-in engine.",
+     "Удаление поисковика по умолчанию вернёт встроенный поиск."},
+    {"Add a URL such as https://example.org/search?q={searchTerms}",
+     "Добавьте URL, например https://example.org/search?q={searchTerms}"},
+    {"Use a unique keyword (a-z, 0-9, _ or -; start with a letter) and an HTTP(S) URL containing "
+     "{searchTerms} once after the host. Limit: 32 engines.",
+     "Нужны уникальная команда (a-z, 0-9, _ или -, первая буква) и URL HTTP(S) с одним "
+     "{searchTerms} после адреса сайта. Лимит: 32 поисковика."},
+    {"Search query is too long", "Поисковый запрос слишком длинный"},
+
     {"Read later", "Прочитать позже"},
     {"Save article offline", "Сохранить статью офлайн"},
     {"Search saved text", "Поиск по сохранённому тексту"},

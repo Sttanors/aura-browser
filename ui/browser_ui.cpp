@@ -385,6 +385,7 @@ Rect BrowserUi::panel_bounds() const {
                            : panel_ == Containers       ? 900
                            : panel_ == Commands         ? 900
                            : panel_ == Hotkeys          ? 900
+                           : panel_ == SearchProviders  ? 900
                            : panel_ == ReadingListPanel ? 900
                            : panel_ == TaskManager      ? 900
                            : panel_ == Screenshot       ? 900
@@ -413,6 +414,7 @@ Rect BrowserUi::panel_bounds() const {
                          512, 620)
         : panel_ == Hotkeys
             ? std::clamp(280 + int(std::min<size_t>(7, hotkey_results().size())) * 56, 392, 700)
+        : panel_ == SearchProviders  ? 700
         : panel_ == ReadingListPanel ? 700
         : panel_ == TaskManager      ? 700
         : panel_ == Screenshot       ? 520
@@ -867,13 +869,16 @@ void BrowserUi::draw(SkCanvas &c) {
             app_.tr("Screenshot"),
             app_.tr("Keyboard shortcuts"),
             app_.tr("Task manager"),
-            app_.tr("Read later")};
+            app_.tr("Read later"),
+            app_.tr("Search engines")};
         label(c, medium_, titles[panel_], r.x + 28, r.y + 47, 23, ink);
-        if (panel_ == Bookmarks) {
+        if (panel_ == Bookmarks || panel_ == Settings) {
             Rect button{r.x + r.width - 220, r.y + 21, 160, 32};
             focus_target(button);
             border(c, button, 8, muted);
-            centered_label(c, medium_, app_.tr("Read later"), button, 12, ink, 8, 8);
+            centered_label(c, medium_,
+                           app_.tr(panel_ == Bookmarks ? "Read later" : "Search engines"), button,
+                           12, ink, 8, 8);
         }
         icon(c, "close", r.x + r.width - 43, r.y + 26, 19, muted);
         if (panel_ == Bookmarks)
@@ -1027,6 +1032,8 @@ void BrowserUi::draw(SkCanvas &c) {
             draw_sessions(c, r);
         if (panel_ == Hotkeys)
             draw_hotkeys(c, r);
+        if (panel_ == SearchProviders)
+            draw_search_providers(c, r);
         if (panel_ == ReadingListPanel)
             draw_reading_list(c, r);
         if (panel_ == TaskManager)
@@ -1049,7 +1056,7 @@ void BrowserUi::draw(SkCanvas &c) {
         draw_editor(c, address, {r.x + 59, r.y + 15, r.width - 87, 43}, 18, true);
         label(c, regular_,
               app_.tr("Enter to navigate or search with ") +
-                  search_engine_name(app_.profile.search_engine),
+                  app_.profile.current_search_name(address.value),
               r.x + 59, r.y + 69, 10, muted);
         for (std::size_t i = 0; i < list.size(); ++i) {
             Rect row{r.x + 9, r.y + 83 + static_cast<int>(i) * 54, r.width - 18, 50};
@@ -2347,7 +2354,10 @@ void BrowserUi::draw_settings(SkCanvas &c, Rect r) {
             title += " · " + app_.tr("Applied") + " " +
                      std::to_string(int(std::lround(app_.ui_scale * 100))) + "%";
         label(c, medium_, title, b.x, b.y + 20, 14, ink, b.width - reserve);
-        description(row.description, b, reserve);
+        description(spec && spec->id == "search_engine" && app_.profile.default_search_provider
+                        ? app_.tr("Default search") + ": " + app_.profile.current_search_name()
+                        : row.description,
+                    b, reserve);
         if (!spec) {
             chip({b.x, b.y + 66, std::min(300, b.width), 32}, app_.tr(row.title), false);
         } else if (toggle) {
@@ -2363,7 +2373,8 @@ void BrowserUi::draw_settings(SkCanvas &c, Rect r) {
             const auto value = setting_value(app_.profile, *spec);
             for (int i = 0; i < static_cast<int>(spec->choices.size()); ++i)
                 chip(setting_choice(*spec, b, i), app_.tr(spec->choices[i].label),
-                     value == spec->choices[i].value);
+                     value == spec->choices[i].value &&
+                         !(spec->id == "search_engine" && app_.profile.default_search_provider));
         } else if (number) {
             Rect n{b.x + b.width - 140, b.y + 13, 140, 38};
             if (n.y >= r.y + 122 && n.y + n.height <= r.y + r.height - 54) {
@@ -2579,6 +2590,8 @@ void BrowserUi::settings_pointer(Rect r, int x, int y) {
                     update = set_setting(app_.profile, *spec, std::to_string(i));
         }
         if (update) {
+            if (spec->id == "search_engine")
+                app_.profile.default_search_provider = 0;
             if (spec->id == "language")
                 toast_.clear();
             app_.apply_settings(spec->id == "default_zoom" || spec->id == "remember_site_zoom");
@@ -2642,6 +2655,7 @@ void BrowserUi::focus_address(bool select) {
     if (panel_ == Screenshot || app_.screenshot.pending || app_.screenshot.selecting)
         app_.cancel_screenshot();
     session_input_focus_ = false;
+    provider_focus_ = -1;
     reading_focus_ = false;
     data_search_focus_ = false;
     clear_password_fields();
@@ -2678,6 +2692,7 @@ void BrowserUi::panel(Panel value) {
     if (value != Screenshot &&
         (panel_ == Screenshot || app_.screenshot.pending || app_.screenshot.selecting))
         app_.cancel_screenshot();
+    provider_focus_ = -1;
     reading_focus_ = false;
     if (value != Sessions)
         session_input_focus_ = false;
@@ -2745,6 +2760,7 @@ void BrowserUi::dismiss() {
     if (panel_ == Screenshot || app_.screenshot.pending || app_.screenshot.selecting)
         app_.cancel_screenshot();
     session_input_focus_ = false;
+    provider_focus_ = -1;
     reading_focus_ = false;
     data_search_focus_ = false;
     clear_password_fields();
@@ -2784,6 +2800,13 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
                 std::remove_if(text.begin(), text.end(), [](unsigned char c) { return c < 32; }),
                 text.end());
             TextEditor *live = nullptr;
+            if (panel_ == SearchProviders && provider_focus_ >= 0 &&
+                target == &provider_fields_[provider_focus_] &&
+                text.size() + target->value.size() - target->selected().size() <=
+                    (provider_focus_ == 0   ? 120u
+                     : provider_focus_ == 1 ? 16u
+                                            : 4096u))
+                live = target;
             if (panel_ == ReadingListPanel && reading_focus_ && target == &reading_search_)
                 live = &reading_search_;
             if (target == &address && editing)
@@ -3157,6 +3180,7 @@ bool BrowserUi::key_default(const CefKeyEvent &key) {
         data_search_focus_ = false;
         bookmark_focus_ = -1;
         session_input_focus_ = false;
+        provider_focus_ = -1;
         reading_focus_ = false;
         hotkey_search_focus_ = false;
         if (auto tab = app_.current(); tab && tab->browser)
@@ -3178,7 +3202,7 @@ bool BrowserUi::key_default(const CefKeyEvent &key) {
         password_focus_ < 0 && !workspace_input_focus_ && !group_input_focus_ &&
         !container_input_focus_ && !profile_input_focus_ && !permissions_search_focus_ &&
         !data_search_focus_ && bookmark_focus_ < 0 && !session_input_focus_ && !reading_focus_ &&
-        !hotkey_search_focus_ && !editing) {
+        !hotkey_search_focus_ && provider_focus_ < 0 && !editing) {
         const auto r = focus_targets_[keyboard_focus_];
         const int previous = keyboard_focus_;
         const auto previous_panel = panel_;
@@ -3269,6 +3293,35 @@ bool BrowserUi::key_default(const CefKeyEvent &key) {
                 app_.changed();
                 return code < 0x20 || ctrl || (code >= 0x21 && code <= 0x2E);
             }
+            return true;
+        }
+        if (panel_ == SearchProviders && provider_focus_ >= 0 &&
+            (!ctrl || (code != 'L' && code != 'T' && code != 'W' && code != 'Q' && code != 'N'))) {
+            if (code == 0x1B) {
+                provider_editing_ = false;
+                provider_focus_ = -1;
+                provider_error_.clear();
+                app_.changed();
+                return true;
+            }
+            if (code == 0x0D) {
+                save_search_provider();
+                return true;
+            }
+            editor_key(provider_fields_[provider_focus_], key);
+            app_.changed();
+            return code < 0x20 || ctrl || (code >= 0x21 && code <= 0x2E);
+        }
+        if (panel_ == SearchProviders && !provider_editing_ &&
+            (code == 0x21 || code == 0x22 || code == 0x24 || code == 0x23)) {
+            int cap = std::max(1, (panel_bounds().height - 200) / 88);
+            int max = std::max(0, int(app_.profile.search_providers.size()) - cap);
+            provider_scroll_ =
+                std::clamp(code == 0x24   ? 0
+                           : code == 0x23 ? max
+                                          : provider_scroll_ + (code == 0x21 ? -cap : cap),
+                           0, max);
+            app_.changed();
             return true;
         }
         if (panel_ == ReadingListPanel && reading_focus_ &&
@@ -4034,6 +4087,13 @@ void BrowserUi::text(const std::string &value) {
         if (hotkey_search_.value.size() + clean.size() <= 512)
             hotkey_search_.insert(clean);
         hotkey_scroll_ = 0;
+    } else if (panel_ == SearchProviders && provider_focus_ >= 0) {
+        auto &field = provider_fields_[provider_focus_];
+        if (field.value.size() - field.selected().size() + clean.size() <=
+            (provider_focus_ == 0   ? 120u
+             : provider_focus_ == 1 ? 16u
+                                    : 4096u))
+            field.insert(clean);
     } else if (panel_ == ReadingListPanel && reading_focus_) {
         if (reading_search_.value.size() + clean.size() <= 512)
             reading_search_.insert(clean);
@@ -4277,6 +4337,13 @@ void BrowserUi::pointer(const PointerInput &input) {
         const int cap = std::max(1, (panel_bounds().height - 280) / 56),
                   maximum = std::max(0, int(hotkey_results().size()) - cap);
         hotkey_scroll_ = std::clamp(hotkey_scroll_ + (input.dy < 0 ? 1 : -1), 0, maximum);
+        app_.changed();
+        return;
+    }
+    if (input.kind == PointerInput::Wheel && panel_ == SearchProviders) {
+        int cap = std::max(1, (panel_bounds().height - 200) / 88);
+        provider_scroll_ = std::clamp(provider_scroll_ + (input.dy < 0 ? 1 : -1), 0,
+                                      std::max(0, int(app_.profile.search_providers.size()) - cap));
         app_.changed();
         return;
     }
@@ -4547,9 +4614,12 @@ void BrowserUi::pointer(const PointerInput &input) {
                             app_.download_action(index, x > r.x + r.width - 64);
                     }
                 }
-            } else if (panel_ == Settings)
-                settings_pointer(r, x, y);
-            else if (panel_ == Extensions)
+            } else if (panel_ == Settings) {
+                if (inside({r.x + r.width - 220, r.y + 21, 160, 32}, x, y))
+                    open_search_providers();
+                else
+                    settings_pointer(r, x, y);
+            } else if (panel_ == Extensions)
                 extensions_pointer(r, x, y);
             else if (panel_ == Shortcuts)
                 shortcuts_pointer(r, x, y);
@@ -4582,7 +4652,9 @@ void BrowserUi::pointer(const PointerInput &input) {
                     open_reading_list();
                 else
                     bookmarks_pointer(r, x, y);
-            } else if (panel_ == ReadingListPanel)
+            } else if (panel_ == SearchProviders)
+                search_providers_pointer(r, x, y);
+            else if (panel_ == ReadingListPanel)
                 reading_pointer(r, x, y);
             else if (panel_ == Sessions)
                 sessions_pointer(r, x, y);
@@ -6893,6 +6965,7 @@ std::vector<BrowserUi::CommandResult> BrowserUi::command_results() const {
         {"devtools", "Developer tools", "F12", page},
         {"task_manager", "Task manager", "Shift+Esc", true},
         {"read_later", "Read later", "", true},
+        {"search_providers", "Search engines", "", true},
         {"save_article", "Save article offline", "", page && !private_mode},
     };
     for (const auto &action : actions)
@@ -7057,6 +7130,8 @@ void BrowserUi::run_command(int index) {
         open_sessions();
     else if (id == "screenshot")
         open_screenshot();
+    else if (id == "search_providers")
+        open_search_providers();
     else if (id == "read_later")
         open_reading_list();
     else if (id == "save_article")
@@ -9446,6 +9521,7 @@ void BrowserUi::draw_reading_list(SkCanvas &c, Rect r) {
     }
 }
 void BrowserUi::reading_pointer(Rect r, int x, int y) {
+    provider_focus_ = -1;
     reading_focus_ = false;
     if (inside({r.x + 28, r.y + 66, r.width - 56, 34}, x, y)) {
         app_.save_reading_article();
@@ -9516,6 +9592,215 @@ std::string BrowserUi::reading_report() const {
         out += "{\"id\":" + std::to_string(a->id) + ",\"title\":" + json_quote(a->title) +
                ",\"read\":" + (a->read ? "true" : "false") + ",\"open\":" + rect(buttons[0]) +
                ",\"mark\":" + rect(buttons[1]) + ",\"delete\":" + rect(buttons[2]) + "}";
+    }
+    return out + "]}";
+}
+} // namespace aura
+
+namespace aura {
+void BrowserUi::open_search_providers() {
+    app_.close_menu();
+    panel(SearchProviders);
+    provider_editing_ = false;
+    provider_id_ = provider_scroll_ = 0;
+    provider_focus_ = -1;
+    provider_error_.clear();
+    if (auto t = app_.current(); t && t->browser)
+        t->browser->GetHost()->SetFocus(false);
+    app_.changed();
+}
+std::array<Rect, 3> BrowserUi::provider_buttons(Rect r, int y) const {
+    int width = std::min(172, (r.width - 72) / 3);
+    return {{{r.x + 28, y, width, 30},
+             {r.x + 36 + width, y, width, 30},
+             {r.x + 44 + width * 2, y, width, 30}}};
+}
+void BrowserUi::save_search_provider() {
+    SearchProvider p{provider_id_, provider_fields_[0].value, provider_fields_[1].value,
+                     provider_fields_[2].value};
+    if (!app_.profile.save_search_provider(std::move(p))) {
+        provider_error_ =
+            app_.tr("Use a unique keyword (a-z, 0-9, _ or -; start with a letter) and an HTTP(S) "
+                    "URL containing {searchTerms} once after the host. Limit: 32 engines.");
+        app_.changed();
+        return;
+    }
+    provider_editing_ = false;
+    provider_focus_ = -1;
+    provider_error_.clear();
+    app_.changed(true);
+}
+void BrowserUi::draw_search_providers(SkCanvas &c, Rect r) {
+    const auto &t = interface_theme(app_.profile);
+    auto button = [&](Rect b, const std::string &name, bool enabled = true) {
+        if (enabled)
+            focus_target(b);
+        if (enabled && inside(b, hover_x_, hover_y_))
+            fill(c, b, 8, SkColorSetA(t.accent, 24));
+        if (enabled)
+            border(c, b, 8, SkColorSetA(t.accent, 140));
+        centered_label(c, medium_, app_.tr(name), b, 12, enabled ? t.text : t.muted, 8, 8);
+    };
+    if (provider_editing_) {
+        const char *names[] = {"Engine name", "Keyword command", "Search URL with {searchTerms}"};
+        for (int i = 0; i < 3; ++i) {
+            const int y = r.y + 100 + i * 66;
+            label(c, regular_, app_.tr(names[i]), r.x + 28, y, 11, t.muted, r.width - 56);
+            Rect input{r.x + 28, y + 10, r.width - 56, 36};
+            focus_target(input);
+            fill(c, input, 8, t.background);
+            border(c, input, 8, SkColorSetA(t.accent, provider_focus_ == i ? 255 : 110));
+            draw_editor(c, provider_fields_[i], {input.x + 10, input.y + 2, input.width - 20, 32},
+                        13, provider_focus_ == i);
+        }
+        button({r.x + 28, r.y + 310, 168, 34}, "Save search engine");
+        button({r.x + 204, r.y + 310, 132, 34}, "Cancel");
+        const auto lines = wrap_text(font(regular_, 11), provider_error_, r.width - 56, 5);
+        for (size_t i = 0; i < lines.size(); ++i)
+            label(c, regular_, lines[i], r.x + 28, r.y + 375 + int(i) * 16, 11, t.muted,
+                  r.width - 56);
+        return;
+    }
+    label(c, regular_, app_.tr("Default search") + ": " + app_.profile.current_search_name(),
+          r.x + 28, r.y + 78, 12, t.text, r.width - 56);
+    button({r.x + 28, r.y + 94, 192, 34}, "Add search engine",
+           app_.profile.search_providers.size() < 32);
+    const auto &items = app_.profile.search_providers;
+    int cap = std::max(1, (r.height - 200) / 88);
+    provider_scroll_ = std::clamp(provider_scroll_, 0, std::max(0, int(items.size()) - cap));
+    if (items.empty())
+        label(c, regular_, app_.tr("Add a URL such as https://example.org/search?q={searchTerms}"),
+              r.x + 28, r.y + 180, 12, t.muted, r.width - 56);
+    for (int i = provider_scroll_; i < int(items.size()) && i < provider_scroll_ + cap; ++i) {
+        const auto &p = items[i];
+        int y = r.y + 154 + (i - provider_scroll_) * 88;
+        label(c, medium_, p.name + "  [" + p.keyword + "]", r.x + 28, y + 16, 13, t.text,
+              r.width - 56);
+        label(c, regular_, p.url, r.x + 28, y + 34, 10, t.muted, r.width - 56);
+        auto b = provider_buttons(r, y + 42);
+        button(b[0],
+               app_.profile.default_search_provider == p.id ? "Default search" : "Use as default",
+               app_.profile.default_search_provider != p.id);
+        button(b[1], "Edit");
+        button(b[2], "Delete");
+    }
+    button({r.x + 28, r.y + r.height - 46, r.width - 56, 30}, "Use built-in search engine",
+           app_.profile.default_search_provider != 0);
+    if (int(items.size()) > cap) {
+        int h = cap * 88, thumb = std::max(20, h * cap / int(items.size()));
+        fill(c,
+             {r.x + r.width - 14,
+              r.y + 154 + (h - thumb) * provider_scroll_ / (int(items.size()) - cap), 3, thumb},
+             1, t.accent);
+    }
+}
+void BrowserUi::search_providers_pointer(Rect r, int x, int y) {
+    provider_focus_ = -1;
+    if (provider_editing_) {
+        for (int i = 0; i < 3; ++i)
+            if (inside({r.x + 28, r.y + 110 + i * 66, r.width - 56, 36}, x, y)) {
+                provider_focus_ = i;
+                provider_fields_[i].select_all();
+                return;
+            }
+        if (inside({r.x + 28, r.y + 310, 168, 34}, x, y))
+            save_search_provider();
+        else if (inside({r.x + 204, r.y + 310, 132, 34}, x, y)) {
+            provider_editing_ = false;
+            provider_error_.clear();
+        }
+        app_.changed();
+        return;
+    }
+    if (inside({r.x + 28, r.y + 94, 192, 34}, x, y) && app_.profile.search_providers.size() < 32) {
+        provider_editing_ = true;
+        provider_id_ = 0;
+        provider_focus_ = 0;
+        provider_error_.clear();
+        for (auto &f : provider_fields_)
+            f.set("");
+        app_.changed();
+        return;
+    }
+    if (inside({r.x + 28, r.y + r.height - 46, r.width - 56, 30}, x, y)) {
+        app_.profile.default_search_provider = 0;
+        app_.changed(true);
+        return;
+    }
+    auto &items = app_.profile.search_providers;
+    int cap = std::max(1, (r.height - 200) / 88), index = provider_scroll_ + (y - r.y - 154) / 88;
+    if (y < r.y + 154 || index < provider_scroll_ || index >= int(items.size()) ||
+        index >= provider_scroll_ + cap)
+        return;
+    auto p = items[index];
+    auto b = provider_buttons(r, r.y + 154 + (index - provider_scroll_) * 88 + 42);
+    if (inside(b[0], x, y)) {
+        app_.profile.default_search_provider = p.id;
+        app_.changed(true);
+    } else if (inside(b[1], x, y)) {
+        provider_editing_ = true;
+        provider_id_ = p.id;
+        provider_focus_ = 0;
+        provider_error_.clear();
+        provider_fields_[0].set(p.name);
+        provider_fields_[1].set(p.keyword);
+        provider_fields_[2].set(p.url);
+        app_.changed();
+    } else if (inside(b[2], x, y)) {
+        BrowserDialog d;
+        d.owned = true;
+        d.origin = app_.tr("Delete search engine");
+        d.accept_label = app_.tr("Delete");
+        d.message =
+            p.name + "\n" + app_.tr("Removing the default returns search to the built-in engine.");
+        auto weak = std::weak_ptr<void>(app_.callback_lifetime);
+        d.action = [this, weak, p](bool accept, const std::string &) {
+            if (weak.expired() || !accept)
+                return;
+            const auto current = find_search_provider(app_.profile.search_providers, p.id);
+            if (current && current->name == p.name && current->keyword == p.keyword &&
+                current->url == p.url) {
+                app_.profile.remove_search_provider(p.id);
+                app_.changed(true);
+            }
+        };
+        app_.dialogs.push_back(std::move(d));
+        app_.changed();
+    }
+}
+std::string BrowserUi::search_providers_report() const {
+    if (panel_ != SearchProviders)
+        return "null";
+    Rect r = panel_bounds();
+    auto rect = [](Rect b) {
+        return "[" + std::to_string(b.x) + "," + std::to_string(b.y) + "," +
+               std::to_string(b.width) + "," + std::to_string(b.height) + "]";
+    };
+    std::string out = "{\"editing\":" + std::string(provider_editing_ ? "true" : "false") +
+                      ",\"error\":" + json_quote(provider_error_) +
+                      ",\"default\":" + std::to_string(app_.profile.default_search_provider) +
+                      ",\"name\":" + json_quote(app_.profile.current_search_name()) +
+                      ",\"add\":" + rect({r.x + 28, r.y + 94, 192, 34}) +
+                      ",\"builtin\":" + rect({r.x + 28, r.y + r.height - 46, r.width - 56, 30}) +
+                      ",\"save\":" + rect({r.x + 28, r.y + 310, 168, 34}) +
+                      ",\"cancel\":" + rect({r.x + 204, r.y + 310, 132, 34}) + ",\"fields\":[";
+    for (int i = 0; i < 3; ++i) {
+        if (i)
+            out += ",";
+        out += "{\"value\":" + json_quote(provider_fields_[i].value) +
+               ",\"bounds\":" + rect({r.x + 28, r.y + 110 + i * 66, r.width - 56, 36}) + "}";
+    }
+    out += "],\"items\":[";
+    int cap = std::max(1, (r.height - 200) / 88);
+    for (int i = provider_scroll_;
+         i < int(app_.profile.search_providers.size()) && i < provider_scroll_ + cap; ++i) {
+        if (i != provider_scroll_)
+            out += ",";
+        auto p = app_.profile.search_providers[i];
+        auto b = provider_buttons(r, r.y + 154 + (i - provider_scroll_) * 88 + 42);
+        out += "{\"id\":" + std::to_string(p.id) + ",\"name\":" + json_quote(p.name) +
+               ",\"keyword\":" + json_quote(p.keyword) + ",\"default\":" + rect(b[0]) +
+               ",\"edit\":" + rect(b[1]) + ",\"delete\":" + rect(b[2]) + "}";
     }
     return out + "]}";
 }

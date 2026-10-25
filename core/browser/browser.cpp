@@ -671,7 +671,8 @@ void BrowserController::new_tab(std::string input, bool private_tab, bool foregr
     private_tab = private_tab || private_window;
     std::string url;
     try {
-        url = navigation_url(std::move(input), profile.search_engine);
+        url = navigation_url(std::move(input), profile.search_engine, profile.search_providers,
+                             profile.default_search_provider);
     } catch (const std::exception &e) {
         ui->toast(tr(e.what()));
         return;
@@ -801,7 +802,8 @@ void BrowserController::navigate(std::string input) {
     if (!t)
         return;
     try {
-        const auto url = navigation_url(std::move(input), profile.search_engine);
+        const auto url = navigation_url(std::move(input), profile.search_engine,
+                                        profile.search_providers, profile.default_search_provider);
         ui->editing = false;
         ui->panel(BrowserUi::None);
         if (route_container(t->id, url))
@@ -1405,6 +1407,7 @@ std::string BrowserController::report() const {
             out << '"';
     }
     out << '}' << ",\"history_count\":" << profile.history.size()
+        << ",\"search_ui\":" << ui->search_providers_report()
         << ",\"reading_ui\":" << ui->reading_report()
         << ",\"tasks_ui\":" << ui->task_manager_report()
         << ",\"downloads_ui\":" << ui->downloads_report()
@@ -1761,6 +1764,7 @@ void BrowserController::clear_data(const std::string &kind) {
     }
     if (kind == "reset") {
         static_cast<BrowserPreferences &>(profile) = BrowserPreferences{};
+        profile.default_search_provider = 0;
         profile.hotkeys.clear();
         profile.site_zooms.clear();
         state_->private_site_zooms.clear();

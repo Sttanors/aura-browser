@@ -120,7 +120,8 @@ def main():
                         # Native settings can be operated without a pointing device.
                         seek('restore');before=state()['settings']['restore']
                         key_at(window,'F10')
-                        for _ in range(len(state()['settings_ui']['categories'])+2):key_at(window,'Tab')
+                        # Close, Search engines and search input precede the category list.
+                        for _ in range(len(state()['settings_ui']['categories'])+3):key_at(window,'Tab')
                         screenshot('keyboard-focus.png')
                         key_at(window,'space');expect('restore',not before)
                         key_at(window,'space');expect('restore',before)

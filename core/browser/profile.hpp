@@ -3,6 +3,7 @@
 #include "core/browser/hotkeys.hpp"
 #include "core/browser/permissions.hpp"
 #include "core/browser/preferences.hpp"
+#include "core/browser/search_providers.hpp"
 #include "core/browser/site_zoom.hpp"
 #include <array>
 #include <cstdint>
@@ -11,7 +12,8 @@
 #include <string>
 #include <vector>
 namespace aura {
-std::string navigation_url(std::string input, const std::string &engine = "duckduckgo");
+std::string navigation_url(std::string input, const std::string &engine = "duckduckgo",
+                           std::span<const SearchProvider> providers = {}, int custom_default = 0);
 std::string search_engine_name(const std::string &engine);
 std::string url_host(const std::string &url);
 struct Visit {
@@ -80,6 +82,11 @@ class Profile : public BrowserPreferences {
     std::vector<SiteZoom> site_zooms;
     std::vector<ContainerRule> container_rules;
     std::vector<HotkeyOverride> hotkeys;
+    std::vector<SearchProvider> search_providers;
+    int default_search_provider = 0, next_search_provider = 1;
+    int save_search_provider(SearchProvider provider);
+    bool remove_search_provider(int id);
+    std::string current_search_name(const std::string &input = {}) const;
     std::vector<Visit> history, bookmarks;
     std::vector<BookmarkFolder> bookmark_folders;
     int next_bookmark_folder = 1;

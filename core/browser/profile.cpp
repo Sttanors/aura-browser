@@ -131,11 +131,26 @@ std::string search_engine_name(const std::string &engine) {
         return "Yandex";
     return "DuckDuckGo";
 }
-std::string navigation_url(std::string input, const std::string &engine) {
+std::string navigation_url(std::string input, const std::string &engine,
+                           std::span<const SearchProvider> providers, int custom_default) {
     input = trim(std::move(input));
     if (input.empty() || input == "aura://newtab")
         return "aura://newtab";
     const auto name = lower(input);
+    const auto space = input.find_first_of(" \t");
+    if (space != std::string::npos) {
+        const auto keyword = name.substr(0, space);
+        for (const auto &p : providers)
+            if (p.keyword == keyword && valid_search_provider(p)) {
+                const auto query = trim(input.substr(space + 1));
+                if (!query.empty()) {
+                    auto url = search_address(p, query);
+                    if (url.empty())
+                        throw std::invalid_argument("Search query is too long");
+                    return url;
+                }
+            }
+    }
     if (name.starts_with("chrome-extension://")) {
         const auto end = input.find_first_of("/?#", 19);
         const auto id = name.substr(19, end == std::string::npos ? std::string::npos : end - 19);
@@ -153,6 +168,13 @@ std::string navigation_url(std::string input, const std::string &engine) {
     bool local = false;
     if (bare_address(input, local))
         return (local ? "http://" : "https://") + input;
+    if (const auto p = find_search_provider(providers, custom_default);
+        p && valid_search_provider(*p)) {
+        auto url = search_address(*p, input);
+        if (url.empty())
+            throw std::invalid_argument("Search query is too long");
+        return url;
+    }
     const std::string base = engine == "google"   ? "https://www.google.com/search?q="
                              : engine == "bing"   ? "https://www.bing.com/search?q="
                              : engine == "yandex" ? "https://yandex.ru/search/?text="
@@ -192,6 +214,30 @@ void Profile::load() {
             }
         }
     }
+    search_providers.clear();
+    next_search_provider = 1;
+    default_search_provider = 0;
+    if (auto rows = table["search_providers"].as_array())
+        for (const auto &row : *rows) {
+            if (search_providers.size() >= 32)
+                break;
+            auto t = row.as_table();
+            if (!t)
+                continue;
+            SearchProvider p{(*t)["id"].value_or(0), (*t)["name"].value_or(""),
+                             (*t)["keyword"].value_or(""), (*t)["url"].value_or("")};
+            if (valid_search_provider(p) && !find_search_provider(search_providers, p.id) &&
+                std::none_of(search_providers.begin(), search_providers.end(),
+                             [&](const auto &old) { return old.keyword == p.keyword; })) {
+                next_search_provider = std::max(next_search_provider, p.id + 1);
+                search_providers.push_back(std::move(p));
+            }
+        }
+    next_search_provider = std::max(
+        next_search_provider, std::clamp(table["next_search_provider"].value_or(1), 1, 1000001));
+    int preferred = table["default_search_provider"].value_or(0);
+    if (find_search_provider(search_providers, preferred))
+        default_search_provider = preferred;
     static_cast<BrowserPreferences &>(*this) = BrowserPreferences{};
     for (const auto &setting : settings_catalog()) {
         const auto node = table[setting.id];
@@ -595,7 +641,14 @@ void Profile::load() {
 }
 void Profile::save() const {
     toml::table root;
-    root.insert("schema", 16);
+    root.insert("schema", 17);
+    toml::array providers;
+    for (const auto &p : search_providers)
+        providers.push_back(
+            toml::table{{"id", p.id}, {"name", p.name}, {"keyword", p.keyword}, {"url", p.url}});
+    root.insert("search_providers", std::move(providers));
+    root.insert("default_search_provider", default_search_provider);
+    root.insert("next_search_provider", next_search_provider);
     toml::array keys;
     for (const auto &entry : hotkeys)
         keys.push_back(toml::table{{"action", entry.action},
@@ -1071,5 +1124,49 @@ std::filesystem::path Profile::container_data_directory(int id) const {
         throw std::invalid_argument("Invalid container id");
     // Chrome runtime only accepts profile directories directly below root_cache_path.
     return directory / "cache" / ("AuraContainer-" + std::to_string(id));
+}
+} // namespace aura
+
+namespace aura {
+int Profile::save_search_provider(SearchProvider p) {
+    p.name = trim(std::move(p.name));
+    p.keyword = lower(trim(std::move(p.keyword)));
+    p.url = trim(std::move(p.url));
+    const bool adding = p.id == 0;
+    if (adding)
+        p.id = next_search_provider;
+    if (!valid_search_provider(p) || (adding && search_providers.size() >= 32) ||
+        (!adding && !find_search_provider(search_providers, p.id)) ||
+        std::any_of(search_providers.begin(), search_providers.end(),
+                    [&](const auto &old) { return old.id != p.id && old.keyword == p.keyword; }))
+        return 0;
+    const int id = p.id;
+    if (adding) {
+        search_providers.push_back(std::move(p));
+        ++next_search_provider;
+    } else
+        for (auto &old : search_providers)
+            if (old.id == id) {
+                old = std::move(p);
+                break;
+            }
+    return id;
+}
+bool Profile::remove_search_provider(int id) {
+    if (!std::erase_if(search_providers, [id](const auto &p) { return p.id == id; }))
+        return false;
+    if (default_search_provider == id)
+        default_search_provider = 0;
+    return true;
+}
+std::string Profile::current_search_name(const std::string &input) const {
+    const auto text = lower(trim(input));
+    const auto end = text.find_first_of(" \t");
+    if (end != std::string::npos)
+        for (const auto &p : search_providers)
+            if (p.keyword == text.substr(0, end))
+                return p.name;
+    const auto p = find_search_provider(search_providers, default_search_provider);
+    return p ? p->name : search_engine_name(search_engine);
 }
 } // namespace aura

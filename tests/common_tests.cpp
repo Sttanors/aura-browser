@@ -1687,3 +1687,100 @@ TEST(ReadingList, PreservesMalformedFileAndRollsBackFailedWrites) {
     EXPECT_EQ(list.items().size(), 1u);
     std::filesystem::remove_all(dir);
 }
+
+TEST(SearchProviders, RequiresOneTokenOutsideAuthorityAndSafeURL) {
+    SearchProvider p{1, "Wiki", "w", "https://example.org/search?q={searchTerms}"};
+    EXPECT_TRUE(valid_search_provider(p));
+    for (const auto &url :
+         {"javascript:alert('{searchTerms}')", "file:///{searchTerms}",
+          "https://{searchTerms}.example.org/", "https://example.org:{searchTerms}/",
+          "https://example.org/", "https://example.org/?a={searchTerms}&b={searchTerms}",
+          "https://user:pass@example.org/?q={searchTerms}", "https://example.org/?q={other}",
+          "https://example.org/?q={searchTerms}&x={other}",
+          "https://example.org/?q={searchTerms}\n"}) {
+        p.url = url;
+        EXPECT_FALSE(valid_search_provider(p)) << url;
+    }
+    p.url = "http://127.0.0.1:8080/find/{searchTerms}";
+    EXPECT_TRUE(valid_search_provider(p));
+    p.keyword = "w.test";
+    EXPECT_FALSE(valid_search_provider(p));
+    p.keyword = "1w";
+    EXPECT_FALSE(valid_search_provider(p));
+}
+TEST(SearchProviders, EncodesQueryWithoutChangingTemplate) {
+    SearchProvider p{1, "Wiki", "w", "https://example.org/find/{searchTerms}?fixed=yes#section"};
+    EXPECT_EQ(search_address(p, "a b&c=1#%/ёж"),
+              "https://example.org/find/a%20b%26c%3D1%23%25%2F%D1%91%D0%B6?fixed=yes#section");
+    EXPECT_TRUE(search_address(p, "").empty());
+    EXPECT_TRUE(search_address(p, std::string(16385, 'x')).empty());
+}
+TEST(SearchProviders, ResolvesKeywordsDefaultAndOrdinaryAddresses) {
+    const std::vector<SearchProvider> providers = {
+        {1, "Wiki", "w", "https://wiki.test/?q={searchTerms}"},
+        {2, "Code", "gh", "https://code.test/search/{searchTerms}"}};
+    EXPECT_EQ(navigation_url(" W  hello world ", "bing", providers, 2),
+              "https://wiki.test/?q=hello%20world");
+    EXPECT_EQ(navigation_url("hello world", "bing", providers, 2),
+              "https://code.test/search/hello%20world");
+    EXPECT_EQ(navigation_url("missing hello", "bing", providers, 0),
+              "https://www.bing.com/search?q=missing%20hello");
+    EXPECT_EQ(navigation_url("example.com/path", "bing", providers, 2), "https://example.com/path");
+    EXPECT_EQ(navigation_url("http://localhost:8080/", "bing", providers, 2),
+              "http://localhost:8080/");
+    EXPECT_EQ(navigation_url("file:///tmp/doc.html", "bing", providers, 2), "file:///tmp/doc.html");
+    EXPECT_EQ(navigation_url("about:blank", "bing", providers, 2), "about:blank");
+    EXPECT_THROW(navigation_url("javascript:alert(1)", "bing", providers, 2),
+                 std::invalid_argument);
+    EXPECT_THROW(navigation_url("w " + std::string(16385, 'x'), "bing", providers, 2),
+                 std::invalid_argument);
+    EXPECT_EQ(navigation_url("hello world", "bing", providers, 999),
+              "https://www.bing.com/search?q=hello%20world");
+}
+TEST(SearchProviders, ProfileCRUDPersistsDefaultAndDoesNotReuseIDs) {
+    TemporaryProfile temp;
+    Profile p(temp.path);
+    int id = p.save_search_provider({0, " Wiki ", " W ", " https://example.org/?q={searchTerms} "});
+    ASSERT_GT(id, 0);
+    EXPECT_EQ(p.search_providers[0].keyword, "w");
+    EXPECT_EQ(p.save_search_provider({0, "Duplicate", "w", "https://example.org/?q={searchTerms}"}),
+              0);
+    p.default_search_provider = id;
+    EXPECT_EQ(p.current_search_name(), "Wiki");
+    ASSERT_EQ(
+        p.save_search_provider({id, "Updated", "wiki", "https://example.org/find/{searchTerms}"}),
+        id);
+    p.save();
+    Profile restored(temp.path);
+    EXPECT_EQ(restored.default_search_provider, id);
+    EXPECT_EQ(restored.current_search_name(), "Updated");
+    ASSERT_TRUE(restored.remove_search_provider(id));
+    EXPECT_EQ(restored.default_search_provider, 0);
+    restored.save();
+    Profile removed(temp.path);
+    EXPECT_GT(removed.save_search_provider({0, "New", "w", "https://example.org/?q={searchTerms}"}),
+              id);
+}
+TEST(SearchProviders, RejectsCapacityAndMalformedProfileRows) {
+    TemporaryProfile temp;
+    Profile p(temp.path);
+    for (int i = 0; i < 32; ++i)
+        ASSERT_GT(p.save_search_provider({0, "Engine", "w" + std::to_string(i),
+                                          "https://example.org/?q={searchTerms}"}),
+                  0);
+    EXPECT_EQ(p.save_search_provider({0, "Extra", "extra", "https://example.org/?q={searchTerms}"}),
+              0);
+    EXPECT_EQ(p.search_providers.size(), 32u);
+    std::ofstream file(temp.path / "profile.toml");
+    file << "default_search_provider=5\n[[search_providers]]\nid=1\nname='Valid'\nkeyword='w'\nurl="
+            "'https://example.org/?q={searchTerms}'\n"
+            "[[search_providers]]\nid=5\nname='Invalid'\nkeyword='bad'\nurl='javascript:{"
+            "searchTerms}'\n"
+            "[[search_providers]]\nid=6\nname='Duplicate'\nkeyword='w'\nurl='https://example.org/"
+            "?q={searchTerms}'\n";
+    file.close();
+    Profile loaded(temp.path);
+    ASSERT_EQ(loaded.search_providers.size(), 1u);
+    EXPECT_EQ(loaded.default_search_provider, 0);
+    EXPECT_EQ(loaded.search_providers[0].id, 1);
+}
