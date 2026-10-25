@@ -432,6 +432,10 @@ void BrowserWindow::show() {
     ShowWindow(handle(), SW_SHOW);
     UpdateWindow(handle());
 }
+void BrowserWindow::activate() {
+    ShowWindow(handle(), SW_RESTORE);
+    SetForegroundWindow(handle());
+}
 void BrowserWindow::dispatch() {
     MSG message;
     while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {

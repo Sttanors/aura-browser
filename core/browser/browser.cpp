@@ -420,6 +420,7 @@ void BrowserController::defer(std::function<void()> action) {
     pending_.push_back(std::move(action));
 }
 void BrowserController::tick() {
+    tick_duplicate_merge();
     const auto now = std::chrono::steady_clock::now();
     for (auto &t : tabs)
         if ((t->reader_pending || t->reading_pending) &&
@@ -749,11 +750,11 @@ void BrowserController::activate(int index, bool reveal_group) {
     ++audit["tab_switches"];
     changed(true);
 }
-void BrowserController::close_tab(int index) {
+void BrowserController::close_tab(int index, bool preserve_window) {
     if (index < 0 || index >= static_cast<int>(tabs.size()))
         return;
     auto &t = *tabs[index];
-    if ((profile.quit_last_tab || private_window) && !quitting &&
+    if (!preserve_window && (profile.quit_last_tab || private_window) && !quitting &&
         std::count_if(tabs.begin(), tabs.end(), [](auto &t) { return !t->closing; }) == 1) {
         request_quit();
         return;
@@ -984,6 +985,10 @@ void BrowserController::answer_dialog(bool accept) {
     auto dialog = std::move(dialogs.front());
     dialogs.pop_front();
     if (!accept && dialog.before_unload) {
+        const auto &merge = state_->duplicate_merge;
+        if (merge.active && merge.waiting && merge.waiting->ref.window == window_uid &&
+            merge.waiting->ref.tab == dialog.tab)
+            stop_duplicate_merge("Closing was cancelled. Remaining duplicates were kept.");
         if (auto t = tab(dialog.tab))
             t->remember_on_close = false;
         // Cancel the whole exit transaction, including restart/update intent.
@@ -1141,6 +1146,8 @@ void BrowserController::prepare_shutdown() {
     state_->container_contexts_ready.clear();
 }
 void BrowserController::detach_window() {
+    if (state_->duplicate_merge.requester == window_uid)
+        stop_duplicate_merge();
     if (std::none_of(state_->windows.begin(), state_->windows.end(), [&](auto *w) {
             return w != this && !w->quitting && w->ui &&
                    w->ui->visible_panel() == BrowserUi::TaskManager;
@@ -1407,6 +1414,7 @@ std::string BrowserController::report() const {
             out << '"';
     }
     out << '}' << ",\"history_count\":" << profile.history.size()
+        << ",\"duplicates_ui\":" << ui->duplicates_report()
         << ",\"search_ui\":" << ui->search_providers_report()
         << ",\"reading_ui\":" << ui->reading_report()
         << ",\"tasks_ui\":" << ui->task_manager_report()

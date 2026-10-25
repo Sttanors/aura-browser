@@ -8,6 +8,7 @@
 #include "common/pump_schedule.hpp"
 #include "common/text.hpp"
 #include "core/browser/download_hash.hpp"
+#include "core/browser/duplicate_tabs.hpp"
 #include "core/browser/process_tasks.hpp"
 #include "core/browser/profiles.hpp"
 #include "core/browser/reading_list.hpp"
@@ -1783,4 +1784,101 @@ TEST(SearchProviders, RejectsCapacityAndMalformedProfileRows) {
     ASSERT_EQ(loaded.search_providers.size(), 1u);
     EXPECT_EQ(loaded.default_search_provider, 0);
     EXPECT_EQ(loaded.search_providers[0].id, 1);
+}
+
+TEST(DuplicateTabs, MatchesFullURLAndContextAcrossWindowsAndWorkspaces) {
+    DuplicateTab a{{1, 1}, 7, "https://example.org/page?q=1#part", "One", 0, 0, 0, false, true, 0};
+    auto b = a;
+    b.ref = {2, 1};
+    b.workspace = 3;
+    b.current = false;
+    auto other = b;
+    other.ref.tab = 2;
+    other.url = "https://example.org/page?q=2#part";
+    auto anchor = b;
+    anchor.ref.tab = 3;
+    anchor.url = "https://example.org/page?q=1#other";
+    auto container = b;
+    container.ref.tab = 4;
+    container.container = 1;
+    auto groups = group_duplicate_tabs(std::vector<DuplicateTab>{a, b, other, anchor, container});
+    ASSERT_EQ(groups.size(), 1u);
+    EXPECT_EQ(groups[0].tabs.size(), 2u);
+    EXPECT_EQ(groups[0].tabs[1].workspace, 3);
+}
+TEST(DuplicateTabs, PrivateCopiesAreScopedToTheirWindow) {
+    DuplicateTab a{{1, 1}, 1, "https://example.org/", "Public"};
+    auto b = a;
+    b.ref.tab = 2;
+    auto priv = a;
+    priv.private_mode = true;
+    priv.ref = {2, 1};
+    auto priv2 = priv;
+    priv2.ref.tab = 2;
+    auto separate = priv;
+    separate.ref = {3, 1};
+    auto groups = group_duplicate_tabs(std::vector<DuplicateTab>{a, b, priv, priv2, separate});
+    ASSERT_EQ(groups.size(), 2u);
+    EXPECT_EQ(groups[0].private_window, 0u);
+    EXPECT_EQ(groups[1].private_window, 2u);
+    EXPECT_EQ(groups[1].tabs.size(), 2u);
+}
+TEST(DuplicateTabs, ProtectsPinnedBusyMediaDownloadsAndUsesScopedIDs) {
+    DuplicateTab a{{1, 1}, 1, "https://example.org/", "First", 0, 0, 0, false, true, 0};
+    auto pinned = a;
+    pinned.ref.tab = 2;
+    pinned.protection = DuplicatePinned;
+    auto remote = a;
+    remote.ref = {2, 1};
+    auto busy = a;
+    busy.ref.tab = 3;
+    busy.protection = DuplicateBusy;
+    auto media = a;
+    media.ref.tab = 4;
+    media.protection = DuplicateMedia;
+    auto download = a;
+    download.ref.tab = 5;
+    download.protection = DuplicateDownload;
+    auto groups =
+        group_duplicate_tabs(std::vector<DuplicateTab>{a, pinned, remote, busy, media, download});
+    ASSERT_EQ(groups.size(), 1u);
+    EXPECT_EQ(preferred_duplicate(groups[0]), pinned.ref);
+    auto plan = duplicate_close_plan(groups[0], a.ref);
+    ASSERT_EQ(plan.size(), 1u);
+    EXPECT_EQ(plan[0].ref, remote.ref);
+    EXPECT_TRUE(duplicate_close_plan(groups[0], {9, 9}).empty());
+}
+TEST(DuplicateTabs, DetectsStaleNavigationMembershipAndProtection) {
+    DuplicateTab a{{1, 1}, 1, "https://example.org/", "First"};
+    auto b = a;
+    b.ref.tab = 2;
+    auto g = group_duplicate_tabs(std::vector<DuplicateTab>{a, b})[0];
+    auto newer = g;
+    newer.tabs[0].title = "New title";
+    newer.tabs[0].current = true;
+    EXPECT_TRUE(same_duplicate_group(g, newer));
+    ++newer.tabs[0].navigation;
+    EXPECT_FALSE(same_duplicate_group(g, newer));
+    newer = g;
+    newer.tabs[1].workspace = 9;
+    EXPECT_FALSE(same_duplicate_group(g, newer));
+    newer = g;
+    newer.tabs[1].protection = DuplicatePinned;
+    EXPECT_FALSE(same_duplicate_group(g, newer));
+    newer = g;
+    newer.tabs.pop_back();
+    EXPECT_FALSE(same_duplicate_group(g, newer));
+}
+TEST(DuplicateTabs, ExcludesStartBlankExtensionAndMalformedPages) {
+    std::vector<DuplicateTab> tabs;
+    for (const auto &url :
+         {"aura://newtab", "about:blank",
+          "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/a.html", "https:///bad"}) {
+        tabs.push_back({{1, int(tabs.size() + 1)}, 1, url, "Hidden"});
+        tabs.push_back({{1, int(tabs.size() + 1)}, 1, url, "Hidden"});
+    }
+    EXPECT_TRUE(group_duplicate_tabs(tabs).empty());
+    tabs = {{{1, 1}, 1, "file:///tmp/article.html", "Saved"},
+            {{2, 1}, 1, "file:///tmp/article.html", "Saved"}};
+    ASSERT_EQ(group_duplicate_tabs(tabs).size(), 1u);
 }

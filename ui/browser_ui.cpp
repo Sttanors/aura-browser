@@ -385,6 +385,7 @@ Rect BrowserUi::panel_bounds() const {
                            : panel_ == Containers       ? 900
                            : panel_ == Commands         ? 900
                            : panel_ == Hotkeys          ? 900
+                           : panel_ == DuplicateTabs    ? 900
                            : panel_ == SearchProviders  ? 900
                            : panel_ == ReadingListPanel ? 900
                            : panel_ == TaskManager      ? 900
@@ -414,6 +415,7 @@ Rect BrowserUi::panel_bounds() const {
                          512, 620)
         : panel_ == Hotkeys
             ? std::clamp(280 + int(std::min<size_t>(7, hotkey_results().size())) * 56, 392, 700)
+        : panel_ == DuplicateTabs    ? 700
         : panel_ == SearchProviders  ? 700
         : panel_ == ReadingListPanel ? 700
         : panel_ == TaskManager      ? 700
@@ -870,15 +872,18 @@ void BrowserUi::draw(SkCanvas &c) {
             app_.tr("Keyboard shortcuts"),
             app_.tr("Task manager"),
             app_.tr("Read later"),
-            app_.tr("Search engines")};
+            app_.tr("Search engines"),
+            app_.tr("Duplicate tabs")};
         label(c, medium_, titles[panel_], r.x + 28, r.y + 47, 23, ink);
-        if (panel_ == Bookmarks || panel_ == Settings) {
+        if (panel_ == Bookmarks || panel_ == Settings || panel_ == Groups) {
             Rect button{r.x + r.width - 220, r.y + 21, 160, 32};
             focus_target(button);
             border(c, button, 8, muted);
             centered_label(c, medium_,
-                           app_.tr(panel_ == Bookmarks ? "Read later" : "Search engines"), button,
-                           12, ink, 8, 8);
+                           app_.tr(panel_ == Bookmarks ? "Read later"
+                                   : panel_ == Groups  ? "Duplicate tabs"
+                                                       : "Search engines"),
+                           button, 12, ink, 8, 8);
         }
         icon(c, "close", r.x + r.width - 43, r.y + 26, 19, muted);
         if (panel_ == Bookmarks)
@@ -1032,6 +1037,8 @@ void BrowserUi::draw(SkCanvas &c) {
             draw_sessions(c, r);
         if (panel_ == Hotkeys)
             draw_hotkeys(c, r);
+        if (panel_ == DuplicateTabs)
+            draw_duplicates(c, r);
         if (panel_ == SearchProviders)
             draw_search_providers(c, r);
         if (panel_ == ReadingListPanel)
@@ -1153,15 +1160,16 @@ void BrowserUi::draw(SkCanvas &c) {
               : dialog.owned       ? app_.tr(dialog.origin)
                                    : dialog.origin,
               r.x + 25, r.y + 38, 16, ink, r.width - 50);
-        const auto lines =
-            wrap_text(font(regular_, 13),
-                      dialog.before_unload ? app_.tr("This page may contain unsaved changes.")
-                      : dialog.owned       ? app_.tr(dialog.message)
-                                           : dialog.message,
-                      r.width - 50,
-                      dialog.prompt  ? 2
-                      : dialog.owned ? 8
-                                     : 4);
+        const auto lines = wrap_text(font(regular_, 13),
+                                     dialog.before_unload
+                                         ? app_.tr("This page may contain unsaved changes.") +
+                                               (dialog.context.empty() ? "" : "\n" + dialog.context)
+                                     : dialog.owned ? app_.tr(dialog.message)
+                                                    : dialog.message,
+                                     r.width - 50,
+                                     dialog.prompt  ? 2
+                                     : dialog.owned ? 8
+                                                    : 4);
         for (size_t i = 0; i < lines.size(); ++i)
             label(c, regular_, lines[i], r.x + 25, r.y + 78 + int(i) * 18, 13, muted, r.width - 50);
         if (dialog.prompt) {
@@ -3295,6 +3303,26 @@ bool BrowserUi::key_default(const CefKeyEvent &key) {
             }
             return true;
         }
+        if (panel_ == DuplicateTabs && code == 0x1B && duplicate_selected_) {
+            duplicate_selected_.reset();
+            duplicate_scroll_ = 0;
+            app_.changed();
+            return true;
+        }
+        if (panel_ == DuplicateTabs &&
+            (code == 0x21 || code == 0x22 || code == 0x24 || code == 0x23)) {
+            int cap = std::max(1, (panel_bounds().height - 232) / 92);
+            int count =
+                duplicate_selected_ ? duplicate_selected_->tabs.size() : duplicate_groups_.size();
+            int maximum = std::max(0, count - cap);
+            duplicate_scroll_ =
+                std::clamp(code == 0x24   ? 0
+                           : code == 0x23 ? maximum
+                                          : duplicate_scroll_ + (code == 0x21 ? -cap : cap),
+                           0, maximum);
+            app_.changed();
+            return true;
+        }
         if (panel_ == SearchProviders && provider_focus_ >= 0 &&
             (!ctrl || (code != 'L' && code != 'T' && code != 'W' && code != 'Q' && code != 'N'))) {
             if (code == 0x1B) {
@@ -4174,6 +4202,10 @@ void BrowserUi::text(const std::string &value) {
     app_.changed();
 }
 bool BrowserUi::tick() {
+    if (panel_ == DuplicateTabs && std::chrono::steady_clock::now() >= duplicate_refresh_) {
+        refresh_duplicates();
+        app_.changed();
+    }
     if (panel_ == TaskManager && std::chrono::steady_clock::now() >= process_refresh_) {
         refresh_task_manager();
         app_.changed();
@@ -4337,6 +4369,15 @@ void BrowserUi::pointer(const PointerInput &input) {
         const int cap = std::max(1, (panel_bounds().height - 280) / 56),
                   maximum = std::max(0, int(hotkey_results().size()) - cap);
         hotkey_scroll_ = std::clamp(hotkey_scroll_ + (input.dy < 0 ? 1 : -1), 0, maximum);
+        app_.changed();
+        return;
+    }
+    if (input.kind == PointerInput::Wheel && panel_ == DuplicateTabs) {
+        int cap = std::max(1, (panel_bounds().height - 232) / 92);
+        int count =
+            duplicate_selected_ ? duplicate_selected_->tabs.size() : duplicate_groups_.size();
+        duplicate_scroll_ =
+            std::clamp(duplicate_scroll_ + (input.dy < 0 ? 1 : -1), 0, std::max(0, count - cap));
         app_.changed();
         return;
     }
@@ -4633,9 +4674,12 @@ void BrowserUi::pointer(const PointerInput &input) {
                 filters_pointer(r, x, y);
             else if (panel_ == Workspaces)
                 workspaces_pointer(r, x, y);
-            else if (panel_ == Groups)
-                groups_pointer(r, x, y);
-            else if (panel_ == Containers)
+            else if (panel_ == Groups) {
+                if (inside({r.x + r.width - 220, r.y + 21, 160, 32}, x, y))
+                    open_duplicates();
+                else
+                    groups_pointer(r, x, y);
+            } else if (panel_ == Containers)
                 containers_pointer(r, x, y);
             else if (panel_ == Profiles)
                 profiles_pointer(r, x, y);
@@ -4652,7 +4696,9 @@ void BrowserUi::pointer(const PointerInput &input) {
                     open_reading_list();
                 else
                     bookmarks_pointer(r, x, y);
-            } else if (panel_ == SearchProviders)
+            } else if (panel_ == DuplicateTabs)
+                duplicates_pointer(r, x, y);
+            else if (panel_ == SearchProviders)
                 search_providers_pointer(r, x, y);
             else if (panel_ == ReadingListPanel)
                 reading_pointer(r, x, y);
@@ -6966,6 +7012,7 @@ std::vector<BrowserUi::CommandResult> BrowserUi::command_results() const {
         {"task_manager", "Task manager", "Shift+Esc", true},
         {"read_later", "Read later", "", true},
         {"search_providers", "Search engines", "", true},
+        {"duplicates", "Duplicate tabs", "", true},
         {"save_article", "Save article offline", "", page && !private_mode},
     };
     for (const auto &action : actions)
@@ -7130,6 +7177,8 @@ void BrowserUi::run_command(int index) {
         open_sessions();
     else if (id == "screenshot")
         open_screenshot();
+    else if (id == "duplicates")
+        open_duplicates();
     else if (id == "search_providers")
         open_search_providers();
     else if (id == "read_later")
@@ -9801,6 +9850,229 @@ std::string BrowserUi::search_providers_report() const {
         out += "{\"id\":" + std::to_string(p.id) + ",\"name\":" + json_quote(p.name) +
                ",\"keyword\":" + json_quote(p.keyword) + ",\"default\":" + rect(b[0]) +
                ",\"edit\":" + rect(b[1]) + ",\"delete\":" + rect(b[2]) + "}";
+    }
+    return out + "]}";
+}
+} // namespace aura
+
+namespace aura {
+void BrowserUi::open_duplicates() {
+    app_.close_menu();
+    panel(DuplicateTabs);
+    duplicate_selected_.reset();
+    duplicate_scroll_ = 0;
+    if (auto t = app_.current(); t && t->browser)
+        t->browser->GetHost()->SetFocus(false);
+    refresh_duplicates();
+    app_.changed();
+}
+void BrowserUi::refresh_duplicates() {
+    duplicate_groups_ = group_duplicate_tabs(app_.duplicate_tabs());
+    if (duplicate_selected_) {
+        auto old = *duplicate_selected_;
+        const auto found =
+            std::find_if(duplicate_groups_.begin(), duplicate_groups_.end(), [&](const auto &g) {
+                return g.url == old.url && g.container == old.container &&
+                       g.private_window == old.private_window;
+            });
+        if (found == duplicate_groups_.end()) {
+            duplicate_selected_.reset();
+            duplicate_scroll_ = 0;
+        } else {
+            duplicate_selected_ = *found;
+            if (std::none_of(found->tabs.begin(), found->tabs.end(),
+                             [&](const auto &t) { return t.ref == duplicate_keep_; }))
+                duplicate_keep_ = preferred_duplicate(*found);
+        }
+    }
+    duplicate_refresh_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+}
+std::array<Rect, 2> BrowserUi::duplicate_buttons(Rect r, int top) const {
+    int width = std::min(192, (r.width - 64) / 2);
+    return {{{r.x + 28, top, width, 30}, {r.x + 36 + width, top, width, 30}}};
+}
+void BrowserUi::draw_duplicates(SkCanvas &c, Rect r) {
+    const auto &theme = interface_theme(app_.profile);
+    auto button = [&](Rect b, const std::string &title, bool enabled = true) {
+        if (enabled)
+            focus_target(b);
+        if (enabled && inside(b, hover_x_, hover_y_))
+            fill(c, b, 8, SkColorSetA(theme.accent, 24));
+        if (enabled)
+            border(c, b, 8, SkColorSetA(theme.accent, 140));
+        centered_label(c, medium_, app_.tr(title), b, 12, enabled ? theme.text : theme.muted, 8, 8);
+    };
+    const auto &merge = app_.state()->duplicate_merge;
+    const bool own = merge.requester == app_.window_uid;
+    button({r.x + 28, r.y + 66, 160, 32}, duplicate_selected_ ? "Back to matches" : "Refresh");
+    std::string message =
+        app_.tr("Exact URLs and matching containers; private windows stay separate.");
+    if (merge.active && !own)
+        message = app_.tr("Duplicate cleanup is running in another window.");
+    else if (own && !merge.status.empty())
+        message = app_.tr(merge.status) + " " + app_.tr("Closed:") + " " +
+                  std::to_string(merge.closed) + " / " + app_.tr("Skipped:") + " " +
+                  std::to_string(merge.skipped);
+    label(c, regular_, message, r.x + 28, r.y + 119, 11, theme.muted, r.width - 56);
+    if (duplicate_selected_)
+        label(c, regular_, duplicate_selected_->url, r.x + 28, r.y + 137, 10, theme.muted,
+              r.width - 56);
+    else
+        label(c, regular_,
+              app_.tr("Matching groups:") + " " + std::to_string(duplicate_groups_.size()),
+              r.x + 28, r.y + 137, 10, theme.muted, r.width - 56);
+    int count = duplicate_selected_ ? duplicate_selected_->tabs.size() : duplicate_groups_.size();
+    int cap = std::max(1, (r.height - 232) / 92);
+    duplicate_scroll_ = std::clamp(duplicate_scroll_, 0, std::max(0, count - cap));
+    if (!count)
+        label(c, regular_, app_.tr("No duplicate pages found in this context."), r.x + 28,
+              r.y + 182, 13, theme.muted, r.width - 56);
+    for (int i = duplicate_scroll_; i < count && i < duplicate_scroll_ + cap; ++i) {
+        int top = r.y + 152 + (i - duplicate_scroll_) * 92;
+        auto b = duplicate_buttons(r, top + 44);
+        if (!duplicate_selected_) {
+            const auto &g = duplicate_groups_[i];
+            label(c, medium_, g.url, r.x + 28, top + 16, 13, theme.text, r.width - 56);
+            label(c, regular_,
+                  app_.tr("Tabs:") + " " + std::to_string(g.tabs.size()) + " / " +
+                      app_.profile.container_label(g.container) +
+                      (g.private_window ? " / " + app_.tr("Private tab") : ""),
+                  r.x + 28, top + 34, 11, theme.muted, r.width - 56);
+            button(b[0], "Review duplicates");
+        } else {
+            const auto &t = duplicate_selected_->tabs[i];
+            label(c, medium_, t.title.empty() ? t.url : t.title, r.x + 28, top + 16, 13, theme.text,
+                  r.width - 56);
+            std::string detail = app_.tr("Window") + " " + std::to_string(t.ref.window) + " / " +
+                                 app_.tr(app_.profile.workspace_label(t.workspace));
+            if (t.protection & DuplicatePinned)
+                detail += " / " + app_.tr("Pinned");
+            if (t.protection & DuplicateBusy)
+                detail += " / " + app_.tr("Busy");
+            if (t.protection & DuplicateMedia)
+                detail += " / " + app_.tr("Media");
+            if (t.protection & DuplicateDownload)
+                detail += " / " + app_.tr("Active download");
+            if (t.protection & DuplicateDialog)
+                detail += " / " + app_.tr("Dialog open");
+            label(c, regular_, detail, r.x + 28, top + 34, 11, theme.muted, r.width - 56);
+            button(b[0], t.ref == duplicate_keep_ ? "Kept tab" : "Keep this tab",
+                   !merge.active && t.ref != duplicate_keep_);
+            button(b[1], "Show tab");
+        }
+    }
+    if (duplicate_selected_) {
+        auto plan = duplicate_close_plan(*duplicate_selected_, duplicate_keep_);
+        auto keeper =
+            std::find_if(duplicate_selected_->tabs.begin(), duplicate_selected_->tabs.end(),
+                         [&](const auto &t) { return t.ref == duplicate_keep_; });
+        button({r.x + 28, r.y + r.height - 48, std::min(240, r.width - 232), 32},
+               app_.tr("Close duplicates") + " (" + std::to_string(plan.size()) + ")",
+               !merge.active && !plan.empty() && keeper != duplicate_selected_->tabs.end() &&
+                   !(keeper->protection & DuplicateBusy));
+    }
+    if (merge.active && own)
+        button({r.x + r.width - 188, r.y + r.height - 48, 160, 32}, "Stop remaining");
+    if (count > cap) {
+        int h = cap * 92, thumb = std::max(20, h * cap / count);
+        fill(c,
+             {r.x + r.width - 14, r.y + 152 + (h - thumb) * duplicate_scroll_ / (count - cap), 3,
+              thumb},
+             1, theme.accent);
+    }
+}
+void BrowserUi::duplicates_pointer(Rect r, int x, int y) {
+    if (inside({r.x + 28, r.y + 66, 160, 32}, x, y)) {
+        if (duplicate_selected_) {
+            duplicate_selected_.reset();
+            duplicate_scroll_ = 0;
+        } else
+            refresh_duplicates();
+        app_.changed();
+        return;
+    }
+    auto &merge = app_.state()->duplicate_merge;
+    if (merge.active && merge.requester == app_.window_uid &&
+        inside({r.x + r.width - 188, r.y + r.height - 48, 160, 32}, x, y)) {
+        app_.stop_duplicate_merge();
+        return;
+    }
+    if (duplicate_selected_ && !merge.active &&
+        inside({r.x + 28, r.y + r.height - 48, std::min(240, r.width - 232), 32}, x, y)) {
+        app_.merge_duplicates(*duplicate_selected_, duplicate_keep_);
+        return;
+    }
+    int cap = std::max(1, (r.height - 232) / 92), index = duplicate_scroll_ + (y - r.y - 152) / 92;
+    int count = duplicate_selected_ ? duplicate_selected_->tabs.size() : duplicate_groups_.size();
+    if (y < r.y + 152 || index < duplicate_scroll_ || index >= count ||
+        index >= duplicate_scroll_ + cap)
+        return;
+    auto b = duplicate_buttons(r, r.y + 152 + (index - duplicate_scroll_) * 92 + 44);
+    if (!duplicate_selected_) {
+        if (inside(b[0], x, y)) {
+            duplicate_selected_ = duplicate_groups_[index];
+            if (!merge.active && merge.requester == app_.window_uid)
+                merge.status.clear();
+            duplicate_keep_ = preferred_duplicate(*duplicate_selected_);
+            duplicate_scroll_ = 0;
+            app_.changed();
+        }
+    } else {
+        const auto t = duplicate_selected_->tabs[index];
+        if (!merge.active && inside(b[0], x, y)) {
+            duplicate_keep_ = t.ref;
+            app_.changed();
+        } else if (inside(b[1], x, y))
+            app_.show_duplicate_tab(t.ref);
+    }
+}
+std::string BrowserUi::duplicates_report() const {
+    if (panel_ != DuplicateTabs)
+        return "null";
+    Rect r = panel_bounds();
+    auto rect = [](Rect b) {
+        return "[" + std::to_string(b.x) + "," + std::to_string(b.y) + "," +
+               std::to_string(b.width) + "," + std::to_string(b.height) + "]";
+    };
+    const auto &m = app_.state()->duplicate_merge;
+    bool own = m.requester == app_.window_uid;
+    std::string out =
+        "{\"closable\":" +
+        std::to_string(duplicate_selected_
+                           ? duplicate_close_plan(*duplicate_selected_, duplicate_keep_).size()
+                           : 0) +
+        ",\"review\":" + std::string(duplicate_selected_ ? "true" : "false") +
+        ",\"groups\":" + std::to_string(duplicate_groups_.size()) +
+        ",\"busy\":" + (m.active ? "true" : "false") +
+        ",\"status\":" + json_quote(own ? m.status : "") +
+        ",\"closed\":" + std::to_string(own ? m.closed : 0) +
+        ",\"kept\":" + std::to_string(own ? m.skipped : 0) +
+        ",\"keep_window\":" + std::to_string(duplicate_keep_.window) +
+        ",\"keep_tab\":" + std::to_string(duplicate_keep_.tab) +
+        ",\"back\":" + rect({r.x + 28, r.y + 66, 160, 32}) +
+        ",\"close\":" + rect({r.x + 28, r.y + r.height - 48, std::min(240, r.width - 232), 32}) +
+        ",\"stop\":" + rect({r.x + r.width - 188, r.y + r.height - 48, 160, 32}) + ",\"items\":[";
+    int cap = std::max(1, (r.height - 232) / 92),
+        count = duplicate_selected_ ? duplicate_selected_->tabs.size() : duplicate_groups_.size();
+    for (int i = duplicate_scroll_; i < count && i < duplicate_scroll_ + cap; ++i) {
+        if (i != duplicate_scroll_)
+            out += ",";
+        auto b = duplicate_buttons(r, r.y + 152 + (i - duplicate_scroll_) * 92 + 44);
+        if (!duplicate_selected_) {
+            const auto &g = duplicate_groups_[i];
+            out +=
+                "{\"url\":" + json_quote(g.url) + ",\"container\":" + std::to_string(g.container) +
+                ",\"private\":" + (g.private_window ? "true" : "false") +
+                ",\"count\":" + std::to_string(g.tabs.size()) + ",\"review\":" + rect(b[0]) + "}";
+        } else {
+            const auto &t = duplicate_selected_->tabs[i];
+            out += "{\"window\":" + std::to_string(t.ref.window) +
+                   ",\"tab\":" + std::to_string(t.ref.tab) +
+                   ",\"workspace\":" + std::to_string(t.workspace) +
+                   ",\"title\":" + json_quote(t.title) +
+                   ",\"protection\":" + std::to_string(t.protection) + ",\"keep\":" + rect(b[0]) +
+                   ",\"show\":" + rect(b[1]) + "}";
+        }
     }
     return out + "]}";
 }

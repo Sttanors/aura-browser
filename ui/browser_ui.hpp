@@ -33,7 +33,8 @@ class BrowserUi {
         Hotkeys,
         TaskManager,
         ReadingListPanel,
-        SearchProviders
+        SearchProviders,
+        DuplicateTabs
     };
     BrowserUi(BrowserController &owner, const std::filesystem::path &font);
     ~BrowserUi();
@@ -90,6 +91,8 @@ class BrowserUi {
     void begin_screenshot_area();
     std::string screenshot_report() const;
     std::string bookmarks_report() const;
+    void open_duplicates();
+    std::string duplicates_report() const;
     void open_search_providers();
     std::string search_providers_report() const;
     void open_reading_list();
@@ -128,6 +131,15 @@ class BrowserUi {
     mutable uint64_t reading_revision_ = ~uint64_t{0};
     mutable std::string reading_query_;
     mutable std::vector<int> reading_ids_;
+    std::vector<DuplicateGroup> duplicate_groups_;
+    std::optional<DuplicateGroup> duplicate_selected_;
+    DuplicateRef duplicate_keep_;
+    int duplicate_scroll_ = 0;
+    std::chrono::steady_clock::time_point duplicate_refresh_{};
+    void refresh_duplicates();
+    void draw_duplicates(SkCanvas &, Rect);
+    void duplicates_pointer(Rect, int, int);
+    std::array<Rect, 2> duplicate_buttons(Rect, int) const;
     std::array<TextEditor, 3> provider_fields_;
     bool provider_editing_ = false;
     int provider_focus_ = -1, provider_id_ = 0, provider_scroll_ = 0;

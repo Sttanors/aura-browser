@@ -601,6 +601,24 @@ bool BrowserClient::OnBeforeUnloadDialog(CefRefPtr<CefBrowser>, const CefString 
     dialog.tab = id_;
     dialog.origin = owner_.tr("Leave this page?");
     dialog.message = message;
+    const auto &merge = owner_.state()->duplicate_merge;
+    if (merge.active && merge.waiting &&
+        merge.waiting->ref == DuplicateRef{owner_.window_uid, id_}) {
+        if (auto t = owner_.tab(id_)) {
+            auto title = t->page.title;
+            for (auto &c : title)
+                if (static_cast<unsigned char>(c) < 32 || c == 127)
+                    c = ' ';
+            size_t end = std::min<size_t>(120, title.size());
+            while (end < title.size() && end &&
+                   (static_cast<unsigned char>(title[end]) & 0xc0) == 0x80)
+                --end;
+            title.resize(end);
+            dialog.context = title;
+        }
+        if (owner_.window)
+            owner_.window->activate();
+    }
     dialog.before_unload = true;
     dialog.callback = callback;
     owner_.dialogs.push_back(std::move(dialog));

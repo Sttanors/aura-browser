@@ -819,6 +819,19 @@ void BrowserWindow::show() {
     impl_->mapped = true;
     impl_->dirty = impl_->full_damage = true;
 }
+void BrowserWindow::activate() {
+    XMapRaised(impl_->display, impl_->window);
+    XEvent event{};
+    event.xclient.type = ClientMessage;
+    event.xclient.window = impl_->window;
+    event.xclient.message_type = XInternAtom(impl_->display, "_NET_ACTIVE_WINDOW", False);
+    event.xclient.format = 32;
+    event.xclient.data.l[0] = 1;
+    event.xclient.data.l[1] = CurrentTime;
+    XSendEvent(impl_->display, DefaultRootWindow(impl_->display), False,
+               SubstructureRedirectMask | SubstructureNotifyMask, &event);
+    XFlush(impl_->display);
+}
 CefWindowHandle BrowserWindow::handle() const {
     return impl_->window;
 }

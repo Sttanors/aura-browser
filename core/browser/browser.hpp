@@ -1,6 +1,7 @@
 #pragma once
 #include "common/text_editor.hpp"
 #include "core/browser/devtools.hpp"
+#include "core/browser/duplicate_tabs.hpp"
 #include "core/browser/extensions.hpp"
 #include "core/browser/filter_lists.hpp"
 #include "core/browser/i18n.hpp"
@@ -105,7 +106,7 @@ struct Download {
 };
 struct BrowserDialog {
     int tab = 0;
-    std::string origin, message, accept_label;
+    std::string origin, message, accept_label, context;
     bool prompt = false, before_unload = false;
     TextEditor input;
     CefRefPtr<CefJSDialogCallback> callback;
@@ -133,9 +134,20 @@ struct WindowRequest {
     std::optional<SavedWindow> saved;
     std::string url;
 };
+struct DuplicateMerge {
+    bool active = false;
+    uint64_t requester = 0, generation = 0;
+    DuplicateTab keep;
+    std::deque<DuplicateTab> pending;
+    std::optional<DuplicateTab> checking, waiting;
+    size_t closed = 0, skipped = 0;
+    std::string status;
+    std::chrono::steady_clock::time_point started{};
+};
 struct BrowserState {
     explicit BrowserState(const std::filesystem::path &path);
     Profile profile;
+    DuplicateMerge duplicate_merge;
     ReadingList reading_list;
     std::vector<Download> downloads;
     std::vector<std::filesystem::path> download_paths;
@@ -263,7 +275,13 @@ class BrowserController {
                  bool foreground = true, bool pinned = false, int workspace = -1, int group = -1,
                  int container = -1);
     void activate(int index, bool reveal_group = true);
-    void close_tab(int index);
+    void close_tab(int index, bool preserve_window = false);
+    std::vector<DuplicateTab> duplicate_tabs(bool include_closing = false) const;
+    void merge_duplicates(const DuplicateGroup &, DuplicateRef keep);
+    void tick_duplicate_merge();
+    void stop_duplicate_merge(const std::string &reason = "Remaining duplicates were kept.");
+    void probe_duplicate_media(DuplicateTab, uint64_t generation);
+    void show_duplicate_tab(DuplicateRef);
     void reopen();
     void move_tab(int from, int to);
     void navigate(std::string input);
