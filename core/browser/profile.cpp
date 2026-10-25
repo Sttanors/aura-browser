@@ -436,63 +436,65 @@ void Profile::load() {
     read("history", history);
     read("bookmarks", bookmarks);
     prune_history();
-    if (auto a = table["session"].as_array())
-        for (auto &n : *a)
-            if (auto t = n.as_table(); t && container((*t)["container"].value_or(0)))
-                session.push_back({(*t)["url"].value_or(std::string("aura://newtab")),
-                                   (*t)["pinned"].value_or(false),
-                                   has_workspace((*t)["workspace"].value_or(0))
-                                       ? (*t)["workspace"].value_or(0)
-                                       : 0,
-                                   (*t)["workspace_active"].value_or(false),
-                                   (*t)["group"].value_or(0), (*t)["container"].value_or(0)});
+    auto read_tabs = [&](SavedWindow &window, const toml::array *array) {
+        std::vector<int> indices;
+        int source = -1;
+        if (array)
+            for (const auto &node : *array) {
+                ++source;
+                if (source >= 500)
+                    break;
+                const auto row = node.as_table();
+                if (!row || !container((*row)["container"].value_or(0)))
+                    continue;
+                try {
+                    const auto url = (*row)["url"].value_or(std::string("aura://newtab"));
+                    if (url.empty())
+                        continue;
+                    window.tabs.push_back(
+                        {navigation_url(url), (*row)["pinned"].value_or(false),
+                         has_workspace((*row)["workspace"].value_or(0))
+                             ? (*row)["workspace"].value_or(0)
+                             : 0,
+                         (*row)["workspace_active"].value_or(false), (*row)["group"].value_or(0),
+                         (*row)["container"].value_or(0), (*row)["parent"].value_or(-1),
+                         (*row)["tree_collapsed"].value_or(false)});
+                    indices.push_back(source);
+                } catch (const std::exception &) {
+                }
+            }
+        remap_saved_tabs(window, indices);
+    };
+    SavedWindow legacy;
+    legacy.active = active;
+    read_tabs(legacy, table["session"].as_array());
+    session = std::move(legacy.tabs);
+    active = legacy.active;
     if (auto entries = table["windows"].as_array())
         for (const auto &node : *entries) {
             if (windows.size() >= 32)
                 break;
-            if (auto row = node.as_table()) {
+            if (const auto row = node.as_table()) {
                 SavedWindow window;
-                window.active = std::max(0, (*row)["active"].value_or(0));
+                window.active = (*row)["active"].value_or(0);
                 window.workspace = (*row)["workspace"].value_or(0);
                 window.split_left = (*row)["split_left"].value_or(-1);
                 window.split_right = (*row)["split_right"].value_or(-1);
                 if (!has_workspace(window.workspace))
                     window.workspace = 0;
-                if (auto tabs = (*row)["tabs"].as_array())
-                    for (const auto &tab : *tabs) {
-                        if (window.tabs.size() >= 500)
-                            break;
-                        if (auto item = tab.as_table()) {
-                            if (!container((*item)["container"].value_or(0)))
-                                continue;
-                            auto url = (*item)["url"].value_or(std::string{});
-                            try {
-                                if (!url.empty())
-                                    window.tabs.push_back(
-                                        {navigation_url(url), (*item)["pinned"].value_or(false),
-                                         has_workspace((*item)["workspace"].value_or(0))
-                                             ? (*item)["workspace"].value_or(0)
-                                             : 0,
-                                         (*item)["workspace_active"].value_or(false),
-                                         (*item)["group"].value_or(0),
-                                         (*item)["container"].value_or(0)});
-                            } catch (const std::exception &) {
-                            }
-                        }
-                    }
-                if (!window.tabs.empty()) {
-                    window.active = std::min(window.active, int(window.tabs.size()) - 1);
-                    const int left = window.split_left, right = window.split_right;
-                    if (left < 0 || right < 0 || left == right || left >= int(window.tabs.size()) ||
-                        right >= int(window.tabs.size()) ||
-                        (window.active != left && window.active != right) ||
-                        window.tabs[left].workspace != window.workspace ||
-                        window.tabs[right].workspace != window.workspace ||
-                        window.tabs[left].url == "aura://newtab" ||
-                        window.tabs[right].url == "aura://newtab")
-                        window.split_left = window.split_right = -1;
-                    windows.push_back(std::move(window));
-                }
+                read_tabs(window, (*row)["tabs"].as_array());
+                if (window.tabs.empty())
+                    continue;
+                const int left = window.split_left, right = window.split_right;
+                if (left < 0 || right < 0 || left == right || left >= int(window.tabs.size()) ||
+                    right >= int(window.tabs.size()) ||
+                    (window.active != left && window.active != right) ||
+                    window.tabs[left].workspace != window.workspace ||
+                    window.tabs[right].workspace != window.workspace ||
+                    window.tabs[left].url == "aura://newtab" ||
+                    window.tabs[right].url == "aura://newtab")
+                    window.split_left = window.split_right = -1;
+                windows.push_back(std::move(window));
             }
         }
     hotkeys.clear();
@@ -578,9 +580,13 @@ void Profile::load() {
                             const auto t = tab.as_table();
                             if (!t ||
                                 !keys(*t, {"url", "pinned", "workspace", "workspace_active",
-                                           "group", "container"}) ||
+                                           "group", "container", "parent", "tree_collapsed"}) ||
                                 !(*t)["container"].is_integer() ||
-                                !(*t)["workspace"].is_integer() || ++total > 200) {
+                                !(*t)["workspace"].is_integer() ||
+                                (t->contains("parent") && !(*t)["parent"].is_integer()) ||
+                                (t->contains("tree_collapsed") &&
+                                 !(*t)["tree_collapsed"].is_boolean()) ||
+                                ++total > 200) {
                                 valid = false;
                                 break;
                             }
@@ -588,7 +594,9 @@ void Profile::load() {
                                 {(*t)["url"].value_or(std::string{}),
                                  (*t)["pinned"].value_or(false), (*t)["workspace"].value_or(-1),
                                  (*t)["workspace_active"].value_or(false),
-                                 (*t)["group"].value_or(0), (*t)["container"].value_or(-1)});
+                                 (*t)["group"].value_or(0), (*t)["container"].value_or(-1),
+                                 (*t)["parent"].value_or(-1),
+                                 (*t)["tree_collapsed"].value_or(false)});
                         }
                     snapshot.windows.push_back(std::move(window));
                 }
@@ -635,13 +643,18 @@ void Profile::load() {
     };
     for (auto &t : session)
         validate_group(t);
-    for (auto &w : windows)
+    SavedWindow legacy_tree{session, active};
+    normalize_tab_tree(legacy_tree);
+    session = std::move(legacy_tree.tabs);
+    for (auto &w : windows) {
         for (auto &t : w.tabs)
             validate_group(t);
+        normalize_tab_tree(w);
+    }
 }
 void Profile::save() const {
     toml::table root;
-    root.insert("schema", 17);
+    root.insert("schema", 18);
     toml::array providers;
     for (const auto &p : search_providers)
         providers.push_back(
@@ -733,7 +746,9 @@ void Profile::save() const {
                                    {"workspace", t.workspace},
                                    {"workspace_active", t.workspace_active},
                                    {"group", t.group},
-                                   {"container", t.container}});
+                                   {"container", t.container},
+                                   {"parent", t.parent},
+                                   {"tree_collapsed", t.tree_collapsed}});
     root.insert("session", std::move(tabs));
     auto window_rows = [](const std::vector<SavedWindow> &windows) {
         toml::array saved_windows;
@@ -745,7 +760,9 @@ void Profile::save() const {
                                                  {"workspace", t.workspace},
                                                  {"workspace_active", t.workspace_active},
                                                  {"group", t.group},
-                                                 {"container", t.container}});
+                                                 {"container", t.container},
+                                                 {"parent", t.parent},
+                                                 {"tree_collapsed", t.tree_collapsed}});
             saved_windows.push_back(toml::table{{"active", window.active},
                                                 {"workspace", window.workspace},
                                                 {"split_left", window.split_left},
@@ -1056,17 +1073,19 @@ bool Profile::rename_container(int id, std::string name, int color) {
     return true;
 }
 void remove_container_tabs(SavedWindow &window, int id) {
-    int before = 0;
-    for (int i = 0; i < int(window.tabs.size()) && i < window.active; i++)
-        if (window.tabs[i].container == id)
-            ++before;
-    const auto old = window.tabs.size();
-    std::erase_if(window.tabs, [&](const auto &t) { return t.container == id; });
-    if (old != window.tabs.size()) {
-        window.active =
-            std::clamp(window.active - before, 0, std::max(0, int(window.tabs.size()) - 1));
-        window.split_left = window.split_right = -1;
-    }
+    std::vector<int> kept;
+    SavedWindow result = window;
+    result.tabs.clear();
+    for (int i = 0; i < int(window.tabs.size()); ++i)
+        if (window.tabs[i].container != id) {
+            result.tabs.push_back(window.tabs[i]);
+            kept.push_back(i);
+        }
+    if (kept.size() == window.tabs.size())
+        return;
+    remap_saved_tabs(result, kept);
+    result.split_left = result.split_right = -1;
+    window = std::move(result);
 }
 bool Profile::remove_container(int id) {
     if (!id || !container(id))

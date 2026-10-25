@@ -602,6 +602,19 @@ void BrowserUi::draw(SkCanvas &c) {
     const auto visible = sidebar_rows();
     int visible_active =
         int(std::find(visible.begin(), visible.end(), app_.active) - visible.begin());
+    const auto tree = app_.tree_rows(false);
+    if (app_.profile.tree_tabs && visible_active == int(visible.size()) && current) {
+        auto parent = app_.tab(current->parent);
+        int remaining = int(app_.tabs.size());
+        while (parent && remaining-- > 0) {
+            for (int position = 0; position < int(visible.size()); ++position)
+                if (visible[position] >= 0 && app_.tabs[visible[position]]->id == parent->id)
+                    visible_active = position;
+            if (visible_active < int(visible.size()))
+                break;
+            parent = app_.tab(parent->parent);
+        }
+    }
     if (visible_active == int(visible.size()) && current && current->group)
         visible_active =
             int(std::find(visible.begin(), visible.end(), -current->group) - visible.begin());
@@ -654,44 +667,62 @@ void BrowserUi::draw(SkCanvas &c) {
         if (y + 46 > list_bottom)
             break;
         const bool selected = i == app_.active;
+        const bool branch_selected = !selected && position == visible_active;
+        const auto row =
+            std::find_if(tree.begin(), tree.end(), [&](const auto &r) { return r.index == i; });
+        const int depth = app_.profile.tree_tabs && row != tree.end() ? row->depth : 0;
+        const int descendants = app_.profile.tree_tabs && row != tree.end() ? row->descendants : 0;
+        const int indent = std::min(depth, 3) * 12;
+        const int icon_x = app_.profile.tree_tabs ? 44 + indent : 26;
+        const int title_x = app_.profile.tree_tabs ? 70 + indent : 57;
         Rect r{14, y, 212, 46};
         if (auto group = app_.profile.group(tab.group))
             fill(c, {19, y + 8, 2, 30}, 1, tab_group_color(app_.profile, group->color));
-        focus_target({r.x, r.y, 180, r.height});
+        if (descendants)
+            focus_target({20 + indent, y + 7, 24, 32});
+        focus_target({app_.profile.tree_tabs ? 44 + indent : r.x, r.y,
+                      app_.profile.tree_tabs ? 150 - indent : 180, r.height});
         if (!tab.pinned)
             focus_target({200, y + 8, 24, 30});
         const bool hover = inside(r, hover_x_, hover_y_);
-        if (selected || hover) {
+        if (selected || branch_selected || hover) {
             fill(c, r, 12, SkColorSetA(t.surface, selected ? (light ? 235 : 245) : 125));
-            if (selected) {
-                border(c, r, 12, SkColorSetA(ink, 22));
+            if (selected || branch_selected) {
+                if (selected)
+                    border(c, r, 12, SkColorSetA(ink, 22));
                 fill(c, {14, y + 13, 3, 20}, 2, t.accent);
             }
+        }
+        if (descendants) {
+            icon(c, tab.tree_collapsed ? "expand" : "collapse", 24 + indent, y + 15, 16, t.accent);
         }
         if (tab.loading) {
             const double time =
                 std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch())
                     .count();
-            fill(c, {29, y + 17, 12, 12}, 6,
+            fill(c, {icon_x + 3, y + 17, 12, 12}, 6,
                  SkColorSetA(t.accent, static_cast<U8CPU>(130 + 100 * (app_.profile.reduce_motion
                                                                            ? 0.0
                                                                            : std::sin(time * 4)))));
         } else if (tab.sleeping)
-            label(c, medium_, "z", 30, y + 29, 17, muted);
+            label(c, medium_, "z", icon_x + 4, y + 29, 17, muted);
         else if (tab.media_capture)
-            icon(c, tab.media_video ? "camera" : "microphone", 26, y + 14, 19, t.accent);
+            icon(c, tab.media_video ? "camera" : "microphone", icon_x, y + 14, 19, t.accent);
         else if (tab.private_tab)
-            icon(c, "private", 26, y + 14, 19, t.accent);
+            icon(c, "private", icon_x, y + 14, 19, t.accent);
         else if (app_.profile.show_favicons && tab.favicon.generation())
-            image(c, tab.favicon, {27, y + 15, 17, 17});
+            image(c, tab.favicon, {icon_x + 1, y + 15, 17, 17});
         else
-            icon(c, tab.ntp ? "plus" : "globe", 26, y + 14, 19, selected ? t.accent : muted);
+            icon(c, tab.ntp ? "plus" : "globe", icon_x, y + 14, 19, selected ? t.accent : muted);
         label(c, selected ? medium_ : regular_,
-              tab.page.title.empty() ? url_host(tab.page.url) : tab.page.title, 57,
-              y + (app_.profile.show_tab_host ? 21 : 28), 12.5f, ink, 138);
+              tab.page.title.empty() ? url_host(tab.page.url) : tab.page.title, title_x,
+              y + (app_.profile.show_tab_host ? 21 : 28), 12.5f, ink, 196 - title_x);
         if (app_.profile.show_tab_host)
             label(c, regular_,
-                  tab.media_video   ? app_.tr("Camera in use")
+                  descendants && tab.tree_collapsed
+                      ? app_.tr("Hidden tabs: ") + std::to_string(descendants)
+                  : depth > 3       ? app_.tr("Level ") + std::to_string(depth + 1)
+                  : tab.media_video ? app_.tr("Camera in use")
                   : tab.media_audio ? app_.tr("Microphone in use")
                   : tab.sleeping    ? app_.tr("Sleeping")
                   : tab.private_tab ? app_.tr("Private browsing")
@@ -699,7 +730,7 @@ void BrowserUi::draw(SkCanvas &c) {
                       ? app_.tr("A fresh perspective")
                       : (tab.container ? app_.profile.container_label(tab.container) + " · " : "") +
                             url_host(tab.page.url),
-                  57, y + 36, 10, muted, 139);
+                  title_x, y + 36, 10, muted, 196 - title_x);
         if (hover || selected)
             icon(c, tab.pinned ? "pin" : "close", 202, y + 16, 14, muted);
     }
@@ -3221,7 +3252,10 @@ bool BrowserUi::key_default(const CefKeyEvent &key) {
         pointer(click);
         click.kind = PointerInput::Up;
         pointer(click);
-        if (panel_ != None && panel_ == previous_panel)
+        // Disclosure toggles keep the same focus target while their children appear/disappear.
+        const bool sidebar_disclosure = previous_panel == None && app_.profile.tree_tabs &&
+                                        r.x >= 20 && r.x <= 56 && r.width == 24 && r.height == 32;
+        if ((panel_ != None || sidebar_disclosure) && panel_ == previous_panel)
             keyboard_focus_ = previous;
         return true;
     }
@@ -4334,18 +4368,24 @@ void BrowserUi::pointer(const PointerInput &input) {
         popup_pointer(input))
         return;
     if (input.kind == PointerInput::Move && drag_tab_ >= 0 && std::abs(y - drag_y_) > 18) {
+        if (x >= 240 || y < 178 || y >= height_ - 220)
+            return;
         const auto visible = sidebar_rows();
         if (visible.empty())
             return;
         const int index =
             visible[std::clamp((y - 178) / 52 + tab_scroll_, 0, int(visible.size()) - 1)];
         if (index < 0) {
-            app_.set_tab_group(app_.tabs[drag_tab_]->id, -index);
+            app_.set_tab_group(app_.tabs[drag_tab_]->id, -index, true);
             return;
         }
-        app_.set_tab_group(app_.tabs[drag_tab_]->id, app_.tabs[index]->group);
+        const int dragged = app_.tabs[drag_tab_]->id;
+        if (!app_.profile.tree_tabs)
+            app_.set_tab_group(dragged, app_.tabs[index]->group);
         app_.move_tab(drag_tab_, index);
-        drag_tab_ = index;
+        for (int i = 0; i < int(app_.tabs.size()); ++i)
+            if (app_.tabs[i]->id == dragged)
+                drag_tab_ = i;
         drag_y_ = y;
         return;
     }
@@ -4838,6 +4878,16 @@ void BrowserUi::pointer(const PointerInput &input) {
                     }
                     return;
                 }
+                if (app_.profile.tree_tabs && input.button == 1) {
+                    for (const auto &row : app_.tree_rows(false))
+                        if (row.index == index && row.descendants &&
+                            inside({20 + std::min(row.depth, 3) * 12,
+                                    178 + (position - tab_scroll_) * 52 + 7, 24, 32},
+                                   x, y)) {
+                            app_.toggle_tree(app_.tabs[index]->id);
+                            return;
+                        }
+                }
                 if (input.button == 2 && !app_.profile.middle_close)
                     return;
                 if (input.button == 2 || (x > 195 && !app_.tabs[index]->pinned))
@@ -4862,6 +4912,20 @@ void BrowserUi::pointer(const PointerInput &input) {
                              !app_.tabs[index]->pinned && !app_.tabs[index]->private_tab &&
                                  !app_.tabs[index]->ntp},
                             {9, app_.tr("Open in container"), !app_.tabs[index]->private_tab}};
+                        if (app_.profile.tree_tabs) {
+                            const auto rows = app_.tree_rows(false);
+                            const auto row =
+                                std::find_if(rows.begin(), rows.end(),
+                                             [&](const auto &r) { return r.index == index; });
+                            app_.menu.push_back(
+                                {10,
+                                 app_.tr(app_.tabs[index]->tree_collapsed ? "Expand branch"
+                                                                          : "Collapse branch"),
+                                 row != rows.end() && row->descendants > 0});
+                            app_.menu.push_back(
+                                {11, app_.tr("Detach tab"), app_.tabs[index]->parent != 0});
+                            app_.menu.push_back({12, app_.tr("New child tab")});
+                        }
                         app_.menu_x = std::clamp(x + 8, 8, width_ - 250);
                         app_.menu_y = std::clamp(
                             y, 32, std::max(32, height_ - int(app_.menu.size()) * 32 - 20));
@@ -4879,7 +4943,9 @@ void BrowserUi::pointer(const PointerInput &input) {
                             else if (command == 2)
                                 app_.mute();
                             else if (command == 3)
-                                app_.new_tab(tab->page.url, tab->private_tab);
+                                app_.new_tab(tab->page.url, tab->private_tab, true, false,
+                                             tab->workspace, tab->group, tab->container,
+                                             tab->parent);
                             else if (command == 4)
                                 app_.close_tab(index);
                             else if (command == 6)
@@ -4890,6 +4956,13 @@ void BrowserUi::pointer(const PointerInput &input) {
                                 app_.sleep_tab(id);
                             else if (command == 9)
                                 open_containers(id);
+                            else if (command == 10)
+                                app_.toggle_tree(id);
+                            else if (command == 11)
+                                app_.detach_tree_tab(id);
+                            else if (command == 12)
+                                app_.new_tab("aura://newtab", tab->private_tab, true, false,
+                                             tab->workspace, tab->group, tab->container, id);
                             else
                                 app_.reopen();
                         };
@@ -6140,7 +6213,13 @@ std::string BrowserUi::workspaces_report() const {
 
 namespace aura {
 std::vector<int> BrowserUi::sidebar_rows() const {
-    const auto tabs = app_.visible_tabs();
+    auto tabs = app_.visible_tabs();
+    if (app_.profile.tree_tabs) {
+        tabs.clear();
+        for (const auto &r : app_.tree_rows())
+            if (app_.tabs[r.index]->workspace == app_.workspace)
+                tabs.push_back(r.index);
+    }
     if (app_.private_window)
         return tabs;
     std::vector<int> rows;
@@ -6364,6 +6443,7 @@ std::string BrowserUi::groups_report() const {
 namespace aura {
 std::string BrowserUi::sidebar_report() const {
     const auto rows = sidebar_rows();
+    const auto tree = app_.tree_rows(false);
     std::string out = "[";
     bool first = true;
     const int capacity = std::max(1, (height_ - 220 - 178) / 52);
@@ -6373,8 +6453,19 @@ std::string BrowserUi::sidebar_report() const {
             out += ',';
         first = false;
         const int y = 178 + (position - tab_scroll_) * 52;
-        out += "{\"group\":" + std::to_string(rows[position] < 0 ? -rows[position] : 0) +
-               ",\"tab_index\":" + std::to_string(rows[position] < 0 ? -1 : rows[position]) +
+        const int index = rows[position];
+        const auto node =
+            std::find_if(tree.begin(), tree.end(), [&](const auto &r) { return r.index == index; });
+        const int depth = app_.profile.tree_tabs && node != tree.end() ? node->depth : 0;
+        const int descendants =
+            app_.profile.tree_tabs && node != tree.end() ? node->descendants : 0;
+        out += "{\"group\":" + std::to_string(index < 0 ? -index : 0) +
+               ",\"tab_index\":" + std::to_string(index < 0 ? -1 : index) +
+               ",\"depth\":" + std::to_string(depth) +
+               ",\"descendants\":" + std::to_string(descendants) + ",\"disclosure\":" +
+               (descendants ? "[" + std::to_string(20 + std::min(depth, 3) * 12) + "," +
+                                  std::to_string(y + 7) + ",24,32]"
+                            : "null") +
                ",\"bounds\":[14," + std::to_string(y) + ",212,46]}";
     }
     return out + "]";
@@ -7013,6 +7104,14 @@ std::vector<BrowserUi::CommandResult> BrowserUi::command_results() const {
         {"read_later", "Read later", "", true},
         {"search_providers", "Search engines", "", true},
         {"duplicates", "Duplicate tabs", "", true},
+        {"tree_toggle", current && current->tree_collapsed ? "Expand branch" : "Collapse branch",
+         "",
+         current && app_.profile.tree_tabs &&
+             std::any_of(app_.tabs.begin(), app_.tabs.end(),
+                         [&](const auto &t) { return t->parent == current->id; })},
+        {"tree_detach", "Detach tab", "",
+         current && app_.profile.tree_tabs && current->parent != 0},
+        {"tree_child", "New child tab", "", current && app_.profile.tree_tabs},
         {"save_article", "Save article offline", "", page && !private_mode},
     };
     for (const auto &action : actions)
@@ -7177,7 +7276,17 @@ void BrowserUi::run_command(int index) {
         open_sessions();
     else if (id == "screenshot")
         open_screenshot();
-    else if (id == "duplicates")
+    else if (id == "tree_toggle") {
+        if (auto t = app_.current())
+            app_.toggle_tree(t->id);
+    } else if (id == "tree_detach") {
+        if (auto t = app_.current())
+            app_.detach_tree_tab(t->id);
+    } else if (id == "tree_child") {
+        if (auto t = app_.current())
+            app_.new_tab("aura://newtab", t->private_tab, true, false, t->workspace, t->group,
+                         t->container, t->id);
+    } else if (id == "duplicates")
         open_duplicates();
     else if (id == "search_providers")
         open_search_providers();

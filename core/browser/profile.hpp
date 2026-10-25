@@ -40,6 +40,8 @@ struct SavedTab {
     bool workspace_active = false;
     int group = 0;
     int container = 0;
+    int parent = -1; // Index within this saved window, never a runtime tab ID.
+    bool tree_collapsed = false;
 };
 struct SavedWindow {
     std::vector<SavedTab> tabs;
@@ -73,6 +75,8 @@ struct NamedSession {
 };
 bool valid_named_session(const NamedSession &);
 void remove_container_tabs(SavedWindow &window, int container);
+void normalize_tab_tree(SavedWindow &window);
+void remap_saved_tabs(SavedWindow &window, std::span<const int> source_indices);
 class Profile : public BrowserPreferences {
   public:
     explicit Profile(std::filesystem::path directory);

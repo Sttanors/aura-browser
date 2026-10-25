@@ -13,6 +13,7 @@
 #include "core/browser/protection.hpp"
 #include "core/browser/reading_list.hpp"
 #include "core/browser/screenshot.hpp"
+#include "core/browser/tab_tree.hpp"
 #include "core/browser/updates.hpp"
 #include "core/cef/diagnostic_client.hpp"
 #include "include/cef_context_menu_handler.h"
@@ -53,6 +54,8 @@ struct Tab {
     int workspace = 0;
     int group = 0;
     int container = 0;
+    int parent = 0; // Window-local tab ID; zero is a root.
+    bool tree_collapsed = false;
     uint64_t navigation_serial = 0;
     bool sleeping = false, sleep_pending = false, media_capture = false;
     bool media_video = false, media_audio = false;
@@ -227,7 +230,7 @@ class BrowserController {
     void switch_workspace(int id);
     void remove_workspace(int id);
     void move_tab_to_workspace(int tab_id, int workspace_id);
-    void set_tab_group(int tab_id, int group_id);
+    void set_tab_group(int tab_id, int group_id, bool branch = false);
     void remove_group(int group_id);
     CefRefPtr<CefRequestContext> request_context(int container, bool private_tab = false);
     bool container_in_use(int id) const;
@@ -273,7 +276,7 @@ class BrowserController {
     void changed(bool persistent = false);
     void new_tab(std::string url = "aura://newtab", bool private_tab = false,
                  bool foreground = true, bool pinned = false, int workspace = -1, int group = -1,
-                 int container = -1);
+                 int container = -1, int parent = 0);
     void activate(int index, bool reveal_group = true);
     void close_tab(int index, bool preserve_window = false);
     std::vector<DuplicateTab> duplicate_tabs(bool include_closing = false) const;
@@ -284,6 +287,12 @@ class BrowserController {
     void show_duplicate_tab(DuplicateRef);
     void reopen();
     void move_tab(int from, int to);
+    std::vector<TreeTab> tree_nodes() const;
+    std::vector<TreeRow> tree_rows(bool hide_collapsed = true) const;
+    void normalize_tree();
+    void detach_tree_tab(int id);
+    void toggle_tree(int id);
+    void reveal_tree(int id);
     void navigate(std::string input);
     void back();
     void forward();

@@ -3,6 +3,16 @@
 namespace aura {
 namespace {
 constexpr Translation catalog[] = {
+    {"Hidden tabs: ", "Скрыто вкладок: "},
+    {"Level ", "Уровень "},
+    {"Tree tabs", "Древовидные вкладки"},
+    {"Nest tabs opened from pages. Collapsing a branch keeps its pages open.",
+     "Вкладки, открытые со страниц, становятся дочерними. Сворачивание сохраняет страницы "
+     "открытыми."},
+    {"Expand branch", "Развернуть ветку"},
+    {"Collapse branch", "Свернуть ветку"},
+    {"Detach tab", "Отделить вкладку"},
+    {"New child tab", "Новая дочерняя вкладка"},
     {"Pinned", "Закреплена"},
     {"Active download", "Идёт загрузка"},
     {"Duplicate cleanup finished. Protected or unverified tabs were kept.",

@@ -58,6 +58,8 @@ std::string tabs_json(const std::vector<std::unique_ptr<Tab>> &tabs) {
             << ",\"selection_bytes\":" << t->selected_text.size()
             << ",\"buffer_bytes\":" << t->page.view.bytes().size() + t->page.popup.bytes().size()
             << ",\"container\":" << t->container << ",\"workspace\":" << t->workspace
+            << ",\"parent\":" << t->parent
+            << ",\"tree_collapsed\":" << (t->tree_collapsed ? "true" : "false")
             << ",\"group\":" << t->group << ",\"loaded\":" << (t->page.loaded ? "true" : "false")
             << ",\"failed\":" << (t->page.failed ? "true" : "false")
             << ",\"process_ended\":" << (t->process_ended ? "true" : "false")
@@ -292,7 +294,13 @@ std::vector<int> BrowserController::visible_tabs(bool include_closed) const {
     return result;
 }
 void BrowserController::cycle_tab(int direction) {
-    const auto visible = visible_tabs();
+    auto visible = visible_tabs();
+    if (profile.tree_tabs) {
+        visible.clear();
+        for (const auto &r : tree_rows(false))
+            if (tabs[r.index]->workspace == workspace)
+                visible.push_back(r.index);
+    }
     if (visible.empty())
         return;
     const auto it = std::find(visible.begin(), visible.end(), active);
@@ -300,7 +308,13 @@ void BrowserController::cycle_tab(int direction) {
     activate(visible[(position + direction + int(visible.size())) % visible.size()]);
 }
 void BrowserController::select_visible_tab(int number) {
-    const auto visible = visible_tabs();
+    auto visible = visible_tabs();
+    if (profile.tree_tabs) {
+        visible.clear();
+        for (const auto &r : tree_rows(false))
+            if (tabs[r.index]->workspace == workspace)
+                visible.push_back(r.index);
+    }
     if (!visible.empty())
         activate(visible[number == 9 ? visible.size() - 1
                                      : std::min(size_t(number - 1), visible.size() - 1)]);
@@ -372,13 +386,11 @@ void BrowserController::start(const std::string &initial, bool private_mode, boo
             state_->pending_windows.push_back({false, saved[i], ""});
     } else if ((profile.restore || resume_once) && !profile.session.empty()) {
         state_->previous_restored = true;
-        auto saved = profile.session;
-        int selected = profile.active;
-        restoring_ = true;
-        for (auto &t : saved)
-            new_tab(t.url, false, false, t.pinned);
-        restoring_ = false;
-        activate(std::min(selected, static_cast<int>(tabs.size()) - 1));
+        SavedWindow saved{profile.session, profile.active};
+        if (!saved.tabs.empty())
+            saved.workspace =
+                saved.tabs[std::clamp(saved.active, 0, int(saved.tabs.size()) - 1)].workspace;
+        restore_window(saved);
     } else
         new_tab(profile.startup_page == "home" ? profile.home_page : "aura://newtab");
     if (!private_mode && state_->windows.size() == 1 && state_->unclean_start &&
@@ -530,6 +542,7 @@ void BrowserController::tick() {
                 if (recently_closed_.size() > 30)
                     recently_closed_.erase(recently_closed_.begin());
             }
+            detach_tree_tab(tabs[i]->id);
             tabs.erase(tabs.begin() + i);
             if (i < active)
                 --active;
@@ -666,7 +679,7 @@ void BrowserController::ensure_browser(Tab &t, const std::string &url) {
     }
 }
 void BrowserController::new_tab(std::string input, bool private_tab, bool foreground, bool pinned,
-                                int space, int group_id, int container_id) {
+                                int space, int group_id, int container_id, int parent_id) {
     if (quitting)
         return;
     private_tab = private_tab || private_window;
@@ -695,6 +708,11 @@ void BrowserController::new_tab(std::string input, bool private_tab, bool foregr
     t->page.scale = scale;
     t->private_tab = private_tab;
     t->pinned = pinned;
+    if (auto parent = tab(parent_id);
+        parent && !parent->closing && !parent->page.closed && parent->private_tab == private_tab &&
+        parent->workspace == t->workspace && parent->group == t->group &&
+        parent->container == t->container)
+        t->parent = parent_id;
     t->muted = profile.mute_new_tabs;
     t->page.url = url;
     t->page.title = tr(private_tab ? "Private tab" : "New tab");
@@ -732,6 +750,8 @@ void BrowserController::activate(int index, bool reveal_group) {
     active = index;
     wake_tab(tabs[index]->id);
     workspace = tabs[index]->workspace;
+    if (reveal_group)
+        reveal_tree(tabs[index]->id);
     if (reveal_group)
         if (auto g = profile.group(tabs[index]->group))
             g->collapsed = false;
@@ -783,19 +803,6 @@ void BrowserController::reopen() {
     new_tab(t.url, false, true, t.pinned, profile.has_workspace(t.workspace) ? t.workspace : 0,
             t.group, t.container);
     ++audit["tabs_reopened"];
-}
-void BrowserController::move_tab(int from, int to) {
-    if (from < 0 || to < 0 || from >= static_cast<int>(tabs.size()) ||
-        to >= static_cast<int>(tabs.size()) || from == to)
-        return;
-    const auto id = current() ? current()->id : 0;
-    auto item = std::move(tabs[from]);
-    tabs.erase(tabs.begin() + from);
-    tabs.insert(tabs.begin() + to, std::move(item));
-    for (std::size_t i = 0; i < tabs.size(); ++i)
-        if (tabs[i]->id == id)
-            active = i;
-    changed(true);
 }
 void BrowserController::navigate(std::string input) {
     close_extension_popup();
@@ -1184,22 +1191,43 @@ void BrowserController::restore_window(const SavedWindow &saved) {
     background_updates_ = !private_window;
     workspace = saved.workspace;
     restoring_ = true;
+    std::vector<int> ids;
     for (const auto &t : saved.tabs) {
+        const int id = next_id_;
         new_tab(t.url, false, false, t.pinned, t.workspace, t.group, t.container);
-        if (t.workspace_active && !tabs.empty())
-            workspace_selection_[t.workspace] = tabs.back()->id;
+        const auto created = tab(id);
+        ids.push_back(created ? id : 0);
+        if (created) {
+            created->tree_collapsed = t.tree_collapsed;
+            if (t.workspace_active)
+                workspace_selection_[t.workspace] = id;
+        }
     }
+    for (int i = 0; i < int(saved.tabs.size()); ++i)
+        if (auto t = tab(ids[i])) {
+            const auto parent = saved.tabs[i].parent;
+            t->parent = parent >= 0 && parent < int(ids.size()) ? ids[parent] : 0;
+        }
+    normalize_tree();
     restoring_ = false;
     if (tabs.empty())
         open_new_tab();
-    activate(std::clamp(saved.active, 0, int(tabs.size()) - 1), false);
-    if (saved.split_left >= 0 && saved.split_right >= 0 && saved.split_left != saved.split_right &&
-        saved.split_left < int(tabs.size()) && saved.split_right < int(tabs.size()) &&
-        (active == saved.split_left || active == saved.split_right) &&
-        !tabs[saved.split_left]->ntp && !tabs[saved.split_right]->ntp &&
-        tabs[saved.split_left]->workspace == workspace &&
-        tabs[saved.split_right]->workspace == workspace) {
-        split_tabs = {tabs[saved.split_left]->id, tabs[saved.split_right]->id};
+    auto restored_index = [&](int source) {
+        if (source < 0 || source >= int(ids.size()) || !ids[source])
+            return -1;
+        for (int i = 0; i < int(tabs.size()); ++i)
+            if (tabs[i]->id == ids[source])
+                return i;
+        return -1;
+    };
+    const int selected = restored_index(saved.active);
+    activate(selected < 0 ? 0 : selected, false);
+    const int left = restored_index(saved.split_left), right = restored_index(saved.split_right);
+    if (left >= 0 && right >= 0 && left != right && left < int(tabs.size()) &&
+        right < int(tabs.size()) && (active == left || active == right) && !tabs[left]->ntp &&
+        !tabs[right]->ntp && tabs[left]->workspace == workspace &&
+        tabs[right]->workspace == workspace) {
+        split_tabs = {tabs[left]->id, tabs[right]->id};
         resize_pages();
     }
 }
@@ -1302,8 +1330,9 @@ std::vector<SavedWindow> BrowserController::capture_session() const {
         const auto current = other->active >= 0 && other->active < int(other->tabs.size())
                                  ? other->tabs[other->active].get()
                                  : nullptr;
+        std::vector<int> saved_ids;
         for (const auto &t : other->tabs)
-            if (!t->private_tab && !t->closing) {
+            if (!t->private_tab && !t->closing && !t->page.closed) {
                 const auto remembered = other->workspace_selection_.find(t->workspace);
                 const bool selected =
                     t->workspace == other->workspace && current && !current->private_tab
@@ -1317,8 +1346,15 @@ std::vector<SavedWindow> BrowserController::capture_session() const {
                 if (t->id == other->split_tabs[1])
                     window.split_right = int(window.tabs.size());
                 window.tabs.push_back({restorable_url(*t), t->pinned, t->workspace, selected,
-                                       t->group, t->container});
+                                       t->group, t->container, t->parent, t->tree_collapsed});
+                saved_ids.push_back(t->id);
             }
+        if (!saved_ids.empty()) {
+            window.active = saved_ids[window.active];
+            window.split_left = window.split_left >= 0 ? saved_ids[window.split_left] : -1;
+            window.split_right = window.split_right >= 0 ? saved_ids[window.split_right] : -1;
+            remap_saved_tabs(window, saved_ids);
+        }
         if (!window.tabs.empty() && window.tabs[window.active].workspace != window.workspace) {
             auto selected =
                 std::find_if(window.tabs.begin(), window.tabs.end(),
@@ -1514,9 +1550,9 @@ void BrowserController::open_from_page(int source, std::string url, bool foregro
         return;
     const bool private_tab = t->private_tab;
     const int space = t->workspace, group = t->group, container = t->container;
-    defer([this, url = std::move(url), private_tab, foreground, space, group, container] {
+    defer([this, url = std::move(url), private_tab, foreground, space, group, container, source] {
         new_tab(url, private_tab, foreground && profile.foreground_links && space == workspace,
-                false, space, group, container);
+                false, space, group, container, source);
     });
     ++audit["page_opened_tabs"];
 }
@@ -1530,7 +1566,7 @@ Tab *BrowserController::prepare_popup(int source, int popup_id, const std::strin
     const int space = opener->workspace, group = opener->group, container = opener->container;
     new_tab("aura://newtab", private_tab,
             foreground && profile.foreground_links && space == workspace, false, space, group,
-            container);
+            container, source);
     auto target = tab(id);
     if (!target)
         return nullptr;
@@ -1850,6 +1886,9 @@ void BrowserController::move_tab_to_workspace(int tab_id, int workspace_id) {
     if (!profile.has_workspace(workspace_id) || private_window)
         return;
     if (auto t = tab(tab_id)) {
+        if (t->workspace == workspace_id)
+            return;
+        detach_tree_tab(tab_id);
         t->workspace = workspace_id;
         const auto g = profile.group(t->group);
         if (!g || g->workspace != workspace_id)
@@ -1857,14 +1896,33 @@ void BrowserController::move_tab_to_workspace(int tab_id, int workspace_id) {
         changed(true);
     }
 }
-void BrowserController::set_tab_group(int tab_id, int group_id) {
+void BrowserController::set_tab_group(int tab_id, int group_id, bool branch) {
     if (private_window)
         return;
     if (auto t = tab(tab_id)) {
         auto g = profile.group(group_id);
         if (group_id && (!g || g->workspace != t->workspace))
             return;
-        t->group = group_id;
+        if (t->group != group_id) {
+            if (branch && profile.tree_tabs) {
+                const auto rows = tree_rows(false);
+                bool inside = false;
+                int depth = 0;
+                for (const auto &r : rows) {
+                    if (tabs[r.index]->id == tab_id) {
+                        inside = true;
+                        depth = r.depth;
+                    } else if (inside && r.depth <= depth)
+                        break;
+                    if (inside)
+                        tabs[r.index]->group = group_id;
+                }
+                t->parent = 0;
+            } else {
+                detach_tree_tab(tab_id);
+                t->group = group_id;
+            }
+        }
         if (g)
             g->collapsed = false;
         changed(true);

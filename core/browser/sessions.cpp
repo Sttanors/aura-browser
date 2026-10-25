@@ -67,6 +67,11 @@ bool valid_named_session(const NamedSession &s) {
                 t.container > 1000000 ||
                 (t.group && (!groups.contains(t.group) || group_spaces[t.group] != t.workspace)))
                 return false;
+        auto tree = w;
+        normalize_tab_tree(tree);
+        for (size_t i = 0; i < w.tabs.size(); ++i)
+            if (tree.tabs[i].parent != w.tabs[i].parent)
+                return false;
         if (w.tabs[w.active].workspace != w.workspace)
             return false;
         const int a = w.split_left, b = w.split_right;
