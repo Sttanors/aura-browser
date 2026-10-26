@@ -35,7 +35,8 @@ class BrowserUi {
         TaskManager,
         ReadingListPanel,
         SearchProviders,
-        DuplicateTabs
+        DuplicateTabs,
+        SpellingDictionary
     };
     BrowserUi(BrowserController &owner, const std::filesystem::path &font);
     ~BrowserUi();
@@ -94,6 +95,8 @@ class BrowserUi {
     std::string bookmarks_report() const;
     void open_duplicates();
     std::string duplicates_report() const;
+    void open_spelling_dictionary();
+    std::string spelling_report() const;
     void open_search_providers();
     std::string search_providers_report() const;
     void open_reading_list();
@@ -155,6 +158,14 @@ class BrowserUi {
     void search_providers_pointer(Rect, int, int);
     void save_search_provider();
     std::array<Rect, 3> provider_buttons(Rect, int) const;
+    void draw_spelling(SkCanvas &, Rect);
+    void spelling_pointer(Rect, int, int);
+    void save_spelling_word();
+    std::vector<std::string> spelling_results() const;
+    TextEditor spelling_input_;
+    bool spelling_focus_ = false, spelling_private_ = false;
+    int spelling_scroll_ = 0;
+    std::string spelling_error_;
     TextEditor reading_search_;
     bool reading_focus_ = false;
     int reading_scroll_ = 0;

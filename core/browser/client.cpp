@@ -497,17 +497,44 @@ void BrowserClient::OnBeforeContextMenu(CefRefPtr<CefBrowser> b, CefRefPtr<CefFr
                                         CefRefPtr<CefContextMenuParams> p,
                                         CefRefPtr<CefMenuModel> model) {
     model->Clear();
-    if (!p->GetLinkUrl().empty()) {
+    const auto tab = controller().tab(id_);
+    spelling_menu_navigation_ = tab ? tab->navigation_serial : 0;
+    // CEF 156 can report IsSpellCheckEnabled() == false even for a native
+    // spelling marker with suggestions. The marker itself is authoritative;
+    // password fields and spellcheck=false elements do not produce one.
+    if (controller().profile.spellcheck && p->IsEditable()) {
+        if (!p->GetMisspelledWord().empty()) {
+            std::vector<CefString> suggestions;
+            p->GetDictionarySuggestions(suggestions);
+            for (size_t i = 0; i < std::min<size_t>(5, suggestions.size()); ++i)
+                model->AddItem(MENU_ID_SPELLCHECK_SUGGESTION_0 + int(i), suggestions[i]);
+            if (suggestions.empty()) {
+                model->AddItem(MENU_ID_NO_SPELLING_SUGGESTIONS,
+                               controller().tr("No spelling suggestions"));
+                model->SetEnabled(MENU_ID_NO_SPELLING_SUGGESTIONS, false);
+            }
+            model->AddItem(MENU_ID_ADD_TO_DICTIONARY,
+                           controller().tr(tab && tab->private_tab
+                                               ? "Remember for this private session"
+                                               : "Add word to dictionary"));
+            model->SetEnabled(MENU_ID_ADD_TO_DICTIONARY, tab && tab->spelling_supported);
+        }
+        model->AddItem(MENU_ID_USER_FIRST + 21, controller().tr("Spelling dictionary"));
+        model->AddSeparator();
+    }
+    if (!p->IsEditable() && !p->GetLinkUrl().empty()) {
         model->AddItem(MENU_ID_USER_FIRST, controller().tr("Open link in new tab"));
         model->AddItem(MENU_ID_USER_FIRST + 1, controller().tr("Copy link address"));
         model->AddSeparator();
     }
-    model->AddItem(MENU_ID_BACK, controller().tr("Back"));
-    model->SetEnabled(MENU_ID_BACK, b->CanGoBack());
-    model->AddItem(MENU_ID_FORWARD, controller().tr("Forward"));
-    model->SetEnabled(MENU_ID_FORWARD, b->CanGoForward());
-    model->AddItem(MENU_ID_RELOAD, controller().tr("Reload"));
-    model->AddSeparator();
+    if (!p->IsEditable()) {
+        model->AddItem(MENU_ID_BACK, controller().tr("Back"));
+        model->SetEnabled(MENU_ID_BACK, b->CanGoBack());
+        model->AddItem(MENU_ID_FORWARD, controller().tr("Forward"));
+        model->SetEnabled(MENU_ID_FORWARD, b->CanGoForward());
+        model->AddItem(MENU_ID_RELOAD, controller().tr("Reload"));
+        model->AddSeparator();
+    }
     if (p->IsEditable()) {
         model->AddItem(MENU_ID_UNDO, controller().tr("Undo"));
         model->AddItem(MENU_ID_CUT, controller().tr("Cut"));
@@ -545,6 +572,30 @@ bool BrowserClient::RunContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
 bool BrowserClient::OnContextMenuCommand(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
                                          CefRefPtr<CefContextMenuParams> p, int command,
                                          EventFlags) {
+    if (command == MENU_ID_USER_FIRST + 21) {
+        controller().ui->open_spelling_dictionary();
+        return true;
+    }
+    if (command == MENU_ID_ADD_TO_DICTIONARY || (command >= MENU_ID_SPELLCHECK_SUGGESTION_0 &&
+                                                 command <= MENU_ID_SPELLCHECK_SUGGESTION_LAST)) {
+        auto t = controller().tab(id_);
+        if (!t || t->closing || t->navigation_serial != spelling_menu_navigation_ ||
+            !controller().profile.spellcheck || !p->IsEditable() || p->GetMisspelledWord().empty())
+            return true;
+        if (command == MENU_ID_ADD_TO_DICTIONARY) {
+            if (!t->spelling_supported ||
+                !controller().change_spelling_word(p->GetMisspelledWord(), true, t->private_tab))
+                controller().ui->toast(controller().tr(
+                    "Could not add this word. Check the dictionary and try again."));
+        } else {
+            std::vector<CefString> suggestions;
+            p->GetDictionarySuggestions(suggestions);
+            const auto index = size_t(command - MENU_ID_SPELLCHECK_SUGGESTION_0);
+            if (index < suggestions.size() && t->browser)
+                t->browser->GetHost()->ReplaceMisspelling(suggestions[index]);
+        }
+        return true;
+    }
     if (command == MENU_ID_COPY) {
         if (auto tab = controller().tab(id_); tab && tab->reader_active) {
             const auto text = p->GetSelectionText().ToString();

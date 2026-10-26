@@ -86,6 +86,7 @@ class Profile : public BrowserPreferences {
     std::vector<SiteZoom> site_zooms;
     std::vector<ContainerRule> container_rules;
     std::vector<HotkeyOverride> hotkeys;
+    std::vector<std::string> spelling_words;
     std::vector<SearchProvider> search_providers;
     int default_search_provider = 0, next_search_provider = 1;
     int save_search_provider(SearchProvider provider);

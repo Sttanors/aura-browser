@@ -76,6 +76,7 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
         browser.new_window(incoming->HasSwitch("private"),
                            incoming->GetSwitchValue("url").ToString());
     };
+    browser.prepare_spelling_resources();
     CefSettings settings;
     settings.windowless_rendering_enabled = true;
     settings.external_message_pump = true;

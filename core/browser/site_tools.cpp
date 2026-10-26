@@ -28,6 +28,7 @@ std::string script(const std::filesystem::path &resources, const Profile &profil
 }
 } // namespace
 void BrowserController::configure_font_preferences(CefRefPtr<CefRequestContext> context) {
+    configure_spelling(context);
     // Aura owns the vault; do not offer a second Chromium save/sign-in path.
     for (const char *name : {"credentials_enable_service", "credentials_enable_autosignin"}) {
         if (!context->HasPreference(name))
@@ -87,10 +88,15 @@ void BrowserController::bind_site_tool_events(int id) {
             auto c = p->GetDictionary("context");
             if (c && extensions.observe_origin(c->GetString("origin")))
                 changed();
+            if (c && c->GetString("name") == "Aura Spelling") {
+                t->spelling_contexts.insert(c->GetInt("id"));
+                update_spelling(*t, false);
+            }
             if (c && c->GetString("name") == "Aura Site Protection")
                 t->protection_contexts[c->GetInt("id")] = c->GetString("origin").ToString();
         } else if (method == "Runtime.executionContextDestroyed") {
             const int context = p->GetInt("executionContextId");
+            t->spelling_contexts.erase(context);
             t->protection_contexts.erase(context);
             if (context == t->reader_context) {
                 t->reader_active = t->reader_pending = false;
@@ -99,6 +105,8 @@ void BrowserController::bind_site_tool_events(int id) {
                 changed();
             }
         } else if (method == "Runtime.executionContextsCleared") {
+            t->spelling_contexts.clear();
+            t->spelling_supported = false;
             t->protection_contexts.clear();
             t->audio_contexts.clear();
             t->reader_active = t->reader_pending = false;
@@ -158,6 +166,7 @@ void BrowserController::setup_site_tools(int id, std::function<void()> ready) {
     t->devtools->call("WebAudio.enable");
     t->devtools->call("Runtime.enable");
     t->devtools->call("Page.enable");
+    setup_spelling(*t);
     t->devtools->call(
         "Runtime.addBinding",
         "{\"name\":\"auraProtection\",\"executionContextName\":\"Aura Site Protection\"}");

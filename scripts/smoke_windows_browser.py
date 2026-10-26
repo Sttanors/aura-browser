@@ -149,6 +149,31 @@ def main():
                 assert api['passed'],api
                 assert api['capabilities']['initial_indexeddb']==('fictional-persistent-marker' if launch else ''),api
                 wait(lambda s:any(t.get('title')=='Compatibility PASS' and not t.get('failed') for t in s.get('tabs',[])),'Native report must acknowledge compatibility page')
+                # Real native spelling markers and replacement, with bundled dictionaries.
+                assert read()['spelling_resources_ready'] and not read()['spelling']['remote']
+                spelling_url=f'http://127.0.0.1:{server.server_port}/browser/spelling.html'
+                click(480,55);type_text(spelling_url)
+                user.SendMessageW(window,0x100,13,1);user.SendMessageW(window,0x101,13,1)
+                wait(lambda s:any(t.get('title')=='Spelling ready' and t.get('spelling_supported') for t in s.get('tabs',[])),'Spelling document API must initialize')
+                click_web(52,42);type_text('helllo ')
+                wait(lambda s:any(t.get('title')=='Spelling [helllo ]' for t in s.get('tabs',[])),'Spelling fixture must receive native input')
+                def spelling_context():
+                    current=read();factor=current['interface']['applied']/100
+                    scale=factor*current['interface']['device_scale']
+                    point=round((x+52/factor)*scale)|(round((y+42/factor)*scale)<<16)
+                    user.SendMessageW(window,0x204,2,point);user.SendMessageW(window,0x205,0,point)
+                # The marker arrives asynchronously after the input event.
+                deadline=time.monotonic()+30
+                while True:
+                    spelling_context();time.sleep(.2)
+                    suggestions=read().get('menu_ui') or []
+                    correction=next((i for i in suggestions if 200<=i['id']<=204 and i['label'].lower()=='hello'),None)
+                    if correction:break
+                    user.SendMessageW(window,0x100,27,1);user.SendMessageW(window,0x101,27,1)
+                    if time.monotonic()>deadline:raise RuntimeError('Native English spelling suggestions missing on Windows')
+                    time.sleep(.3)
+                rect=correction['bounds'];click(rect[0]+rect[2]/2,rect[1]+rect[3]/2)
+                wait(lambda s:any(t.get('title')=='Spelling [hello ]' for t in s.get('tabs',[])),'Native spelling replacement must update the field')
                 popup_url=f'http://127.0.0.1:{server.server_port}/browser/popup-parent.html'
                 click(480,55);type_text(popup_url)
                 user.SendMessageW(window,0x100,13,1);user.SendMessageW(window,0x101,13,1)

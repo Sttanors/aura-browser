@@ -6,6 +6,7 @@
 #include "common/platform.hpp"
 #include "common/text.hpp"
 #include "common/update_key.hpp"
+#include "core/browser/spelling.hpp"
 #include "core/browser/translation.hpp"
 #include "include/cef_frame.h"
 #include "include/core/SkBitmap.h"
@@ -379,28 +380,29 @@ Rect BrowserUi::address_bounds() const {
 }
 Rect BrowserUi::panel_bounds() const {
     const auto r = web_bounds();
-    const int w = std::min(panel_ == Settings           ? 1000
-                           : panel_ == Extensions       ? 900
-                           : panel_ == Shortcuts        ? 900
-                           : panel_ == Passwords        ? 900
-                           : panel_ == Import           ? 900
-                           : panel_ == Groups           ? 900
-                           : panel_ == Containers       ? 900
-                           : panel_ == Commands         ? 900
-                           : panel_ == Hotkeys          ? 900
-                           : panel_ == DuplicateTabs    ? 900
-                           : panel_ == SearchProviders  ? 900
-                           : panel_ == ReadingListPanel ? 900
-                           : panel_ == TaskManager      ? 900
-                           : panel_ == Screenshot       ? 900
-                           : panel_ == Sessions         ? 900
-                           : panel_ == Bookmarks        ? 900
-                           : panel_ == SiteData         ? 900
-                           : panel_ == Permissions      ? 900
-                           : panel_ == Translation      ? 900
-                           : panel_ == Profiles         ? 900
-                           : panel_ == Filters          ? 900
-                                                        : 660,
+    const int w = std::min(panel_ == Settings             ? 1000
+                           : panel_ == Extensions         ? 900
+                           : panel_ == Shortcuts          ? 900
+                           : panel_ == Passwords          ? 900
+                           : panel_ == Import             ? 900
+                           : panel_ == Groups             ? 900
+                           : panel_ == Containers         ? 900
+                           : panel_ == Commands           ? 900
+                           : panel_ == Hotkeys            ? 900
+                           : panel_ == DuplicateTabs      ? 900
+                           : panel_ == SpellingDictionary ? 900
+                           : panel_ == SearchProviders    ? 900
+                           : panel_ == ReadingListPanel   ? 900
+                           : panel_ == TaskManager        ? 900
+                           : panel_ == Screenshot         ? 900
+                           : panel_ == Sessions           ? 900
+                           : panel_ == Bookmarks          ? 900
+                           : panel_ == SiteData           ? 900
+                           : panel_ == Permissions        ? 900
+                           : panel_ == Translation        ? 900
+                           : panel_ == Profiles           ? 900
+                           : panel_ == Filters            ? 900
+                                                          : 660,
                            r.width - 24);
     const int h = std::min(
         panel_ == Settings     ? 760
@@ -418,11 +420,12 @@ Rect BrowserUi::panel_bounds() const {
                          512, 620)
         : panel_ == Hotkeys
             ? std::clamp(280 + int(std::min<size_t>(7, hotkey_results().size())) * 56, 392, 700)
-        : panel_ == DuplicateTabs    ? 700
-        : panel_ == SearchProviders  ? 700
-        : panel_ == ReadingListPanel ? 700
-        : panel_ == TaskManager      ? 700
-        : panel_ == Screenshot       ? 520
+        : panel_ == DuplicateTabs      ? 700
+        : panel_ == SpellingDictionary ? 620
+        : panel_ == SearchProviders    ? 700
+        : panel_ == ReadingListPanel   ? 700
+        : panel_ == TaskManager        ? 700
+        : panel_ == Screenshot         ? 520
         : panel_ == Sessions
             ? std::clamp(268 + int(app_.profile.named_sessions.size()) * 90, 390, 700)
         : panel_ == Permissions ? 700
@@ -934,7 +937,8 @@ void BrowserUi::draw(SkCanvas &c) {
             app_.tr("Task manager"),
             app_.tr("Read later"),
             app_.tr("Search engines"),
-            app_.tr("Duplicate tabs")};
+            app_.tr("Duplicate tabs"),
+            app_.tr(spelling_private_ ? "Private session dictionary" : "Spelling dictionary")};
         label(c, medium_, titles[panel_], r.x + 28, r.y + 47, 23, ink);
         if (panel_ == Bookmarks || panel_ == Settings || panel_ == Groups) {
             Rect button{r.x + r.width - 220, r.y + 21, 160, 32};
@@ -1100,6 +1104,8 @@ void BrowserUi::draw(SkCanvas &c) {
             draw_hotkeys(c, r);
         if (panel_ == DuplicateTabs)
             draw_duplicates(c, r);
+        if (panel_ == SpellingDictionary)
+            draw_spelling(c, r);
         if (panel_ == SearchProviders)
             draw_search_providers(c, r);
         if (panel_ == ReadingListPanel)
@@ -2292,6 +2298,8 @@ std::vector<BrowserUi::SettingsRow> BrowserUi::settings_rows(Rect panel) const {
     const struct {
         const char *id, *section, *title, *description;
     } actions[] = {
+        {"spelling_dictionary", "Webpages", "Spelling dictionary",
+         "Add or remove words. Private additions last for the private session."},
         {"passwords", "Data", "Passwords", "Manage saved logins and encrypted transfer files."},
         {"import", "Data", "Import browser data",
          "Preview bookmarks and history from Firefox, Chrome or an HTML export."},
@@ -2594,7 +2602,9 @@ void BrowserUi::settings_pointer(Rect r, int x, int y) {
         const auto spec = row.spec;
         if (!spec) {
             if (inside({b.x, b.y + 66, std::min(300, b.width), 32}, x, y)) {
-                if (row.action == "shortcuts")
+                if (row.action == "spelling_dictionary")
+                    open_spelling_dictionary();
+                else if (row.action == "shortcuts")
                     open_shortcuts();
                 else if (row.action == "updates")
                     panel(Updates);
@@ -2726,6 +2736,7 @@ void BrowserUi::focus_address(bool select) {
     session_input_focus_ = false;
     provider_focus_ = -1;
     reading_focus_ = false;
+    spelling_focus_ = false;
     data_search_focus_ = false;
     clear_password_fields();
     app_.close_extension_popup();
@@ -2749,6 +2760,10 @@ void BrowserUi::toast(std::string message) {
     app_.changed();
 }
 void BrowserUi::panel(Panel value) {
+    if (value != SpellingDictionary) {
+        spelling_input_.set("");
+        spelling_error_.clear();
+    }
     if (panel_ == TaskManager && value != TaskManager) {
         const auto &windows = app_.state()->windows;
         if (std::none_of(windows.begin(), windows.end(), [&](auto *w) {
@@ -2763,6 +2778,7 @@ void BrowserUi::panel(Panel value) {
         app_.cancel_screenshot();
     provider_focus_ = -1;
     reading_focus_ = false;
+    spelling_focus_ = false;
     if (value != Sessions)
         session_input_focus_ = false;
     hotkey_search_focus_ = false;
@@ -2823,6 +2839,8 @@ void BrowserUi::commit_address() {
     app_.navigate(value);
 }
 void BrowserUi::dismiss() {
+    spelling_input_.set("");
+    spelling_error_.clear();
     if (panel_ == TaskManager)
         panel(None);
     hotkey_recording_.clear();
@@ -2831,6 +2849,7 @@ void BrowserUi::dismiss() {
     session_input_focus_ = false;
     provider_focus_ = -1;
     reading_focus_ = false;
+    spelling_focus_ = false;
     data_search_focus_ = false;
     clear_password_fields();
     editing = false;
@@ -2875,6 +2894,9 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
                     (provider_focus_ == 0   ? 120u
                      : provider_focus_ == 1 ? 16u
                                             : 4096u))
+                live = target;
+            if (panel_ == SpellingDictionary && spelling_focus_ && target == &spelling_input_ &&
+                text.size() + target->value.size() - target->selected().size() <= 99)
                 live = target;
             if (panel_ == ReadingListPanel && reading_focus_ && target == &reading_search_)
                 live = &reading_search_;
@@ -3255,6 +3277,7 @@ bool BrowserUi::key_default(const CefKeyEvent &key) {
         session_input_focus_ = false;
         provider_focus_ = -1;
         reading_focus_ = false;
+        spelling_focus_ = false;
         hotkey_search_focus_ = false;
         if (auto tab = app_.current(); tab && tab->browser)
             tab->browser->GetHost()->SetFocus(false);
@@ -3275,7 +3298,7 @@ bool BrowserUi::key_default(const CefKeyEvent &key) {
         password_focus_ < 0 && !workspace_input_focus_ && !group_input_focus_ &&
         !container_input_focus_ && !profile_input_focus_ && !permissions_search_focus_ &&
         !data_search_focus_ && bookmark_focus_ < 0 && !session_input_focus_ && !reading_focus_ &&
-        !hotkey_search_focus_ && provider_focus_ < 0 && !editing) {
+        !hotkey_search_focus_ && provider_focus_ < 0 && !spelling_focus_ && !editing) {
         const auto r = focus_targets_[keyboard_focus_];
         const int previous = keyboard_focus_;
         const auto previous_panel = panel_;
@@ -3393,6 +3416,34 @@ bool BrowserUi::key_default(const CefKeyEvent &key) {
                            : code == 0x23 ? maximum
                                           : duplicate_scroll_ + (code == 0x21 ? -cap : cap),
                            0, maximum);
+            app_.changed();
+            return true;
+        }
+        if (panel_ == SpellingDictionary && spelling_focus_ &&
+            (!ctrl || (code != 'L' && code != 'T' && code != 'W' && code != 'Q' && code != 'N'))) {
+            if (code == 0x1B) {
+                dismiss();
+                return true;
+            }
+            if (code == 0x0D) {
+                save_spelling_word();
+                return true;
+            }
+            editor_key(spelling_input_, key);
+            spelling_scroll_ = 0;
+            spelling_error_.clear();
+            app_.changed();
+            return code < 0x20 || ctrl || (code >= 0x21 && code <= 0x2E);
+        }
+        if (panel_ == SpellingDictionary &&
+            (code == 0x21 || code == 0x22 || code == 0x24 || code == 0x23)) {
+            const int cap = std::max(1, (panel_bounds().height - 252) / 40),
+                      max = std::max(0, int(spelling_results().size()) - cap);
+            spelling_scroll_ =
+                std::clamp(code == 0x24   ? 0
+                           : code == 0x23 ? max
+                                          : spelling_scroll_ + (code == 0x21 ? -cap : cap),
+                           0, max);
             app_.changed();
             return true;
         }
@@ -4188,6 +4239,11 @@ void BrowserUi::text(const std::string &value) {
         if (hotkey_search_.value.size() + clean.size() <= 512)
             hotkey_search_.insert(clean);
         hotkey_scroll_ = 0;
+    } else if (panel_ == SpellingDictionary && spelling_focus_) {
+        if (spelling_input_.value.size() - spelling_input_.selected().size() + clean.size() <= 99)
+            spelling_input_.insert(clean);
+        spelling_scroll_ = 0;
+        spelling_error_.clear();
     } else if (panel_ == SearchProviders && provider_focus_ >= 0) {
         auto &field = provider_fields_[provider_focus_];
         if (field.value.size() - field.selected().size() + clean.size() <=
@@ -4275,6 +4331,11 @@ void BrowserUi::text(const std::string &value) {
     app_.changed();
 }
 bool BrowserUi::tick() {
+    if (panel_ == SpellingDictionary && spelling_private_ && !app_.private_window &&
+        (!app_.current() || !app_.current()->private_tab)) {
+        panel(None);
+        return true;
+    }
     if (strip_hint_id_ && !strip_hint_ready_ &&
         std::chrono::steady_clock::now() >= strip_hint_at_) {
         strip_hint_ready_ = true;
@@ -4520,6 +4581,13 @@ void BrowserUi::pointer(const PointerInput &input) {
         int cap = std::max(1, (panel_bounds().height - 200) / 88);
         provider_scroll_ = std::clamp(provider_scroll_ + (input.dy < 0 ? 1 : -1), 0,
                                       std::max(0, int(app_.profile.search_providers.size()) - cap));
+        app_.changed();
+        return;
+    }
+    if (input.kind == PointerInput::Wheel && panel_ == SpellingDictionary) {
+        int cap = std::max(1, (panel_bounds().height - 252) / 40);
+        spelling_scroll_ = std::clamp(spelling_scroll_ + (input.dy < 0 ? 1 : -1), 0,
+                                      std::max(0, int(spelling_results().size()) - cap));
         app_.changed();
         return;
     }
@@ -4833,6 +4901,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                     bookmarks_pointer(r, x, y);
             } else if (panel_ == DuplicateTabs)
                 duplicates_pointer(r, x, y);
+            else if (panel_ == SpellingDictionary)
+                spelling_pointer(r, x, y);
             else if (panel_ == SearchProviders)
                 search_providers_pointer(r, x, y);
             else if (panel_ == ReadingListPanel)
@@ -7090,6 +7160,7 @@ std::vector<BrowserUi::CommandResult> BrowserUi::command_results() const {
         {"devtools", "Developer tools", "F12", page},
         {"task_manager", "Task manager", "Shift+Esc", true},
         {"read_later", "Read later", "", true},
+        {"spelling_dictionary", "Spelling dictionary", "", true},
         {"search_providers", "Search engines", "", true},
         {"duplicates", "Duplicate tabs", "", true},
         {"tree_toggle", current && current->tree_collapsed ? "Expand branch" : "Collapse branch",
@@ -7290,6 +7361,8 @@ void BrowserUi::run_command(int index) {
                          t->container, t->id);
     } else if (id == "duplicates")
         open_duplicates();
+    else if (id == "spelling_dictionary")
+        open_spelling_dictionary();
     else if (id == "search_providers")
         open_search_providers();
     else if (id == "read_later")
@@ -9683,6 +9756,7 @@ void BrowserUi::draw_reading_list(SkCanvas &c, Rect r) {
 void BrowserUi::reading_pointer(Rect r, int x, int y) {
     provider_focus_ = -1;
     reading_focus_ = false;
+    spelling_focus_ = false;
     if (inside({r.x + 28, r.y + 66, r.width - 56, 34}, x, y)) {
         app_.save_reading_article();
         return;
@@ -10771,5 +10845,130 @@ void BrowserUi::draw_tab_drop(SkCanvas &c) {
         label(c, medium_, app_.tr("Move tab here"), hint.x + 10, hint.y + 21, 12, theme.text,
               hint.width - 20);
     }
+}
+} // namespace aura
+
+namespace aura {
+void BrowserUi::open_spelling_dictionary() {
+    panel(SpellingDictionary);
+    spelling_private_ = app_.private_window || (app_.current() && app_.current()->private_tab);
+    spelling_input_.set("");
+    spelling_error_.clear();
+    spelling_scroll_ = 0;
+    spelling_focus_ = true;
+    if (auto t = app_.current(); t && t->browser)
+        t->browser->GetHost()->SetFocus(false);
+    app_.changed();
+}
+std::vector<std::string> BrowserUi::spelling_results() const {
+    std::vector<std::string> result;
+    const auto &words =
+        spelling_private_ ? app_.state()->private_spelling_words : app_.profile.spelling_words;
+    const auto query = fold_settings(spelling_input_.value);
+    for (const auto &word : words)
+        if (fold_settings(word).find(query) != std::string::npos)
+            result.push_back(word);
+    return result;
+}
+void BrowserUi::save_spelling_word() {
+    if (app_.change_spelling_word(spelling_input_.value, true, spelling_private_)) {
+        spelling_input_.set("");
+        spelling_error_.clear();
+        spelling_scroll_ = 0;
+    } else
+        spelling_error_ = app_.tr("Use one new word, up to 99 UTF-8 bytes. Limit: 500 words.");
+    spelling_focus_ = true;
+    app_.changed();
+}
+void BrowserUi::draw_spelling(SkCanvas &c, Rect r) {
+    const auto t = interface_theme(app_.profile);
+    const auto words = spelling_results();
+    label(c, regular_,
+          app_.tr(spelling_private_
+                      ? "Private words disappear when the private session ends."
+                      : "Saved words apply to this profile. Checking stays on your device."),
+          r.x + 28, r.y + 76, 12, t.muted, r.width - 56);
+    if (!app_.state()->spelling_resources_ready)
+        label(c, medium_,
+              app_.tr("Spelling dictionaries are missing. Reinstall Aura to restore them."),
+              r.x + 28, r.y + 98, 11, t.text, r.width - 56);
+    label(c, regular_, app_.tr("Find or add a word"), r.x + 28, r.y + 122, 12, t.muted,
+          r.width - 56);
+    Rect input{r.x + 28, r.y + 134, r.width - 184, 36},
+        add{r.x + r.width - 144, r.y + 134, 116, 36};
+    focus_target(input);
+    focus_target(add);
+    fill(c, input, 8, t.background);
+    border(c, input, 8, spelling_focus_ ? t.accent : t.muted);
+    draw_editor(c, spelling_input_, {input.x + 10, input.y + 2, input.width - 20, 32}, 13,
+                spelling_focus_);
+    border(c, add, 8, t.accent);
+    centered_label(c, medium_, app_.tr("Add word"), add, 12, t.text, 8, 8);
+    if (!spelling_error_.empty())
+        label(c, regular_, spelling_error_, r.x + 28, r.y + 193, 11, t.text, r.width - 56);
+    else
+        label(
+            c, regular_,
+            app_.tr(spelling_private_
+                        ? "Saved profile words are also used; this list contains private additions."
+                        : "Enter adds a word. Select Delete to check it again."),
+            r.x + 28, r.y + 193, 11, t.muted, r.width - 56);
+    const int cap = std::max(1, (r.height - 252) / 40);
+    spelling_scroll_ = std::clamp(spelling_scroll_, 0, std::max(0, int(words.size()) - cap));
+    if (words.empty())
+        label(c, regular_, app_.tr("No matching words. Add a word above."), r.x + 28, r.y + 236, 13,
+              t.muted, r.width - 56);
+    for (int i = spelling_scroll_; i < int(words.size()) && i < spelling_scroll_ + cap; ++i) {
+        const int y = r.y + 212 + (i - spelling_scroll_) * 40;
+        label(c, medium_, words[i], r.x + 28, y + 22, 13, t.text, r.width - 160);
+        Rect remove{r.x + r.width - 116, y, 88, 32};
+        focus_target(remove);
+        if (inside(remove, hover_x_, hover_y_))
+            fill(c, remove, 6, SkColorSetA(t.accent, 24));
+        centered_label(c, regular_, app_.tr("Delete"), remove, 12, t.muted, 8, 8);
+    }
+    label(c, regular_, std::to_string(words.size()) + " / " + std::to_string(spelling_word_limit),
+          r.x + 28, r.y + r.height - 18, 11, t.muted, r.width - 56);
+}
+void BrowserUi::spelling_pointer(Rect r, int x, int y) {
+    spelling_focus_ = inside({r.x + 28, r.y + 134, r.width - 184, 36}, x, y);
+    if (spelling_focus_) {
+        spelling_input_.select_all();
+        return;
+    }
+    if (inside({r.x + r.width - 144, r.y + 134, 116, 36}, x, y)) {
+        save_spelling_word();
+        return;
+    }
+    const auto words = spelling_results();
+    const int cap = std::max(1, (r.height - 252) / 40), i = spelling_scroll_ + (y - r.y - 212) / 40;
+    if (y >= r.y + 212 && i >= spelling_scroll_ && i < int(words.size()) &&
+        i < spelling_scroll_ + cap &&
+        inside({r.x + r.width - 116, r.y + 212 + (i - spelling_scroll_) * 40, 88, 32}, x, y))
+        app_.change_spelling_word(words[i], false, spelling_private_);
+}
+std::string BrowserUi::spelling_report() const {
+    if (panel_ != SpellingDictionary)
+        return "null";
+    const auto r = panel_bounds();
+    const auto words = spelling_results();
+    auto rect = [](Rect b) {
+        return "[" + std::to_string(b.x) + "," + std::to_string(b.y) + "," +
+               std::to_string(b.width) + "," + std::to_string(b.height) + "]";
+    };
+    std::string out =
+        "{\"private\":" + std::string(spelling_private_ ? "true" : "false") +
+        ",\"query\":" + json_quote(spelling_input_.value) +
+        ",\"error\":" + json_quote(spelling_error_) + ",\"count\":" + std::to_string(words.size()) +
+        ",\"input\":" + rect({r.x + 28, r.y + 134, r.width - 184, 36}) +
+        ",\"add\":" + rect({r.x + r.width - 144, r.y + 134, 116, 36}) + ",\"items\":[";
+    const int cap = std::max(1, (r.height - 252) / 40);
+    for (int i = spelling_scroll_; i < int(words.size()) && i < spelling_scroll_ + cap; ++i) {
+        if (i != spelling_scroll_)
+            out += ',';
+        out += "{\"word\":" + json_quote(words[i]) + ",\"delete\":" +
+               rect({r.x + r.width - 116, r.y + 212 + (i - spelling_scroll_) * 40, 88, 32}) + "}";
+    }
+    return out + "]}";
 }
 } // namespace aura

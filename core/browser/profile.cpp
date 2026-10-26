@@ -3,6 +3,7 @@
 #include "common/platform.hpp"
 #include "common/text.hpp"
 #include "core/browser/i18n.hpp"
+#include "core/browser/spelling.hpp"
 #include <algorithm>
 #include <cctype>
 #include <charconv>
@@ -214,6 +215,13 @@ void Profile::load() {
             }
         }
     }
+    spelling_words.clear();
+    if (auto words = table["spelling_words"].as_array())
+        for (const auto &word : *words) {
+            if (spelling_words.size() >= spelling_word_limit)
+                break;
+            add_spelling_word(spelling_words, word.value_or(std::string{}));
+        }
     search_providers.clear();
     next_search_provider = 1;
     default_search_provider = 0;
@@ -655,6 +663,10 @@ void Profile::load() {
 void Profile::save() const {
     toml::table root;
     root.insert("schema", 18);
+    toml::array words;
+    for (const auto &word : spelling_words)
+        words.push_back(word);
+    root.insert("spelling_words", std::move(words));
     toml::array providers;
     for (const auto &p : search_providers)
         providers.push_back(

@@ -1,0 +1,46 @@
+{
+  "repository": "https://chromium.googlesource.com/chromium/deps/hunspell_dictionaries/",
+  "revision": "eb106bd524eea61487644fffeec0d229fa41791a",
+  "files": {
+    "en-US-10-2.bdic": {
+      "sha256": "b0d80e6b6c5491879365e176ecbd98074602a663429bcfcfb0a5a8375c051f13",
+      "bytes": 451982
+    },
+    "ru-RU-3-0.bdic": {
+      "sha256": "92dcc64fb0b0c065b443abf9de6fb58116b2a64c49427d3715fa7536ad1c53b8",
+      "bytes": 2309618
+    },
+    "README_en_US.txt": {
+      "sha256": "168b4c01cb841f766a72f310b065c04d09cff46376c37a81d799593ce751c371",
+      "bytes": 15732
+    },
+    "README_ru_RU.txt": {
+      "sha256": "ab0a15a2977d17936f8361c0644834aaa286aa0f76ff4a707e9435212b1387b2",
+      "bytes": 12070
+    },
+    "LICENSE": {
+      "sha256": "d63c6240d6f6330a025aade63d317d7ff04f95fc3325fe6aea3848ca452f64ea",
+      "bytes": 108158
+    },
+    "COPYING": {
+      "sha256": "cde91164e09e33e94e1db4529aa77f89bc0c392b1ed138d689c66dfbd11d9701",
+      "bytes": 108204
+    },
+    "COPYING.MPL": {
+      "sha256": "53692a2ed6c6a2c6ec9b32dd0b820dfae91e0a1fcdf625ca9ed0bdf8705fcc4f",
+      "bytes": 25755
+    },
+    "COPYING.LGPL": {
+      "sha256": "5bbcbb737e60fe9deba08ecbd00920cfcc3403ba2e534c64fdeea49d6bb87509",
+      "bytes": 26532
+    },
+    "COPYING.GPL3": {
+      "sha256": "0ae0485a5bd37a63e63603596417e4eb0e653334fa6c7f932ca3a0e85d4af227",
+      "bytes": 35148
+    },
+    "COPYING.MIT": {
+      "sha256": "379ddd904c597d64e11a88bba68663f59501c9fa59e8124c0f4f32a67a5dc77a",
+      "bytes": 1736
+    }
+  }
+}

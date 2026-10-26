@@ -5,6 +5,16 @@
 namespace aura {
 std::span<const SettingSpec> settings_catalog() {
     static const std::vector<SettingSpec> catalog = {
+        {"spellcheck", "Webpages", "Check spelling",
+         "Underline misspelled words locally. No text is sent to a spelling service.",
+         &BrowserPreferences::spellcheck},
+        {"spellcheck_languages",
+         "Webpages",
+         "Spelling languages",
+         "Use the bundled Russian and English dictionaries.",
+         &BrowserPreferences::spellcheck_languages,
+         SettingKind::Choice,
+         {{"both", "Russian and English"}, {"ru", "Russian"}, {"en", "English"}}},
         {"remember_site_zoom", "Webpages", "Remember zoom for each site",
          "Keep zoom per host and container. Ctrl 0 resets this site. Private values stay in "
          "memory.",

@@ -85,6 +85,10 @@ struct Tab {
     CefRefPtr<DevToolsSession> devtools;
     std::map<int, std::string> protection_contexts;
     std::string protection_script;
+    std::set<int> spelling_contexts;
+    std::string spelling_script;
+    bool spelling_supported = false;
+    uint64_t spelling_generation = 0;
 };
 struct ExtensionPopup {
     DiagnosticState page;
@@ -158,6 +162,8 @@ struct BrowserState {
     Profile profile;
     DuplicateMerge duplicate_merge;
     TabDrop tab_drop;
+    std::vector<std::string> private_spelling_words;
+    bool spelling_resources_ready = false;
     ReadingList reading_list;
     std::vector<Download> downloads;
     std::vector<std::filesystem::path> download_paths;
@@ -365,6 +371,13 @@ class BrowserController {
     void open_directory(const std::filesystem::path &directory);
     std::string tr(std::string_view english) const;
     void apply_settings(bool update_zoom = false, bool propagate = true);
+    std::string spelling_status() const;
+    void prepare_spelling_resources();
+    void configure_spelling(CefRefPtr<CefRequestContext> context);
+    void setup_spelling(Tab &);
+    void update_spelling(Tab &, bool future = true);
+    std::vector<std::string> spelling_words(bool private_mode) const;
+    bool change_spelling_word(const std::string &word, bool add, bool private_mode);
     void configure_font_preferences(CefRefPtr<CefRequestContext> context);
     void setup_site_tools(int id, std::function<void()> ready);
     void update_site_tools(Tab &tab);

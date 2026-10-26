@@ -17,6 +17,8 @@ struct BrowserPreferences {
     bool ntp_logo = true, ntp_subtitle_visible = true, ntp_link_icons = true;
     int ui_zoom = 100;
     bool remember_site_zoom = true;
+    bool spellcheck = true;
+    std::string spellcheck_languages = "both";
     bool tree_tabs = true;
     std::string tab_layout = "vertical";
     int tab_sleep_minutes = 0;

@@ -16,6 +16,11 @@ void DiagnosticClient::OnRenderProcessTerminated(CefRefPtr<CefBrowser>, Terminat
 void DiagnosticApp::OnBeforeCommandLineProcessing(const CefString& process_type,
                                                  CefRefPtr<CefCommandLine> command) {
     if (!process_type.empty()) return;
+    auto blink_features = command->GetSwitchValue("enable-blink-features").ToString();
+    if (!blink_features.empty())
+        blink_features += ",";
+    command->AppendSwitchWithValue("enable-blink-features",
+                                   blink_features + "SpellCheckCustomDictionaryAPI");
 #ifndef _WIN32
     command->AppendSwitchWithValue("ozone-platform", capture_ ? "headless" : "x11");
 #endif

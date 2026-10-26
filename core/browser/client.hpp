@@ -99,6 +99,7 @@ class BrowserClient final : public DiagnosticClient,
     BrowserController *owner_;
     BrowserController &controller() const { return *owner_; }
     int id_;
+    uint64_t spelling_menu_navigation_ = 0;
     std::shared_ptr<RequestPolicy> policy_;
     IMPLEMENT_REFCOUNTING(BrowserClient);
 };

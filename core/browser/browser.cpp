@@ -57,6 +57,7 @@ std::string tabs_json(const std::vector<std::unique_ptr<Tab>> &tabs) {
             << ",\"reader_ui\":" << t->reader_ui
             << ",\"selection_bytes\":" << t->selected_text.size()
             << ",\"buffer_bytes\":" << t->page.view.bytes().size() + t->page.popup.bytes().size()
+            << ",\"spelling_supported\":" << (t->spelling_supported ? "true" : "false")
             << ",\"cef_browser_id\":" << (t->browser ? t->browser->GetIdentifier() : 0)
             << ",\"container\":" << t->container << ",\"workspace\":" << t->workspace
             << ",\"parent\":" << t->parent
@@ -249,6 +250,7 @@ void BrowserController::apply_settings(bool update_zoom, bool propagate) {
         if (t->sleeping && site_exception(t->page.url, profile.tab_sleep_exceptions))
             wake_tab(t->id);
         update_site_tools(*t);
+        update_spelling(*t);
         if (t->browser && (t->private_tab || t->container))
             configure_font_preferences(t->browser->GetHost()->GetRequestContext());
         if (t->browser &&
@@ -577,13 +579,15 @@ void BrowserController::tick() {
                                                                            : old_position)]);
     } else if (!quitting && current() && current()->id != old_active_id)
         activate(active);
-    if (private_context_) {
+    if (private_context_ || !state_->private_spelling_words.empty()) {
         bool private_alive = false;
         for (const auto *other : state_->windows)
             for (const auto &t : other->tabs)
                 private_alive = private_alive || (t->private_tab && !t->page.closed);
-        if (!private_alive)
+        if (!private_alive) {
             private_context_ = nullptr;
+            state_->private_spelling_words.clear();
+        }
     }
     if (ui->tick())
         changed();
@@ -1399,8 +1403,10 @@ void BrowserController::save_session() {
 std::string BrowserController::report() const {
     std::ostringstream out;
     out << "{\"product\":\"Aura\",\"pid\":" << process_id() << ",\"window\":" << window->native_id()
-        << ",\"window_uid\":" << window_uid << ",\"tab_drop_target\":" << state_->tab_drop.target
-        << ",\"cef_created\":" << created_ << ",\"cef_closed\":" << closed_ << ",\"compositor\":\""
+        << ",\"window_uid\":" << window_uid
+        << ",\"spelling_resources_ready\":" << (state_->spelling_resources_ready ? "true" : "false")
+        << ",\"tab_drop_target\":" << state_->tab_drop.target << ",\"cef_created\":" << created_
+        << ",\"cef_closed\":" << closed_ << ",\"compositor\":\""
         << json_escape(window->compositor()) << "\",\"renderer\":\""
         << json_escape(window->renderer())
         << "\",\"version\":" << json_quote(std::string(browser_version))
@@ -1418,7 +1424,9 @@ std::string BrowserController::report() const {
         << ",\"blocked_requests\":" << request_policy->protection->blocked.load()
         << ",\"rewritten_requests\":" << request_policy->protection->rewritten_requests.load()
         << ",\"adblock_ready\":" << (request_policy->protection->ready() ? "true" : "false")
-        << ",\"extensions\":" << extensions.report() << ",\"filters_ui\":" << ui->filters_report()
+        << ",\"spelling\":" << spelling_status() << ",\"extensions\":" << extensions.report()
+        << ",\"spelling_ui\":" << ui->spelling_report()
+        << ",\"filters_ui\":" << ui->filters_report()
         << ",\"workspaces_ui\":" << ui->workspaces_report()
         << ",\"groups_ui\":" << ui->groups_report() << ",\"sidebar\":" << ui->sidebar_report()
         << ",\"tab_strip\":" << ui->tab_strip_report()
