@@ -50,6 +50,8 @@ class BrowserUi {
     bool key_default(const CefKeyEvent &event);
     void open_hotkeys();
     std::string hotkeys_report() const;
+    void composition(const std::string &, int, int);
+    void commit_composition(const std::string &);
     void text(const std::string &value);
     bool tick();
     void focus_address(bool select = true);
@@ -136,6 +138,8 @@ class BrowserUi {
   private:
     void draw_diagnostics(SkCanvas &, Rect);
     void diagnostics_pointer(Rect, int, int);
+    std::string preedit_;
+    int preedit_browser_ = 0;
     BrowserController &app_;
     Rect screenshot_area_, screenshot_region_;
     bool screenshot_drag_ = false, screenshot_cancel_focus_ = false;

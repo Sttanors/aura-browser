@@ -6,6 +6,7 @@
 #include "common/platform.hpp"
 #include "common/text.hpp"
 #include "common/update_key.hpp"
+#include "core/browser/client.hpp"
 #include "core/browser/permissions.hpp"
 #include "core/browser/spelling.hpp"
 #include "core/browser/translation.hpp"
@@ -512,6 +513,14 @@ void BrowserUi::draw_editor(SkCanvas &c, const TextEditor &e, Rect r, float size
         visible.caret = std::clamp(e.caret, begin, end) - begin;
         visible.anchor = std::clamp(e.anchor, begin, end) - begin;
         draw_editor(c, visible, r, size, active);
+        return;
+    }
+    if (active && !preedit_.empty() && (&e == &address || &e == &find)) {
+        auto draft = e;
+        draft.insert(preedit_);
+        auto composing = std::move(preedit_);
+        draw_editor(c, draft, r, size, active);
+        preedit_ = std::move(composing);
         return;
     }
     const auto &t = interface_theme(app_.profile);
@@ -1678,21 +1687,21 @@ void BrowserUi::save_export(std::string payload, const std::string &filename,
         toast(save_error_);
         return;
     }
-    std::vector<std::string> args = {"env",
-                                     "GDK_BACKEND=x11",
-                                     "GSK_RENDERER=cairo",
-                                     "GTK_USE_PORTAL=0",
-                                     "LIBGL_ALWAYS_SOFTWARE=1",
-                                     "zenity",
-                                     "--file-selection",
-                                     "--save",
-                                     "--confirm-overwrite",
-                                     "--modal",
-                                     "--title=" + app_.tr(caption),
-                                     "--file-filter=" + filter,
-                                     "--file-filter=" + app_.tr("All files") + " | *",
-                                     "--filename=" +
-                                         utf8_path(directory / path_from_utf8(filename))};
+    std::vector<std::string> args = {
+        "env",
+        app_.window->backend() == "wayland" ? "GDK_BACKEND=wayland" : "GDK_BACKEND=x11",
+        "GSK_RENDERER=cairo",
+        "GTK_USE_PORTAL=0",
+        "LIBGL_ALWAYS_SOFTWARE=1",
+        "zenity",
+        "--file-selection",
+        "--save",
+        "--confirm-overwrite",
+        "--modal",
+        "--title=" + app_.tr(caption),
+        "--file-filter=" + filter,
+        "--file-filter=" + app_.tr("All files") + " | *",
+        "--filename=" + utf8_path(directory / path_from_utf8(filename))};
     std::vector<char *> argv;
     for (auto &arg : args)
         argv.push_back(arg.data());
@@ -1778,7 +1787,7 @@ void BrowserUi::choose_file(bool for_import, bool for_filters) {
     }
     std::vector<std::string> args = {
         "env",
-        "GDK_BACKEND=x11",
+        app_.window->backend() == "wayland" ? "GDK_BACKEND=wayland" : "GDK_BACKEND=x11",
         "GSK_RENDERER=cairo",
         "GTK_USE_PORTAL=0",
         "LIBGL_ALWAYS_SOFTWARE=1",
@@ -4241,8 +4250,31 @@ bool BrowserUi::key_default(const CefKeyEvent &key) {
         return true;
     if (editing || find_open || !app_.dialogs.empty() || panel_ != None)
         return false;
-    if (auto t = app_.current(); t && t->browser && !t->ntp)
+    if (auto t = app_.current(); t && t->browser && !t->ntp) {
+        if (down && ctrl && !alt && app_.window->backend() == "wayland") {
+            if (code == 'C' || code == 'X') {
+                if (t->client)
+                    static_cast<BrowserClient *>(t->client.get())->native_copy(code == 'X');
+                return true;
+            }
+            if (code == 'V') {
+                const int id = t->id;
+                const auto navigation = t->navigation_serial;
+                std::weak_ptr<void> weak = app_.callback_lifetime;
+                app_.window->paste([this, weak, id, navigation](std::string text) {
+                    if (weak.expired() || text.empty())
+                        return;
+                    auto tab = app_.tab(id);
+                    if (tab && tab == app_.current() && tab->browser &&
+                        tab->navigation_serial == navigation && !editing && panel_ == None &&
+                        app_.dialogs.empty())
+                        tab->browser->GetHost()->ImeCommitText(text, CefRange(-1, -1), 0);
+                });
+                return true;
+            }
+        }
         t->browser->GetHost()->SendKeyEvent(key);
+    }
     return false;
 }
 void BrowserUi::text(const std::string &value) {
@@ -4570,6 +4602,8 @@ void BrowserUi::pointer(const PointerInput &input) {
     if (!web_only || (input.kind != PointerInput::Wheel && input.kind != PointerInput::Move))
         app_.changed();
     const bool down = input.kind == PointerInput::Down;
+    if (down && (preedit_browser_ || !preedit_.empty()))
+        composition("", 0, 0);
     if (down || input.kind == PointerInput::Wheel)
         keyboard_focus_ = -1;
     if (down) {
@@ -11362,5 +11396,70 @@ std::string BrowserUi::diagnostics_report() const {
            ",\"error\":" + json_quote(save_error_) +
            ",\"restart\":" + rect({r.x + 28, r.y + r.height - 130, r.width - 56, 36}) +
            ",\"save\":" + rect({r.x + 28, r.y + r.height - 84, r.width - 56, 36}) + "}";
+}
+} // namespace aura
+
+namespace aura {
+namespace {
+CefRefPtr<CefBrowser> composition_target(BrowserController &app) {
+    if (auto p = app.extension_popup; p && p->browser)
+        return p->browser;
+    if (auto t = app.current(); t && t->browser && !t->ntp)
+        return t->browser;
+    return nullptr;
+}
+} // namespace
+void BrowserUi::composition(const std::string &value, int start, int length) {
+    if (value.size() > 65536)
+        return;
+    auto target = composition_target(app_);
+    if (preedit_browser_ && (!target || target->GetIdentifier() != preedit_browser_ || editing ||
+                             find_open || panel_ != None || !app_.dialogs.empty())) {
+        for (const auto &t : app_.tabs)
+            if (t->browser && t->browser->GetIdentifier() == preedit_browser_)
+                t->browser->GetHost()->ImeCancelComposition();
+        preedit_browser_ = 0;
+    }
+    if (target && !editing && !find_open && panel_ == None && app_.dialogs.empty()) {
+        if (value.empty()) {
+            if (preedit_browser_ == target->GetIdentifier())
+                target->GetHost()->ImeCancelComposition();
+            preedit_browser_ = 0;
+        } else {
+            auto utf16 = CefString(value).ToString16();
+            auto offset = [&](int count) {
+                size_t byte = 0;
+                for (int n = 0; byte < value.size() && n < count; ++n) {
+                    ++byte;
+                    while (byte < value.size() &&
+                           (static_cast<unsigned char>(value[byte]) & 0xc0) == 0x80)
+                        ++byte;
+                }
+                return int(CefString(value.substr(0, byte)).ToString16().size());
+            };
+            const int a = offset(std::max(0, start)),
+                      b = offset(std::max(0, start) + std::max(0, length));
+            CefCompositionUnderline u;
+            u.range = CefRange(0, int(utf16.size()));
+            u.color = SK_ColorBLACK;
+            u.background_color = SK_ColorTRANSPARENT;
+            u.thick = false;
+            target->GetHost()->ImeSetComposition(value, {u}, CefRange(-1, -1), CefRange(a, b));
+            preedit_browser_ = target->GetIdentifier();
+        }
+        preedit_.clear();
+    } else
+        preedit_ = value;
+    app_.changed();
+}
+void BrowserUi::commit_composition(const std::string &value) {
+    preedit_.clear();
+    auto target = composition_target(app_);
+    if (preedit_browser_ && target && target->GetIdentifier() == preedit_browser_)
+        target->GetHost()->ImeCommitText(value, CefRange(-1, -1), 0);
+    else
+        text(value);
+    preedit_browser_ = 0;
+    app_.changed();
 }
 } // namespace aura
