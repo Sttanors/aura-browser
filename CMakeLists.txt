@@ -28,7 +28,7 @@ add_custom_command(
           "${AURA_GENERATED}/aura/design_tokens.hpp"
   DEPENDS design/tokens.json scripts/generate_tokens.py VERBATIM)
 add_custom_target(aura_design_tokens DEPENDS "${AURA_GENERATED}/aura/design_tokens.hpp")
-add_library(aura_common core/browser/tab_tree.cpp core/browser/duplicate_tabs.cpp core/browser/search_providers.cpp core/browser/reading_list.cpp core/browser/process_tasks.cpp core/browser/download_hash.cpp core/browser/container_rules.cpp core/browser/site_zoom.cpp common/exports.cpp core/browser/screenshot.cpp core/browser/hotkeys.cpp core/browser/sessions.cpp core/browser/bookmarks.cpp core/browser/permissions.cpp core/browser/translation.cpp common/file_lock.cpp core/browser/profiles.cpp common/platform.cpp common/config.cpp common/paint_buffer.cpp common/pump_schedule.cpp core/browser/profile.cpp core/browser/i18n.cpp core/browser/preferences.cpp core/browser/update_policy.cpp core/browser/passwords.cpp)
+add_library(aura_common core/browser/tab_strip.cpp core/browser/tab_tree.cpp core/browser/duplicate_tabs.cpp core/browser/search_providers.cpp core/browser/reading_list.cpp core/browser/process_tasks.cpp core/browser/download_hash.cpp core/browser/container_rules.cpp core/browser/site_zoom.cpp common/exports.cpp core/browser/screenshot.cpp core/browser/hotkeys.cpp core/browser/sessions.cpp core/browser/bookmarks.cpp core/browser/permissions.cpp core/browser/translation.cpp common/file_lock.cpp core/browser/profiles.cpp common/platform.cpp common/config.cpp common/paint_buffer.cpp common/pump_schedule.cpp core/browser/profile.cpp core/browser/i18n.cpp core/browser/preferences.cpp core/browser/update_policy.cpp core/browser/passwords.cpp)
 target_include_directories(aura_common PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}" "${AURA_GENERATED}")
 target_link_libraries(aura_common PUBLIC tomlplusplus::tomlplusplus spdlog::spdlog OpenSSL::Crypto)
 add_dependencies(aura_common aura_design_tokens)
@@ -40,7 +40,7 @@ else()
 endif()
 
 if(BUILD_TESTING)
-  add_executable(aura_tests tests/common_tests.cpp tests/tab_tree_tests.cpp tests/update_tests.cpp tests/password_tests.cpp)
+  add_executable(aura_tests tests/common_tests.cpp tests/tab_tree_tests.cpp tests/tab_strip_tests.cpp tests/update_tests.cpp tests/password_tests.cpp)
   target_link_libraries(aura_tests PRIVATE aura_common GTest::gtest_main)
   target_compile_definitions(aura_tests PRIVATE AURA_TEST_PYTHON="${Python3_EXECUTABLE}")
   include(GoogleTest)

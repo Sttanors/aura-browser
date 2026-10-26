@@ -444,7 +444,8 @@ struct BrowserWindow::Impl {
                        1);
             return true;
         }
-        if (y >= 30 || x < 240)
+        if (y >= 30 ||
+            (x < width - 144 && !(callbacks.caption ? callbacks.caption(x, y) : x >= 240)))
             return false;
         if (x > width - 48) {
             if (callbacks.close)

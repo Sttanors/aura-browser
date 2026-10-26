@@ -1,6 +1,7 @@
 #pragma once
 #include "common/text_editor.hpp"
 #include "core/browser/browser.hpp"
+#include "core/browser/tab_strip.hpp"
 #include "include/core/SkFont.h"
 #include "include/core/SkTypeface.h"
 #include "ui/wallpaper.hpp"
@@ -102,6 +103,9 @@ class BrowserUi {
     void open_task_manager();
     std::string task_manager_report() const;
     std::string sidebar_report() const;
+    std::string tab_strip_report() const;
+    bool caption_hit(int x, int y) const;
+    bool sync_tab_layout();
     void passwords_locked() {
         clear_password_fields();
         password_mode_ = 0;
@@ -286,7 +290,7 @@ class BrowserUi {
     sk_sp<SkImage> web_backdrop_;
     int backdrop_x_ = 0, backdrop_y_ = 0;
     int width_ = 1360, height_ = 900, hover_x_ = -1, hover_y_ = -1, suggestion_ = -1,
-        panel_scroll_ = 0, tab_scroll_ = 0, drag_tab_ = -1, drag_y_ = 0;
+        panel_scroll_ = 0, tab_scroll_ = 0, drag_tab_ = -1, drag_y_ = 0, drag_source_ = 0;
     std::vector<Rect> focus_targets_;
     int keyboard_focus_ = -1, focus_scope_ = -1, visible_active_id_ = -1,
         visible_active_index_ = -1, visible_active_row_ = -1;
@@ -331,6 +335,19 @@ class BrowserUi {
     std::vector<Visit> suggestions() const;
     void commit_address();
     void dismiss();
+    bool horizontal_tabs() const;
+    int navigation_x() const { return horizontal_tabs() ? 56 : 260; }
+    TabStripLayout horizontal_layout() const;
+    void draw_tab_strip(SkCanvas &);
+    void draw_tab_hint(SkCanvas &);
+    int strip_hint_id_ = 0, strip_hint_visible_ = 0;
+    bool strip_hint_ready_ = false;
+    std::chrono::steady_clock::time_point strip_hint_at_{};
+    bool tab_strip_pointer(const PointerInput &);
+    void open_aura_menu(bool tools = false);
+    void open_tab_menu(int index, int x, int y);
+    int strip_scroll_ = 0, strip_active_id_ = -1, strip_active_row_ = -1, drag_x_ = 0;
+    bool strip_mode_ = false;
     Rect address_bounds() const;
     Rect panel_bounds() const;
     Rect dialog_bounds() const;

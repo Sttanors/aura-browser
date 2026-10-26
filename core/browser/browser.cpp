@@ -183,6 +183,7 @@ BrowserController::BrowserController(std::filesystem::path path, std::filesystem
         resize_extension_popup();
         resize_pages();
     };
+    hooks.caption = [this](int x, int y) { return ui->caption_hit(x, y); };
     hooks.pointer = [this](const PointerInput &p) {
         if (p.kind == PointerInput::Down)
             ++audit["native_pointer_down"];
@@ -224,6 +225,7 @@ void BrowserController::apply_settings(bool update_zoom, bool propagate) {
         for (auto *other : state_->windows)
             if (other != this && !other->quitting)
                 other->apply_settings(update_zoom, false);
+    const bool layout_changed = ui->sync_tab_layout();
     window->interface_zoom(profile.ui_zoom / 100.0);
     close_menu();
     request_policy->protection->configure(profile.adblock, profile.cosmetic_filtering,
@@ -255,8 +257,10 @@ void BrowserController::apply_settings(bool update_zoom, bool propagate) {
             apply_site_zoom(*t);
         }
     }
-    if (split_enabled())
+    if (layout_changed || split_enabled())
         resize_pages();
+    if (layout_changed)
+        resize_extension_popup();
     if (current())
         update_window_title();
     changed(true);
@@ -1407,6 +1411,7 @@ std::string BrowserController::report() const {
         << ",\"extensions\":" << extensions.report() << ",\"filters_ui\":" << ui->filters_report()
         << ",\"workspaces_ui\":" << ui->workspaces_report()
         << ",\"groups_ui\":" << ui->groups_report() << ",\"sidebar\":" << ui->sidebar_report()
+        << ",\"tab_strip\":" << ui->tab_strip_report()
         << ",\"filter_lists\":" << state_->filters->report()
         << ",\"extensions_ui\":" << ui->extensions_report()
         << ",\"extension_popup\":" << ui->extension_popup_report()

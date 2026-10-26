@@ -18,6 +18,7 @@ struct BrowserPreferences {
     int ui_zoom = 100;
     bool remember_site_zoom = true;
     bool tree_tabs = true;
+    std::string tab_layout = "vertical";
     int tab_sleep_minutes = 0;
     int split_percent = 50;
     int reader_font_size = 20, reader_width = 720;

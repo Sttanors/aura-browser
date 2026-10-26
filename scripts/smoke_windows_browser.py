@@ -22,6 +22,8 @@ def main():
     user = ctypes.WinDLL('user32', use_last_error=True)
     user.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
     user.SendMessageW.restype = ctypes.c_ssize_t
+    user.ClientToScreen.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
+    user.ClientToScreen.restype = wintypes.BOOL
     user.IsWindow.argtypes = [wintypes.HWND]
     user.SetProcessDpiAwarenessContext.argtypes = [ctypes.c_void_p]
     user.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
@@ -188,6 +190,40 @@ def main():
                 assert child['pid'] == group['pid']
                 user.SendMessageW(child['window'], 0x10, 0, 0)
                 wait(lambda s: len(s.get('windows', [])) == 1, 'Forwarded window must close independently')
+                if launch == 1:
+                    # Test the new caption callback through Win32 itself, not just synthetic clicks.
+                    before_created = read()['cef_created_total']
+                    def set_layout(value):
+                        click(read()['interface']['width']-53, 55)
+                        panel = wait(lambda s: bool(s.get('settings_ui')), 'Layout settings must open')
+                        search = panel['settings_ui']['search_bounds']
+                        click(search[0]+search[2]-20, search[1]+search[3]//2)
+                        type_text('tab_layout')
+                        panel = wait(lambda s: (s.get('settings_ui') or {}).get('search') == 'tab_layout', 'Layout search must accept text')
+                        control = next(c for c in panel['settings_ui']['controls'] if c['id'] == 'tab_layout')
+                        rect = next(o['bounds'] for o in control['options'] if o['value'] == value)
+                        click(rect[0]+rect[2]//2, rect[1]+rect[3]//2)
+                        wait(lambda s: bool(s.get('tab_strip')) == (value == 'horizontal'), 'Layout must reflow the native window')
+                        user.SendMessageW(window, 0x100, 27, 1)
+                        user.SendMessageW(window, 0x101, 27, 1)
+                        wait(lambda s: s['panel'] == 0, 'Settings must close')
+                    set_layout('horizontal')
+                    def native_hit(rect):
+                        info = read()['interface']
+                        factor = info['device_scale']*info['applied']/100
+                        point = wintypes.POINT(round((rect[0]+rect[2]/2)*factor), round((rect[1]+rect[3]/2)*factor))
+                        assert user.ClientToScreen(window, ctypes.byref(point))
+                        return user.SendMessageW(window, 0x84, 0, (point.x & 0xffff) | ((point.y & 0xffff) << 16))
+                    strip = read()['tab_strip']
+                    assert native_hit(strip['caption']) == 2, 'Blank strip must be HTCAPTION'
+                    assert native_hit(strip['add']) == 1, 'New-tab button must remain HTCLIENT'
+                    for item in strip['items']:
+                        assert native_hit(item['bounds']) == 1, 'Tabs must not become draggable window captions'
+                    target = next(item for item in strip['items'] if item['id'])
+                    rect = target['bounds'];click(rect[0]+rect[2]//2, rect[1]+rect[3]//2)
+                    wait(lambda s: s['tabs'][s['active_tab']]['id'] == target['id'], 'Native top-tab click must select its page')
+                    assert read()['cef_created_total'] == before_created, 'Layout changes must not recreate pages'
+                    set_layout('vertical')
                 click(80, 35)
                 menu = wait(lambda s: any(item['id'] == 2 for item in (s.get('menu_ui') or [])), 'Aura menu must expose New private window')
                 bounds = next(item['bounds'] for item in menu['menu_ui'] if item['id'] == 2)
@@ -204,7 +240,7 @@ def main():
                 assert final['cef_created_total'] == final['cef_closed_total'], final
                 assert (profile/'profile.toml').is_file(), 'Profile must persist'
                 process = None
-        (output/'PASS.txt').write_text('PASS: full Win32 browser, Chromium page, Unicode path/input, pointer navigation, native dialog, English, interface scaling, adblock, real API/media/CSP/CORS/origin and IndexedDB persistence, profile replacement and balanced CEF shutdown.\n')
+        (output/'PASS.txt').write_text('PASS: full Win32 browser, Chromium page, Unicode path/input, pointer navigation, native dialog, English, interface scaling, adblock, real API/media/CSP/CORS/origin and IndexedDB persistence, profile replacement, horizontal/vertical reflow, Win32 HTCLIENT/HTCAPTION separation and balanced CEF shutdown.\n')
     finally:
         if process and process.poll() is None:
             subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'], check=False)

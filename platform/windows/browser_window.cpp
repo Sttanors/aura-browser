@@ -270,7 +270,9 @@ struct BrowserWindow::Impl {
                 if (b)
                     return HTBOTTOM;
             }
-            if (p.y < 30 * scale && p.x >= 240 * scale && p.x < (width - 144) * scale)
+            if (p.y >= 0 && p.y < 30 * scale && p.x < (width - 144) * scale &&
+                (callbacks.caption ? callbacks.caption(int(p.x / scale), int(p.y / scale))
+                                   : p.x >= 240 * scale))
                 return HTCAPTION;
             return HTCLIENT;
         }

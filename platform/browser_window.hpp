@@ -21,6 +21,7 @@ struct WindowCallbacks {
     std::function<void(const std::string &)> text;
     std::function<void(bool)> focus;
     std::function<void()> close;
+    std::function<bool(int, int)> caption;
 };
 class BrowserWindow {
   public:

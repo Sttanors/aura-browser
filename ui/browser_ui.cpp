@@ -369,10 +369,13 @@ BrowserUi::BrowserUi(BrowserController &app, const std::filesystem::path &file) 
         medium_ = regular_;
 }
 Rect BrowserUi::web_bounds() const {
-    return {252, 88, std::max(100, width_ - 264), std::max(100, height_ - 100)};
+    const int left = horizontal_tabs() ? 12 : 252;
+    return {left, 88, std::max(100, width_ - left - 12), std::max(100, height_ - 100)};
 }
 Rect BrowserUi::address_bounds() const {
-    return {384, 36, std::max(150, width_ - 628 - int(extension_buttons().size()) * 36), 38};
+    const int left = navigation_x() + 124;
+    return {left, 36, std::max(150, width_ - left - 244 - int(extension_buttons().size()) * 36),
+            38};
 }
 Rect BrowserUi::panel_bounds() const {
     const auto r = web_bounds();
@@ -455,7 +458,8 @@ Rect BrowserUi::dialog_bounds() const {
             int(wrap_text(font(regular_, 13), app_.dialogs.front().message, 440, 8).size());
         h = std::min(std::max(230, 148 + lines * 18), std::max(230, height_ - 140));
     }
-    return {std::max(260, (width_ - 490) / 2), std::max(110, (height_ - h) / 2), 490, h};
+    return {std::max(horizontal_tabs() ? 12 : 260, (width_ - 490) / 2),
+            std::max(110, (height_ - h) / 2), 490, h};
 }
 std::array<Rect, 2> BrowserUi::dialog_buttons() const {
     const auto r = dialog_bounds();
@@ -480,6 +484,7 @@ void BrowserUi::resize(int width, int height) {
         app_.screenshot.error = app_.tr("The page view changed. Select the area again.");
     }
     visible_active_id_ = -1;
+    strip_active_id_ = -1;
     keyboard_focus_ = -1;
     width_ = width;
     height_ = height;
@@ -532,7 +537,7 @@ bool BrowserUi::draw_web_frame(SkCanvas &c) {
         current->page.failed || !current->page.view.generation() || !web_backdrop_ ||
         panel_ != None || editing || find_open || app_.extension_popup || !app_.dialogs.empty() ||
         !app_.menu.empty() || app_.menu_action || app_.menu_callback || keyboard_focus_ >= 0 ||
-        (app_.profile.show_status && !status.empty()) ||
+        (app_.profile.show_status && !status.empty()) || strip_hint_visible_ ||
         (!toast_.empty() && std::chrono::steady_clock::now() < toast_until_))
         return false;
     const auto web = web_bounds();
@@ -576,10 +581,193 @@ void BrowserUi::draw(SkCanvas &c) {
         glow(c, {30, 0}, 480, t.mesh[0]);
         glow(c, {static_cast<float>(width_), static_cast<float>(height_)}, 800, t.mesh[1]);
     }
-    fill(c, {240, 0, width_ - 240, height_}, 0, SkColorSetA(t.background, 80));
-    brand_logo(c, {20, 17, 30, 30});
-    label(c, medium_, "aura", 58, 40, 23, ink);
-    label(c, regular_, app_.workspace_name(), 24, 65, 11, muted, 196);
+    const int shell_left = horizontal_tabs() ? 0 : 240;
+    fill(c, {shell_left, 0, width_ - shell_left, height_}, 0, SkColorSetA(t.background, 80));
+    if (!horizontal_tabs()) {
+        brand_logo(c, {20, 17, 30, 30});
+        label(c, medium_, "aura", 58, 40, 23, ink);
+        label(c, regular_, app_.workspace_name(), 24, 65, 11, muted, 196);
+        focus_target({16, 88, 208, 40});
+        fill(c, {16, 88, 208, 40}, 11, SkColorSetA(t.surface, light ? 205 : 150));
+        border(c, {16, 88, 208, 40}, 11, SkColorSetA(ink, 18));
+        icon(c, "plus", 29, 99, 18, t.accent);
+        focus_target({16, 12, 208, 62});
+        label(c, medium_, app_.tr("New tab"), 59, 113, 13, ink);
+        if (shortcut_hint("new_tab").size() <= 6)
+            label(c, regular_, shortcut_hint("new_tab"), 170, 112, 10, muted, 50);
+        label(c, regular_, app_.tr("Tabs"), 24, 161, 12, muted);
+        const auto visible = sidebar_rows();
+        int visible_active =
+            int(std::find(visible.begin(), visible.end(), app_.active) - visible.begin());
+        const auto tree = app_.tree_rows(false);
+        if (app_.profile.tree_tabs && visible_active == int(visible.size()) && current) {
+            auto parent = app_.tab(current->parent);
+            int remaining = int(app_.tabs.size());
+            while (parent && remaining-- > 0) {
+                for (int position = 0; position < int(visible.size()); ++position)
+                    if (visible[position] >= 0 && app_.tabs[visible[position]]->id == parent->id)
+                        visible_active = position;
+                if (visible_active < int(visible.size()))
+                    break;
+                parent = app_.tab(parent->parent);
+            }
+        }
+        if (visible_active == int(visible.size()) && current && current->group)
+            visible_active =
+                int(std::find(visible.begin(), visible.end(), -current->group) - visible.begin());
+        label(c, regular_, std::to_string(app_.visible_tabs().size()), 207, 161, 9, muted);
+        const int list_bottom = height_ - 220;
+        int tab_capacity = std::max(1, (list_bottom - 178) / 52);
+        if (current && (current->id != visible_active_id_ || app_.active != visible_active_index_ ||
+                        visible_active != visible_active_row_)) {
+            if (visible_active < tab_scroll_)
+                tab_scroll_ = visible_active;
+            else if (visible_active >= tab_scroll_ + tab_capacity)
+                tab_scroll_ = visible_active - tab_capacity + 1;
+            visible_active_id_ = current->id;
+            visible_active_index_ = app_.active;
+            visible_active_row_ = visible_active;
+        }
+        tab_scroll_ = std::clamp(tab_scroll_, 0,
+                                 std::max(0, static_cast<int>(visible.size()) - tab_capacity));
+        c.save();
+        c.clipRect(SkRect::MakeLTRB(12, 176, 232, list_bottom));
+        for (int position = tab_scroll_; position < static_cast<int>(visible.size()); ++position) {
+            const int i = visible[position];
+            const int y = 178 + (position - tab_scroll_) * 52;
+            if (i < 0) {
+                if (y + 46 > list_bottom)
+                    break;
+                const auto group = app_.profile.group(-i);
+                if (!group)
+                    continue;
+                const int count =
+                    int(std::count_if(app_.tabs.begin(), app_.tabs.end(), [&](const auto &tab) {
+                        return tab->workspace == app_.workspace && tab->group == group->id;
+                    }));
+                focus_target({14, y, 180, 46});
+                focus_target({196, y + 7, 30, 32});
+                fill(c, {14, y, 212, 46}, 4,
+                     SkColorSetA(tab_group_color(app_.profile, group->color),
+                                 inside({14, y, 212, 46}, hover_x_, hover_y_) ? 35 : 18));
+                icon(c, group->collapsed ? "expand" : "collapse", 24, y + 8, 16, t.text);
+                label(c, medium_, group->name, 46, y + 21, 12,
+                      tab_group_color(app_.profile, group->color), 145);
+                label(c, regular_,
+                      std::to_string(count) + " " +
+                          app_.tr(group->collapsed ? "tabs, collapsed" : "tabs, expanded"),
+                      46, y + 38, 10, t.muted, 145);
+                icon(c, "plus", 201, y + 15, 18, t.accent);
+                continue;
+            }
+            auto &tab = *app_.tabs[i];
+            if (y + 46 > list_bottom)
+                break;
+            const bool selected = i == app_.active;
+            const bool branch_selected = !selected && position == visible_active;
+            const auto row =
+                std::find_if(tree.begin(), tree.end(), [&](const auto &r) { return r.index == i; });
+            const int depth = app_.profile.tree_tabs && row != tree.end() ? row->depth : 0;
+            const int descendants =
+                app_.profile.tree_tabs && row != tree.end() ? row->descendants : 0;
+            const int indent = std::min(depth, 3) * 12;
+            const int icon_x = app_.profile.tree_tabs ? 44 + indent : 26;
+            const int title_x = app_.profile.tree_tabs ? 70 + indent : 57;
+            Rect r{14, y, 212, 46};
+            if (auto group = app_.profile.group(tab.group))
+                fill(c, {19, y + 8, 2, 30}, 1, tab_group_color(app_.profile, group->color));
+            if (descendants)
+                focus_target({20 + indent, y + 7, 24, 32});
+            focus_target({app_.profile.tree_tabs ? 44 + indent : r.x, r.y,
+                          app_.profile.tree_tabs ? 150 - indent : 180, r.height});
+            if (!tab.pinned)
+                focus_target({200, y + 8, 24, 30});
+            const bool hover = inside(r, hover_x_, hover_y_);
+            if (selected || branch_selected || hover) {
+                fill(c, r, 12, SkColorSetA(t.surface, selected ? (light ? 235 : 245) : 125));
+                if (selected || branch_selected) {
+                    if (selected)
+                        border(c, r, 12, SkColorSetA(ink, 22));
+                    fill(c, {14, y + 13, 3, 20}, 2, t.accent);
+                }
+            }
+            if (descendants) {
+                icon(c, tab.tree_collapsed ? "expand" : "collapse", 24 + indent, y + 15, 16,
+                     t.accent);
+            }
+            if (tab.loading) {
+                const double time = std::chrono::duration<double>(
+                                        std::chrono::steady_clock::now().time_since_epoch())
+                                        .count();
+                fill(c, {icon_x + 3, y + 17, 12, 12}, 6,
+                     SkColorSetA(
+                         t.accent,
+                         static_cast<U8CPU>(
+                             130 + 100 * (app_.profile.reduce_motion ? 0.0 : std::sin(time * 4)))));
+            } else if (tab.sleeping)
+                label(c, medium_, "z", icon_x + 4, y + 29, 17, muted);
+            else if (tab.media_capture)
+                icon(c, tab.media_video ? "camera" : "microphone", icon_x, y + 14, 19, t.accent);
+            else if (tab.private_tab)
+                icon(c, "private", icon_x, y + 14, 19, t.accent);
+            else if (app_.profile.show_favicons && tab.favicon.generation())
+                image(c, tab.favicon, {icon_x + 1, y + 15, 17, 17});
+            else
+                icon(c, tab.ntp ? "plus" : "globe", icon_x, y + 14, 19,
+                     selected ? t.accent : muted);
+            label(c, selected ? medium_ : regular_,
+                  tab.page.title.empty() ? url_host(tab.page.url) : tab.page.title, title_x,
+                  y + (app_.profile.show_tab_host ? 21 : 28), 12.5f, ink, 196 - title_x);
+            if (app_.profile.show_tab_host)
+                label(c, regular_,
+                      descendants && tab.tree_collapsed
+                          ? app_.tr("Hidden tabs: ") + std::to_string(descendants)
+                      : depth > 3       ? app_.tr("Level ") + std::to_string(depth + 1)
+                      : tab.media_video ? app_.tr("Camera in use")
+                      : tab.media_audio ? app_.tr("Microphone in use")
+                      : tab.sleeping    ? app_.tr("Sleeping")
+                      : tab.private_tab ? app_.tr("Private browsing")
+                      : tab.ntp
+                          ? app_.tr("A fresh perspective")
+                          : (tab.container ? app_.profile.container_label(tab.container) + " · "
+                                           : "") +
+                                url_host(tab.page.url),
+                      title_x, y + 36, 10, muted, 196 - title_x);
+            if (hover || selected)
+                icon(c, tab.pinned ? "pin" : "close", 202, y + 16, 14, muted);
+        }
+        c.restore();
+        const std::string labels[] = {app_.tr("Bookmarks"), app_.tr("History"),
+                                      app_.tr("Downloads"), app_.tr("Settings")};
+        const char *icons[] = {"star", "history", "download", "settings"};
+        for (int i = 0; i < 4; ++i) {
+            Rect r{16, height_ - 204 + i * 35, 208, 32};
+            focus_target(r);
+            if (inside(r, hover_x_, hover_y_) || panel_ == i + 1)
+                fill(c, r, 9, SkColorSetA(t.surface, 180));
+            icon(c, icons[i], 28, r.y + 7, 18, muted);
+            label(c, regular_, labels[i], 58, r.y + 21, 12, ink);
+            if (i == 2 && !app_.visible_downloads().empty())
+                label(c, medium_, std::to_string(app_.visible_downloads().size()), 204, r.y + 20,
+                      10, t.accent);
+        }
+        focus_target({16, height_ - 60, 208, 54});
+        fill(c, {20, height_ - 48, 28, 28}, 10, SkColorSetA(t.accent, 35));
+        label(c, medium_, current && current->private_tab ? "P" : "A", 29, height_ - 29, 12,
+              t.accent);
+        label(c, medium_,
+              current && current->private_tab ? app_.tr("Private space") : app_.profile_name(), 58,
+              height_ - 31, 11, ink, 162);
+        label(c, regular_,
+              current && current->private_tab ? app_.profile_name() : app_.tr("Local profile"), 58,
+              height_ - 17, 9, muted, 162);
+    } else {
+        draw_tab_strip(c);
+        focus_target({12, 37, 34, 36});
+        if (inside({12, 37, 34, 36}, hover_x_, hover_y_))
+            fill(c, {12, 37, 34, 36}, 9, SkColorSetA(t.accent, 22));
+        brand_logo(c, {17, 42, 24, 24});
+    }
     auto button = [&](Rect rect, const std::string &name, bool enabled = true,
                       bool selected = false) {
         if (enabled && !name.empty())
@@ -590,178 +778,12 @@ void BrowserUi::draw(SkCanvas &c) {
         icon(c, name, rect.x + (rect.width - 19) / 2.f, rect.y + (rect.height - 19) / 2.f, 19,
              enabled ? ink : SkColorSetA(muted, 90));
     };
-    focus_target({16, 88, 208, 40});
-    fill(c, {16, 88, 208, 40}, 11, SkColorSetA(t.surface, light ? 205 : 150));
-    border(c, {16, 88, 208, 40}, 11, SkColorSetA(ink, 18));
-    icon(c, "plus", 29, 99, 18, t.accent);
-    focus_target({16, 12, 208, 62});
-    label(c, medium_, app_.tr("New tab"), 59, 113, 13, ink);
-    if (shortcut_hint("new_tab").size() <= 6)
-        label(c, regular_, shortcut_hint("new_tab"), 170, 112, 10, muted, 50);
-    label(c, regular_, app_.tr("Tabs"), 24, 161, 12, muted);
-    const auto visible = sidebar_rows();
-    int visible_active =
-        int(std::find(visible.begin(), visible.end(), app_.active) - visible.begin());
-    const auto tree = app_.tree_rows(false);
-    if (app_.profile.tree_tabs && visible_active == int(visible.size()) && current) {
-        auto parent = app_.tab(current->parent);
-        int remaining = int(app_.tabs.size());
-        while (parent && remaining-- > 0) {
-            for (int position = 0; position < int(visible.size()); ++position)
-                if (visible[position] >= 0 && app_.tabs[visible[position]]->id == parent->id)
-                    visible_active = position;
-            if (visible_active < int(visible.size()))
-                break;
-            parent = app_.tab(parent->parent);
-        }
-    }
-    if (visible_active == int(visible.size()) && current && current->group)
-        visible_active =
-            int(std::find(visible.begin(), visible.end(), -current->group) - visible.begin());
-    label(c, regular_, std::to_string(app_.visible_tabs().size()), 207, 161, 9, muted);
-    const int list_bottom = height_ - 220;
-    int tab_capacity = std::max(1, (list_bottom - 178) / 52);
-    if (current && (current->id != visible_active_id_ || app_.active != visible_active_index_ ||
-                    visible_active != visible_active_row_)) {
-        if (visible_active < tab_scroll_)
-            tab_scroll_ = visible_active;
-        else if (visible_active >= tab_scroll_ + tab_capacity)
-            tab_scroll_ = visible_active - tab_capacity + 1;
-        visible_active_id_ = current->id;
-        visible_active_index_ = app_.active;
-        visible_active_row_ = visible_active;
-    }
-    tab_scroll_ =
-        std::clamp(tab_scroll_, 0, std::max(0, static_cast<int>(visible.size()) - tab_capacity));
-    c.save();
-    c.clipRect(SkRect::MakeLTRB(12, 176, 232, list_bottom));
-    for (int position = tab_scroll_; position < static_cast<int>(visible.size()); ++position) {
-        const int i = visible[position];
-        const int y = 178 + (position - tab_scroll_) * 52;
-        if (i < 0) {
-            if (y + 46 > list_bottom)
-                break;
-            const auto group = app_.profile.group(-i);
-            if (!group)
-                continue;
-            const int count =
-                int(std::count_if(app_.tabs.begin(), app_.tabs.end(), [&](const auto &tab) {
-                    return tab->workspace == app_.workspace && tab->group == group->id;
-                }));
-            focus_target({14, y, 180, 46});
-            focus_target({196, y + 7, 30, 32});
-            fill(c, {14, y, 212, 46}, 4,
-                 SkColorSetA(tab_group_color(app_.profile, group->color),
-                             inside({14, y, 212, 46}, hover_x_, hover_y_) ? 35 : 18));
-            icon(c, group->collapsed ? "expand" : "collapse", 24, y + 8, 16, t.text);
-            label(c, medium_, group->name, 46, y + 21, 12,
-                  tab_group_color(app_.profile, group->color), 145);
-            label(c, regular_,
-                  std::to_string(count) + " " +
-                      app_.tr(group->collapsed ? "tabs, collapsed" : "tabs, expanded"),
-                  46, y + 38, 10, t.muted, 145);
-            icon(c, "plus", 201, y + 15, 18, t.accent);
-            continue;
-        }
-        auto &tab = *app_.tabs[i];
-        if (y + 46 > list_bottom)
-            break;
-        const bool selected = i == app_.active;
-        const bool branch_selected = !selected && position == visible_active;
-        const auto row =
-            std::find_if(tree.begin(), tree.end(), [&](const auto &r) { return r.index == i; });
-        const int depth = app_.profile.tree_tabs && row != tree.end() ? row->depth : 0;
-        const int descendants = app_.profile.tree_tabs && row != tree.end() ? row->descendants : 0;
-        const int indent = std::min(depth, 3) * 12;
-        const int icon_x = app_.profile.tree_tabs ? 44 + indent : 26;
-        const int title_x = app_.profile.tree_tabs ? 70 + indent : 57;
-        Rect r{14, y, 212, 46};
-        if (auto group = app_.profile.group(tab.group))
-            fill(c, {19, y + 8, 2, 30}, 1, tab_group_color(app_.profile, group->color));
-        if (descendants)
-            focus_target({20 + indent, y + 7, 24, 32});
-        focus_target({app_.profile.tree_tabs ? 44 + indent : r.x, r.y,
-                      app_.profile.tree_tabs ? 150 - indent : 180, r.height});
-        if (!tab.pinned)
-            focus_target({200, y + 8, 24, 30});
-        const bool hover = inside(r, hover_x_, hover_y_);
-        if (selected || branch_selected || hover) {
-            fill(c, r, 12, SkColorSetA(t.surface, selected ? (light ? 235 : 245) : 125));
-            if (selected || branch_selected) {
-                if (selected)
-                    border(c, r, 12, SkColorSetA(ink, 22));
-                fill(c, {14, y + 13, 3, 20}, 2, t.accent);
-            }
-        }
-        if (descendants) {
-            icon(c, tab.tree_collapsed ? "expand" : "collapse", 24 + indent, y + 15, 16, t.accent);
-        }
-        if (tab.loading) {
-            const double time =
-                std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch())
-                    .count();
-            fill(c, {icon_x + 3, y + 17, 12, 12}, 6,
-                 SkColorSetA(t.accent, static_cast<U8CPU>(130 + 100 * (app_.profile.reduce_motion
-                                                                           ? 0.0
-                                                                           : std::sin(time * 4)))));
-        } else if (tab.sleeping)
-            label(c, medium_, "z", icon_x + 4, y + 29, 17, muted);
-        else if (tab.media_capture)
-            icon(c, tab.media_video ? "camera" : "microphone", icon_x, y + 14, 19, t.accent);
-        else if (tab.private_tab)
-            icon(c, "private", icon_x, y + 14, 19, t.accent);
-        else if (app_.profile.show_favicons && tab.favicon.generation())
-            image(c, tab.favicon, {icon_x + 1, y + 15, 17, 17});
-        else
-            icon(c, tab.ntp ? "plus" : "globe", icon_x, y + 14, 19, selected ? t.accent : muted);
-        label(c, selected ? medium_ : regular_,
-              tab.page.title.empty() ? url_host(tab.page.url) : tab.page.title, title_x,
-              y + (app_.profile.show_tab_host ? 21 : 28), 12.5f, ink, 196 - title_x);
-        if (app_.profile.show_tab_host)
-            label(c, regular_,
-                  descendants && tab.tree_collapsed
-                      ? app_.tr("Hidden tabs: ") + std::to_string(descendants)
-                  : depth > 3       ? app_.tr("Level ") + std::to_string(depth + 1)
-                  : tab.media_video ? app_.tr("Camera in use")
-                  : tab.media_audio ? app_.tr("Microphone in use")
-                  : tab.sleeping    ? app_.tr("Sleeping")
-                  : tab.private_tab ? app_.tr("Private browsing")
-                  : tab.ntp
-                      ? app_.tr("A fresh perspective")
-                      : (tab.container ? app_.profile.container_label(tab.container) + " · " : "") +
-                            url_host(tab.page.url),
-                  title_x, y + 36, 10, muted, 196 - title_x);
-        if (hover || selected)
-            icon(c, tab.pinned ? "pin" : "close", 202, y + 16, 14, muted);
-    }
-    c.restore();
-    const std::string labels[] = {app_.tr("Bookmarks"), app_.tr("History"), app_.tr("Downloads"),
-                                  app_.tr("Settings")};
-    const char *icons[] = {"star", "history", "download", "settings"};
-    for (int i = 0; i < 4; ++i) {
-        Rect r{16, height_ - 204 + i * 35, 208, 32};
-        focus_target(r);
-        if (inside(r, hover_x_, hover_y_) || panel_ == i + 1)
-            fill(c, r, 9, SkColorSetA(t.surface, 180));
-        icon(c, icons[i], 28, r.y + 7, 18, muted);
-        label(c, regular_, labels[i], 58, r.y + 21, 12, ink);
-        if (i == 2 && !app_.visible_downloads().empty())
-            label(c, medium_, std::to_string(app_.visible_downloads().size()), 204, r.y + 20, 10,
-                  t.accent);
-    }
-    focus_target({16, height_ - 60, 208, 54});
-    fill(c, {20, height_ - 48, 28, 28}, 10, SkColorSetA(t.accent, 35));
-    label(c, medium_, current && current->private_tab ? "P" : "A", 29, height_ - 29, 12, t.accent);
-    label(c, medium_,
-          current && current->private_tab ? app_.tr("Private space") : app_.profile_name(), 58,
-          height_ - 31, 11, ink, 162);
-    label(c, regular_,
-          current && current->private_tab ? app_.profile_name() : app_.tr("Local profile"), 58,
-          height_ - 17, 9, muted, 162);
     const std::string title = current ? current->page.title : "Aura";
-    label(c, regular_, title, 265, 21, 10, muted, width_ - 435);
-    label(c, regular_, current && current->private_tab ? app_.tr("PRIVATE") : "", width_ - 240, 21,
-          9, t.accent);
+    if (!horizontal_tabs())
+        label(c, regular_, title, 265, 21, 10, muted, width_ - 435);
+    if (!horizontal_tabs())
+        label(c, regular_, current && current->private_tab ? app_.tr("PRIVATE") : "", width_ - 240,
+              21, 9, t.accent);
     button({width_ - 144, 0, 48, 30}, "", true);
     SkPaint line;
     line.setAntiAlias(true);
@@ -771,9 +793,9 @@ void BrowserUi::draw(SkCanvas &c) {
     line.setStyle(SkPaint::kStroke_Style);
     c.drawRect(SkRect::MakeXYWH(width_ - 77, 10, 10, 10), line);
     icon(c, "close", width_ - 39, 7, 17, muted);
-    button({260, 37, 34, 36}, "back", current && current->back);
-    button({298, 37, 34, 36}, "forward", current && current->forward);
-    button({336, 37, 34, 36}, current && current->loading ? "close" : "reload");
+    button({navigation_x(), 37, 34, 36}, "back", current && current->back);
+    button({navigation_x() + 38, 37, 34, 36}, "forward", current && current->forward);
+    button({navigation_x() + 76, 37, 34, 36}, current && current->loading ? "close" : "reload");
     focus_target({addr.x + 5, addr.y + 4, 30, 30});
     focus_target({addr.x + 40, addr.y, addr.width - 40, addr.height});
     fill(c, addr, 12, SkColorSetA(t.surface, light ? 230 : 185));
@@ -839,6 +861,7 @@ void BrowserUi::draw(SkCanvas &c) {
         draw_page(c, *current, web);
     else
         draw_start_page(c);
+    draw_tab_hint(c);
     if (app_.profile.show_status && !status.empty() && !editing && panel_ == None) {
         const auto area = current ? page_bounds(*current) : web;
         Rect r{area.x + 9, area.y + area.height - 31,
@@ -871,7 +894,8 @@ void BrowserUi::draw(SkCanvas &c) {
                        {store.x + store.width - 171, store.y + 8, 158, 33}, 12, t.background);
     }
     if (panel_ != None) {
-        fill(c, {240, 30, width_ - 240, height_ - 30}, 0, SkColorSetA(0xFF050712, light ? 40 : 90));
+        fill(c, {shell_left, 30, width_ - shell_left, height_ - 30}, 0,
+             SkColorSetA(0xFF050712, light ? 40 : 90));
         focus_targets_.clear();
         const auto r = panel_bounds();
         focus_target({r.x + r.width - 52, r.y + 16, 36, 36});
@@ -1082,7 +1106,7 @@ void BrowserUi::draw(SkCanvas &c) {
 
     if (editing) {
         focus_targets_.clear();
-        fill(c, {240, 30, width_ - 240, height_ - 30}, 0,
+        fill(c, {shell_left, 30, width_ - shell_left, height_ - 30}, 0,
              SkColorSetA(0xFF050712, static_cast<U8CPU>((light ? 65 : 115) * focus_animation_)));
         Rect r{std::max(264, web.x + (web.width - 760) / 2), 96, std::min(760, web.width - 28), 85};
         auto list = suggestions();
@@ -1183,7 +1207,7 @@ void BrowserUi::draw(SkCanvas &c) {
         const auto buttons = dialog_buttons();
         focus_target(buttons[0]);
         focus_target(buttons[1]);
-        fill(c, {240, 30, width_ - 240, height_ - 30}, 0, 0x99050712);
+        fill(c, {shell_left, 30, width_ - shell_left, height_ - 30}, 0, 0x99050712);
         shadow(c, r, 18);
         fill(c, r, 18, t.surface);
         label(c, medium_,
@@ -3252,10 +3276,15 @@ bool BrowserUi::key_default(const CefKeyEvent &key) {
         pointer(click);
         click.kind = PointerInput::Up;
         pointer(click);
-        // Disclosure toggles keep the same focus target while their children appear/disappear.
-        const bool sidebar_disclosure = previous_panel == None && app_.profile.tree_tabs &&
-                                        r.x >= 20 && r.x <= 56 && r.width == 24 && r.height == 32;
-        if ((panel_ != None || sidebar_disclosure) && panel_ == previous_panel)
+        // Keep focus on disclosures and scroll arrows as their rows change.
+        const bool stable_tab_control =
+            previous_panel == None &&
+            ((!horizontal_tabs() && app_.profile.tree_tabs && r.x >= 20 && r.x <= 56 &&
+              r.width == 24 && r.height == 32) ||
+             (horizontal_tabs() &&
+              ((app_.profile.tree_tabs && r.y == 4 && r.width == 20 && r.height == 24) ||
+               (r.y == 2 && r.width == 28 && r.height == 28))));
+        if ((panel_ != None || stable_tab_control) && panel_ == previous_panel)
             keyboard_focus_ = previous;
         return true;
     }
@@ -4236,6 +4265,11 @@ void BrowserUi::text(const std::string &value) {
     app_.changed();
 }
 bool BrowserUi::tick() {
+    if (strip_hint_id_ && !strip_hint_ready_ &&
+        std::chrono::steady_clock::now() >= strip_hint_at_) {
+        strip_hint_ready_ = true;
+        app_.changed();
+    }
     if (panel_ == DuplicateTabs && std::chrono::steady_clock::now() >= duplicate_refresh_) {
         refresh_duplicates();
         app_.changed();
@@ -4355,6 +4389,26 @@ void BrowserUi::pointer(const PointerInput &input) {
                           !app_.menu_callback && !app_.menu_action;
     hover_x_ = x;
     hover_y_ = y;
+    if (horizontal_tabs() && input.kind == PointerInput::Move) {
+        int id = 0;
+        if (y >= 2 && y < 30) {
+            const auto rows = sidebar_rows();
+            for (const auto &slot : horizontal_layout().slots)
+                if (inside(slot.bounds, x, y)) {
+                    const int index = rows[slot.position];
+                    id = index < 0 ? index : app_.tabs[index]->id;
+                    break;
+                }
+        }
+        if (id != strip_hint_id_) {
+            strip_hint_id_ = id;
+            strip_hint_ready_ = false;
+            strip_hint_at_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+        }
+    } else if (input.kind != PointerInput::Move) {
+        strip_hint_id_ = 0;
+        strip_hint_ready_ = false;
+    }
     // CEF owns hover and wheel changes inside a page. Its paint callback will
     // invalidate content; the shell does not need a full redraw per input event.
     if (!web_only || (input.kind != PointerInput::Wheel && input.kind != PointerInput::Move))
@@ -4362,12 +4416,33 @@ void BrowserUi::pointer(const PointerInput &input) {
     const bool down = input.kind == PointerInput::Down;
     if (down || input.kind == PointerInput::Wheel)
         keyboard_focus_ = -1;
-    if (input.kind == PointerInput::Up)
+    if (down) {
         drag_tab_ = -1;
+        drag_source_ = 0;
+    }
+    if (input.kind == PointerInput::Up) {
+        const bool tab_gesture = drag_source_ != 0;
+        drag_tab_ = -1;
+        drag_source_ = 0;
+        if (tab_gesture)
+            return; // A page never received the matching mouse-down.
+    }
+    if (input.kind == PointerInput::Move && drag_source_) {
+        drag_tab_ = -1;
+        for (int i = 0; i < int(app_.tabs.size()); ++i)
+            if (app_.tabs[i]->id == drag_source_ && !app_.tabs[i]->closing &&
+                !app_.tabs[i]->page.closed)
+                drag_tab_ = i;
+        // Keep UI drags out of CEF, even if the source disappeared while held.
+        if (drag_tab_ < 0 ||
+            (horizontal_tabs() ? (y < 0 || y >= 32) : (x >= 240 || y < 178 || y >= height_ - 220)))
+            return;
+    }
     if (app_.extension_popup && app_.dialogs.empty() && !app_.menu_callback && !app_.menu_action &&
         popup_pointer(input))
         return;
-    if (input.kind == PointerInput::Move && drag_tab_ >= 0 && std::abs(y - drag_y_) > 18) {
+    if (!horizontal_tabs() && input.kind == PointerInput::Move && drag_tab_ >= 0 &&
+        std::abs(y - drag_y_) > 18) {
         if (x >= 240 || y < 178 || y >= height_ - 220)
             return;
         const auto visible = sidebar_rows();
@@ -4554,7 +4629,7 @@ void BrowserUi::pointer(const PointerInput &input) {
             return;
         }
     }
-    if (input.kind == PointerInput::Wheel && x < 240) {
+    if (!horizontal_tabs() && input.kind == PointerInput::Wheel && x < 240) {
         if (app_.profile.wheel_switch && !app_.tabs.empty())
             app_.cycle_tab(input.dy < 0 ? 1 : -1);
         else
@@ -4631,7 +4706,7 @@ void BrowserUi::pointer(const PointerInput &input) {
                                  {2, app_.tr("Unpin extension")},
                                  {3, app_.tr("Options")},
                                  {4, app_.tr("Manage extensions")}};
-                    app_.menu_x = std::clamp(b.x - 180, 252, width_ - 250);
+                    app_.menu_x = std::clamp(b.x - 180, web_bounds().x, width_ - 250);
                     app_.menu_y = 82;
                     const auto id = app_.extensions.items[index].id;
                     app_.menu_action = [this, id](int action) {
@@ -4765,87 +4840,19 @@ void BrowserUi::pointer(const PointerInput &input) {
         }
         return;
     }
-    if (down && x < 240) {
+    if (horizontal_tabs() && tab_strip_pointer(input))
+        return;
+    if (horizontal_tabs() && down && inside({12, 37, 34, 36}, x, y)) {
+        open_aura_menu();
+        return;
+    }
+    if (!horizontal_tabs() && down && x < 240) {
         if (inside({16, height_ - 60, 208, 54}, x, y)) {
             open_profiles();
             return;
         }
         if (inside({16, 12, 208, 62}, x, y)) {
-            app_.close_menu();
-            app_.menu = {
-                {1, app_.tr("New window"), true, "Ctrl+N"},
-                {2, app_.tr("New private window"), true, "Ctrl+Shift+N"},
-                {3, app_.tr("Close window"), true, "Ctrl+Shift+W"},
-                {5, app_.tr("Restore previous session"),
-                 !app_.state()->previous_restored && !app_.state()->previous_windows.empty()},
-                {4, app_.tr("Exit Aura"), true, "Ctrl+Q"},
-                {6, app_.tr("Workspaces"), !app_.private_window, "Ctrl+Shift+E"},
-                {7, app_.tr("Tab groups"), !app_.private_window, "Ctrl+Alt+G"},
-                {8, app_.tr(app_.split_enabled() ? "Exit split view" : "Two pages side by side"),
-                 true, "Ctrl+Alt+V"},
-                {9, app_.tr("Site containers"), !app_.private_window, "Ctrl+Alt+C"},
-                {10, app_.tr("Profiles"), true, "Ctrl+Alt+P"},
-                {11, app_.tr("Command palette"), true, "Ctrl+K"},
-                {12, app_.tr(t && t->reader_active ? "Exit reader" : "Reader mode"),
-                 t && t->browser && !t->ntp, "Ctrl+Alt+R"},
-                {13, app_.tr("Translate"), t && t->browser && !t->ntp, "Ctrl+Alt+T"},
-                {14, app_.tr("Site permissions"), true, "Ctrl+Alt+I"},
-                {15, app_.tr("Site data"), true, "Ctrl+Alt+D"},
-                {16, app_.tr("Session snapshots"), true, "Ctrl+Alt+E"},
-                {17, app_.tr("Screenshot"), true, "Ctrl+Shift+S"},
-                {18, app_.tr("Keyboard shortcuts"), true},
-                {19, app_.tr("Task manager"), true}};
-            const std::map<int, std::string> actions = {
-                {1, "new_window"},   {2, "private_window"}, {3, "close_window"},
-                {4, "quit"},         {6, "workspaces"},     {7, "groups"},
-                {8, "split"},        {9, "containers"},     {10, "profiles"},
-                {11, "commands"},    {12, "reader"},        {13, "translate_page"},
-                {14, "permissions"}, {15, "site_data"},     {16, "sessions"},
-                {17, "screenshot"},  {18, "hotkeys"},       {19, "task_manager"}};
-            for (auto &item : app_.menu)
-                if (auto found = actions.find(item.id); found != actions.end())
-                    item.shortcut = shortcut_hint(found->second);
-            app_.menu_width = 320;
-            app_.menu_x = 16;
-            app_.menu_y = std::clamp(76, 0, std::max(0, height_ - int(app_.menu.size()) * 32 - 12));
-            app_.menu_action = [this](int command) {
-                if (command == 19)
-                    open_task_manager();
-                else if (command == 1 || command == 2)
-                    app_.new_window(command == 2);
-                else if (command == 3)
-                    app_.request_quit();
-                else if (command == 5)
-                    app_.restore_previous_session();
-                else if (command == 6)
-                    open_workspaces();
-                else if (command == 7)
-                    open_groups();
-                else if (command == 8)
-                    app_.toggle_split();
-                else if (command == 9)
-                    open_containers();
-                else if (command == 10)
-                    open_profiles();
-                else if (command == 11)
-                    open_commands();
-                else if (command == 12)
-                    app_.toggle_reader();
-                else if (command == 13)
-                    open_translation(app_.current() && !app_.current()->selected_text.empty());
-                else if (command == 14)
-                    open_permissions();
-                else if (command == 15)
-                    open_site_data();
-                else if (command == 16)
-                    open_sessions();
-                else if (command == 17)
-                    open_screenshot();
-                else if (command == 18)
-                    open_hotkeys();
-                else
-                    app_.request_exit();
-            };
+            open_aura_menu();
             return;
         }
         if (inside({16, 88, 208, 40}, x, y)) {
@@ -4894,78 +4901,13 @@ void BrowserUi::pointer(const PointerInput &input) {
                     app_.close_tab(index);
                 else {
                     app_.activate(index);
-                    drag_tab_ = index;
-                    drag_y_ = y;
+                    if (input.button == 1) {
+                        drag_tab_ = index;
+                        drag_source_ = app_.tabs[index]->id;
+                        drag_y_ = y;
+                    }
                     if (input.button == 3) {
-                        const int id = app_.tabs[index]->id;
-                        app_.menu = {
-                            {1,
-                             app_.tabs[index]->pinned ? app_.tr("Unpin tab") : app_.tr("Pin tab")},
-                            {2,
-                             app_.tabs[index]->muted ? app_.tr("Unmute tab") : app_.tr("Mute tab")},
-                            {3, app_.tr("Duplicate tab")},
-                            {4, app_.tr("Close tab")},
-                            {5, app_.tr("Reopen closed tab")},
-                            {6, app_.tr("Move to workspace"), !app_.private_window},
-                            {7, app_.tr("Tab groups"), !app_.private_window},
-                            {8, app_.tr("Sleep tab"),
-                             !app_.tabs[index]->pinned && !app_.tabs[index]->private_tab &&
-                                 !app_.tabs[index]->ntp},
-                            {9, app_.tr("Open in container"), !app_.tabs[index]->private_tab}};
-                        if (app_.profile.tree_tabs) {
-                            const auto rows = app_.tree_rows(false);
-                            const auto row =
-                                std::find_if(rows.begin(), rows.end(),
-                                             [&](const auto &r) { return r.index == index; });
-                            app_.menu.push_back(
-                                {10,
-                                 app_.tr(app_.tabs[index]->tree_collapsed ? "Expand branch"
-                                                                          : "Collapse branch"),
-                                 row != rows.end() && row->descendants > 0});
-                            app_.menu.push_back(
-                                {11, app_.tr("Detach tab"), app_.tabs[index]->parent != 0});
-                            app_.menu.push_back({12, app_.tr("New child tab")});
-                        }
-                        app_.menu_x = std::clamp(x + 8, 8, width_ - 250);
-                        app_.menu_y = std::clamp(
-                            y, 32, std::max(32, height_ - int(app_.menu.size()) * 32 - 20));
-                        app_.menu_action = [this, id](int command) {
-                            auto tab = app_.tab(id);
-                            if (!tab)
-                                return;
-                            int index = 0;
-                            while (index < static_cast<int>(app_.tabs.size()) &&
-                                   app_.tabs[index]->id != id)
-                                ++index;
-                            app_.activate(index);
-                            if (command == 1)
-                                app_.pin();
-                            else if (command == 2)
-                                app_.mute();
-                            else if (command == 3)
-                                app_.new_tab(tab->page.url, tab->private_tab, true, false,
-                                             tab->workspace, tab->group, tab->container,
-                                             tab->parent);
-                            else if (command == 4)
-                                app_.close_tab(index);
-                            else if (command == 6)
-                                open_workspaces(id);
-                            else if (command == 7)
-                                open_groups(id);
-                            else if (command == 8)
-                                app_.sleep_tab(id);
-                            else if (command == 9)
-                                open_containers(id);
-                            else if (command == 10)
-                                app_.toggle_tree(id);
-                            else if (command == 11)
-                                app_.detach_tree_tab(id);
-                            else if (command == 12)
-                                app_.new_tab("aura://newtab", tab->private_tab, true, false,
-                                             tab->workspace, tab->group, tab->container, id);
-                            else
-                                app_.reopen();
-                        };
+                        open_tab_menu(index, x, y);
                     }
                 }
             }
@@ -4994,15 +4936,15 @@ void BrowserUi::pointer(const PointerInput &input) {
             focus_address();
             return;
         }
-        if (x >= 260 && x < 294) {
+        if (x >= navigation_x() && x < navigation_x() + 34) {
             app_.back();
             return;
         }
-        if (x >= 298 && x < 332) {
+        if (x >= navigation_x() + 38 && x < navigation_x() + 72) {
             app_.forward();
             return;
         }
-        if (x >= 336 && x < 370) {
+        if (x >= navigation_x() + 76 && x < navigation_x() + 110) {
             app_.reload();
             return;
         }
@@ -5161,7 +5103,9 @@ void BrowserUi::pointer(const PointerInput &input) {
         if (!in)
             app_.window->cursor(0);
     } else
-        app_.window->cursor(inside(address_bounds(), x, y) ? 1 : x < 240 ? 2 : 0);
+        app_.window->cursor(inside(address_bounds(), x, y)    ? 1
+                            : (!horizontal_tabs() && x < 240) ? 2
+                                                              : 0);
 }
 } // namespace aura
 
@@ -5369,7 +5313,7 @@ std::string BrowserUi::extensions_report() const {
 namespace aura {
 std::vector<std::pair<size_t, Rect>> BrowserUi::extension_buttons() const {
     std::vector<size_t> indices;
-    const size_t capacity = std::max(0, (width_ - 628 - 180) / 36);
+    const size_t capacity = std::max(0, (width_ - (horizontal_tabs() ? 424 : 628) - 180) / 36);
     for (size_t i = 0; i < app_.extensions.items.size() && indices.size() < capacity; i++)
         if (app_.extensions.items[i].pinned && app_.extensions.items[i].enabled)
             indices.push_back(i);
@@ -5382,7 +5326,7 @@ void BrowserUi::layout_extension_popup() {
     auto p = app_.extension_popup;
     if (!p)
         return;
-    int w = std::clamp(p->desired_width, 180, std::min(800, width_ - 296));
+    int w = std::clamp(p->desired_width, 180, std::min(800, web_bounds().width - 32));
     int h = std::clamp(p->desired_height, 80, std::min(600, height_ - 140));
     int anchor = width_ - 156;
     for (const auto &[index, b] : extension_buttons())
@@ -5461,7 +5405,7 @@ bool BrowserUi::popup_pointer(const PointerInput &input) {
                 same = true;
         app_.close_extension_popup();
         popup_buttons_ = 0;
-        return same || (x >= 240 && y >= 80);
+        return same || inside(web_bounds(), x, y);
     }
     if (down && inside(p->bounds, x, y) && !inside(p->content, x, y)) {
         if (inside({p->bounds.x + p->bounds.width - 36, p->bounds.y + 5, 30, 30}, x, y)) {
@@ -6442,6 +6386,8 @@ std::string BrowserUi::groups_report() const {
 
 namespace aura {
 std::string BrowserUi::sidebar_report() const {
+    if (horizontal_tabs())
+        return "[]";
     const auto rows = sidebar_rows();
     const auto tree = app_.tree_rows(false);
     std::string out = "[";
@@ -10184,5 +10130,507 @@ std::string BrowserUi::duplicates_report() const {
         }
     }
     return out + "]}";
+}
+} // namespace aura
+
+namespace aura {
+void BrowserUi::open_tab_menu(int index, int x, int y) {
+    const int id = app_.tabs[index]->id;
+    app_.menu_width = 280;
+    app_.menu = {
+        {1, app_.tabs[index]->pinned ? app_.tr("Unpin tab") : app_.tr("Pin tab")},
+        {2, app_.tabs[index]->muted ? app_.tr("Unmute tab") : app_.tr("Mute tab")},
+        {3, app_.tr("Duplicate tab")},
+        {4, app_.tr("Close tab")},
+        {5, app_.tr("Reopen closed tab")},
+        {6, app_.tr("Move to workspace"), !app_.private_window},
+        {7, app_.tr("Tab groups"), !app_.private_window},
+        {8, app_.tr("Sleep tab"),
+         !app_.tabs[index]->pinned && !app_.tabs[index]->private_tab && !app_.tabs[index]->ntp},
+        {9, app_.tr("Open in container"), !app_.tabs[index]->private_tab}};
+    if (app_.profile.tree_tabs) {
+        const auto rows = app_.tree_rows(false);
+        const auto row =
+            std::find_if(rows.begin(), rows.end(), [&](const auto &r) { return r.index == index; });
+        app_.menu.push_back(
+            {10, app_.tr(app_.tabs[index]->tree_collapsed ? "Expand branch" : "Collapse branch"),
+             row != rows.end() && row->descendants > 0});
+        app_.menu.push_back({11, app_.tr("Detach tab"), app_.tabs[index]->parent != 0});
+        app_.menu.push_back({12, app_.tr("New child tab")});
+    }
+    app_.menu_x = std::clamp(x + 8, 8, width_ - app_.menu_width - 8);
+    app_.menu_y = std::clamp(y, 32, std::max(32, height_ - int(app_.menu.size()) * 32 - 20));
+    app_.menu_action = [this, id](int command) {
+        auto tab = app_.tab(id);
+        if (!tab)
+            return;
+        int index = 0;
+        while (index < static_cast<int>(app_.tabs.size()) && app_.tabs[index]->id != id)
+            ++index;
+        app_.activate(index);
+        if (command == 1)
+            app_.pin();
+        else if (command == 2)
+            app_.mute();
+        else if (command == 3)
+            app_.new_tab(tab->page.url, tab->private_tab, true, false, tab->workspace, tab->group,
+                         tab->container, tab->parent);
+        else if (command == 4)
+            app_.close_tab(index);
+        else if (command == 6)
+            open_workspaces(id);
+        else if (command == 7)
+            open_groups(id);
+        else if (command == 8)
+            app_.sleep_tab(id);
+        else if (command == 9)
+            open_containers(id);
+        else if (command == 10)
+            app_.toggle_tree(id);
+        else if (command == 11)
+            app_.detach_tree_tab(id);
+        else if (command == 12)
+            app_.new_tab("aura://newtab", tab->private_tab, true, false, tab->workspace, tab->group,
+                         tab->container, id);
+        else
+            app_.reopen();
+    };
+}
+void BrowserUi::open_aura_menu(bool tools) {
+    auto t = app_.current();
+    app_.close_menu();
+    app_.menu = {{1, app_.tr("New window"), true, "Ctrl+N"},
+                 {2, app_.tr("New private window"), true, "Ctrl+Shift+N"},
+                 {3, app_.tr("Close window"), true, "Ctrl+Shift+W"},
+                 {5, app_.tr("Restore previous session"),
+                  !app_.state()->previous_restored && !app_.state()->previous_windows.empty()},
+                 {4, app_.tr("Exit Aura"), true, "Ctrl+Q"},
+                 {6, app_.tr("Workspaces"), !app_.private_window, "Ctrl+Shift+E"},
+                 {7, app_.tr("Tab groups"), !app_.private_window, "Ctrl+Alt+G"},
+                 {8, app_.tr(app_.split_enabled() ? "Exit split view" : "Two pages side by side"),
+                  true, "Ctrl+Alt+V"},
+                 {9, app_.tr("Site containers"), !app_.private_window, "Ctrl+Alt+C"},
+                 {10, app_.tr("Profiles"), true, "Ctrl+Alt+P"},
+                 {11, app_.tr("Command palette"), true, "Ctrl+K"},
+                 {12, app_.tr(t && t->reader_active ? "Exit reader" : "Reader mode"),
+                  t && t->browser && !t->ntp, "Ctrl+Alt+R"},
+                 {13, app_.tr("Translate"), t && t->browser && !t->ntp, "Ctrl+Alt+T"},
+                 {14, app_.tr("Site permissions"), true, "Ctrl+Alt+I"},
+                 {15, app_.tr("Site data"), true, "Ctrl+Alt+D"},
+                 {16, app_.tr("Session snapshots"), true, "Ctrl+Alt+E"},
+                 {17, app_.tr("Screenshot"), true, "Ctrl+Shift+S"},
+                 {18, app_.tr("Keyboard shortcuts"), true},
+                 {19, app_.tr("Task manager"), true}};
+    if (horizontal_tabs() && !tools)
+        app_.menu = {{1, app_.tr("New window")},
+                     {2, app_.tr("New private window")},
+                     {21, app_.tr("Bookmarks")},
+                     {22, app_.tr("History")},
+                     {23, app_.tr("Downloads")},
+                     {24, app_.tr("Settings")},
+                     {6, app_.tr("Workspaces"), !app_.private_window},
+                     {7, app_.tr("Tab groups"), !app_.private_window},
+                     {9, app_.tr("Site containers"), !app_.private_window},
+                     {10, app_.tr("Profiles")},
+                     {25, app_.tr("Manage extensions")},
+                     {11, app_.tr("Command palette")},
+                     {26, app_.tr("More tools")},
+                     {4, app_.tr("Exit Aura")}};
+    const std::map<int, std::string> actions = {
+        {1, "new_window"},   {2, "private_window"}, {3, "close_window"}, {4, "quit"},
+        {6, "workspaces"},   {7, "groups"},         {8, "split"},        {9, "containers"},
+        {10, "profiles"},    {11, "commands"},      {12, "reader"},      {13, "translate_page"},
+        {14, "permissions"}, {15, "site_data"},     {16, "sessions"},    {17, "screenshot"},
+        {18, "hotkeys"},     {19, "task_manager"},  {21, "bookmarks"},   {22, "history"},
+        {23, "downloads"},   {24, "settings"}};
+    for (auto &item : app_.menu)
+        if (auto found = actions.find(item.id); found != actions.end())
+            item.shortcut = shortcut_hint(found->second);
+    app_.menu_width = 320;
+    app_.menu_x = 16;
+    app_.menu_y = std::clamp(76, 0, std::max(0, height_ - int(app_.menu.size()) * 32 - 12));
+    app_.menu_action = [this](int command) {
+        if (command == 21)
+            panel(Bookmarks);
+        else if (command == 22)
+            panel(History);
+        else if (command == 23)
+            panel(Downloads);
+        else if (command == 24)
+            panel(Settings);
+        else if (command == 25)
+            panel(Extensions);
+        else if (command == 26)
+            open_aura_menu(true);
+        else if (command == 19)
+            open_task_manager();
+        else if (command == 1 || command == 2)
+            app_.new_window(command == 2);
+        else if (command == 3)
+            app_.request_quit();
+        else if (command == 5)
+            app_.restore_previous_session();
+        else if (command == 6)
+            open_workspaces();
+        else if (command == 7)
+            open_groups();
+        else if (command == 8)
+            app_.toggle_split();
+        else if (command == 9)
+            open_containers();
+        else if (command == 10)
+            open_profiles();
+        else if (command == 11)
+            open_commands();
+        else if (command == 12)
+            app_.toggle_reader();
+        else if (command == 13)
+            open_translation(app_.current() && !app_.current()->selected_text.empty());
+        else if (command == 14)
+            open_permissions();
+        else if (command == 15)
+            open_site_data();
+        else if (command == 16)
+            open_sessions();
+        else if (command == 17)
+            open_screenshot();
+        else if (command == 18)
+            open_hotkeys();
+        else
+            app_.request_exit();
+    };
+    return;
+}
+} // namespace aura
+namespace aura {
+bool BrowserUi::horizontal_tabs() const { return app_.profile.tab_layout == "horizontal"; }
+TabStripLayout BrowserUi::horizontal_layout() const {
+    return tab_strip_layout(width_, int(sidebar_rows().size()), strip_scroll_);
+}
+bool BrowserUi::caption_hit(int x, int y) const {
+    if ((app_.menu_action || app_.menu_callback) &&
+        inside({app_.menu_x, app_.menu_y, app_.menu_width, int(app_.menu.size()) * 32 + 12}, x, y))
+        return false;
+    return horizontal_tabs() ? tab_strip_caption(horizontal_layout(), x, y)
+                             : y >= 0 && y < 30 && x >= 240 && x < width_ - 144;
+}
+bool BrowserUi::sync_tab_layout() {
+    if (strip_mode_ == horizontal_tabs())
+        return false;
+    strip_mode_ = horizontal_tabs();
+    drag_tab_ = -1;
+    drag_source_ = 0;
+    strip_hint_id_ = 0;
+    strip_hint_visible_ = 0;
+    strip_hint_ready_ = false;
+    resize(width_, height_);
+    return true;
+}
+void BrowserUi::draw_tab_strip(SkCanvas &c) {
+    const auto theme = interface_theme(app_.profile);
+    const auto rows = sidebar_rows();
+    const auto tree = app_.tree_rows(false);
+    auto selected = std::find(rows.begin(), rows.end(), app_.active);
+    if (selected == rows.end()) {
+        auto current = app_.current();
+        int remaining = int(app_.tabs.size());
+        while (current && current->parent && selected == rows.end() && remaining-- > 0) {
+            current = app_.tab(current->parent);
+            if (current)
+                for (auto it = rows.begin(); it != rows.end(); ++it)
+                    if (*it >= 0 && app_.tabs[*it]->id == current->id) {
+                        selected = it;
+                        break;
+                    }
+        }
+        if (selected == rows.end() && app_.current() && app_.current()->group)
+            selected = std::find(rows.begin(), rows.end(), -app_.current()->group);
+    }
+    const int position = selected == rows.end() ? -1 : int(selected - rows.begin());
+    const int id = app_.current() ? app_.current()->id : 0;
+    auto layout = horizontal_layout();
+    if (id != strip_active_id_ || position != strip_active_row_) {
+        if (position >= 0 && position < layout.first)
+            strip_scroll_ = position;
+        else if (position >= layout.first + layout.capacity)
+            strip_scroll_ = position - layout.capacity + 1;
+        strip_active_id_ = id;
+        strip_active_row_ = position;
+    }
+    layout = horizontal_layout();
+    strip_scroll_ = layout.first;
+    auto button = [&](Rect r, const char *name, bool enabled) {
+        focus_target(r);
+        if (enabled && inside(r, hover_x_, hover_y_))
+            fill(c, r, 6, SkColorSetA(theme.accent, 25));
+        icon(c, name, r.x + (r.width - 16) / 2, r.y + 6, 16, enabled ? theme.text : theme.muted);
+    };
+    if (layout.overflow) {
+        button(layout.previous, "back", layout.first > 0);
+        button(layout.next, "forward", layout.first + layout.capacity < int(rows.size()));
+    }
+    button(layout.add, "plus", true);
+    for (const auto &slot : layout.slots) {
+        const int index = rows[slot.position];
+        const auto r = slot.bounds;
+        const bool active = slot.position == position;
+        const bool hover = inside(r, hover_x_, hover_y_);
+        if (active || hover)
+            fill(c, r, 7, SkColorSetA(theme.surface, active ? 245 : 140));
+        if (active)
+            fill(c, {r.x + 8, r.y + r.height - 2, r.width - 16, 2}, 1, theme.accent);
+        if (index < 0) {
+            const auto g = app_.profile.group(-index);
+            if (!g)
+                continue;
+            const auto color = tab_group_color(app_.profile, g->color);
+            focus_target({r.x, r.y, r.width - 24, r.height});
+            focus_target({r.x + r.width - 24, r.y, 24, r.height});
+            icon(c, g->collapsed ? "expand" : "collapse", r.x + 6, r.y + 6, 16, color);
+            label(c, medium_, g->name, r.x + 28, r.y + 19, 12, color, r.width - 52);
+            icon(c, "plus", r.x + r.width - 20, r.y + 7, 14, color);
+            continue;
+        }
+        const auto &tab = *app_.tabs[index];
+        const auto node =
+            std::find_if(tree.begin(), tree.end(), [&](const auto &r) { return r.index == index; });
+        const bool children = app_.profile.tree_tabs && node != tree.end() && node->descendants > 0;
+        const int left = r.x + (children ? 28 : 8);
+        if (children) {
+            focus_target({r.x + 4, 4, 20, 24});
+            icon(c, tab.tree_collapsed ? "expand" : "collapse", r.x + 6, r.y + 6, 16, theme.accent);
+        }
+        focus_target({left, r.y, r.x + r.width - 24 - left, r.height});
+        if (!tab.pinned)
+            focus_target({r.x + r.width - 24, r.y, 24, r.height});
+        if (tab.loading)
+            fill(c, {left + 2, r.y + 9, 10, 10}, 5, theme.accent);
+        else if (tab.sleeping)
+            label(c, medium_, "z", left + 2, r.y + 20, 14, theme.muted);
+        else if (tab.media_capture)
+            icon(c, tab.media_video ? "camera" : "microphone", left, r.y + 6, 16, theme.accent);
+        else if (tab.private_tab)
+            icon(c, "private", left, r.y + 6, 16, theme.accent);
+        else if (app_.profile.show_favicons && tab.favicon.generation())
+            image(c, tab.favicon, {left, r.y + 6, 16, 16});
+        else
+            icon(c, tab.ntp ? "plus" : "globe", left, r.y + 6, 16, theme.muted);
+        label(c, active ? medium_ : regular_,
+              tab.page.title.empty() ? url_host(tab.page.url) : tab.page.title, left + 22, r.y + 19,
+              12, theme.text, r.x + r.width - 26 - left - 22);
+        if (auto g = app_.profile.group(tab.group))
+            fill(c, {r.x + 6, r.y + 1, r.width - 12, 2}, 1,
+                 tab_group_color(app_.profile, g->color));
+        icon(c, tab.pinned ? "pin" : "close", r.x + r.width - 19, r.y + 8, 12, theme.muted);
+    }
+}
+bool BrowserUi::tab_strip_pointer(const PointerInput &input) {
+    const int x = input.point.x, y = input.point.y;
+    const auto rows = sidebar_rows();
+    const auto layout = horizontal_layout();
+    if (input.kind == PointerInput::Move && drag_tab_ >= 0 && std::abs(x - drag_x_) > 18) {
+        if (y >= 32 || y < 0)
+            return false;
+        const int dragged = app_.tabs[drag_tab_]->id;
+        for (const auto &slot : layout.slots)
+            if (inside(slot.bounds, x, y)) {
+                const int target = rows[slot.position];
+                if (target < 0)
+                    app_.set_tab_group(dragged, -target, true);
+                else {
+                    if (!app_.profile.tree_tabs)
+                        app_.set_tab_group(dragged, app_.tabs[target]->group);
+                    app_.move_tab(drag_tab_, target);
+                    for (int i = 0; i < int(app_.tabs.size()); ++i)
+                        if (app_.tabs[i]->id == dragged)
+                            drag_tab_ = i;
+                }
+                drag_x_ = x;
+                return true;
+            }
+        return true;
+    }
+    if (y < 0 || y >= 32)
+        return false;
+    if (input.kind == PointerInput::Wheel) {
+        if (app_.profile.wheel_switch)
+            app_.cycle_tab(input.dy < 0 ? 1 : -1);
+        else
+            strip_scroll_ = std::clamp(layout.first + ((input.dy < 0 || input.dx > 0) ? 1 : -1), 0,
+                                       std::max(0, int(rows.size()) - layout.capacity));
+        app_.changed();
+        return true;
+    }
+    if (input.kind != PointerInput::Down)
+        return false;
+    if (input.button == 1 && inside(layout.add, x, y)) {
+        app_.open_new_tab(app_.current() && app_.current()->private_tab);
+        return true;
+    }
+    if (layout.overflow && input.button == 1 &&
+        (inside(layout.previous, x, y) || inside(layout.next, x, y))) {
+        strip_scroll_ = std::clamp(layout.first + (inside(layout.next, x, y) ? 1 : -1), 0,
+                                   std::max(0, int(rows.size()) - layout.capacity));
+        app_.changed();
+        return true;
+    }
+    for (const auto &slot : layout.slots)
+        if (inside(slot.bounds, x, y)) {
+            const int index = rows[slot.position];
+            if (index < 0) {
+                auto g = app_.profile.group(-index);
+                if (!g)
+                    return true;
+                if (input.button == 3) {
+                    open_groups();
+                    group_edit_ = g->id;
+                    group_input_.set(g->name, true);
+                    group_color_ = g->color;
+                    group_input_focus_ = true;
+                } else if (input.button == 1 && x >= slot.bounds.x + slot.bounds.width - 24)
+                    app_.new_tab("aura://newtab", app_.current() && app_.current()->private_tab,
+                                 true, false, app_.workspace, g->id);
+                else if (input.button == 1) {
+                    g->collapsed = !g->collapsed;
+                    app_.changed(true);
+                }
+                return true;
+            }
+            const auto nodes = app_.tree_rows(false);
+            const auto node = std::find_if(nodes.begin(), nodes.end(),
+                                           [&](const auto &r) { return r.index == index; });
+            if (input.button == 1 && app_.profile.tree_tabs && node != nodes.end() &&
+                node->descendants && x < slot.bounds.x + 24) {
+                app_.toggle_tree(app_.tabs[index]->id);
+                return true;
+            }
+            if (input.button == 2 && !app_.profile.middle_close)
+                return true;
+            if (input.button == 2 ||
+                (input.button == 1 && x >= slot.bounds.x + slot.bounds.width - 24 &&
+                 !app_.tabs[index]->pinned))
+                app_.close_tab(index);
+            else if (input.button == 1 || input.button == 3) {
+                app_.activate(index);
+                if (input.button == 3)
+                    open_tab_menu(index, x, y + 30);
+                else {
+                    drag_tab_ = index;
+                    drag_source_ = app_.tabs[index]->id;
+                    drag_x_ = x;
+                }
+            }
+            return true;
+        }
+    return false;
+}
+std::string BrowserUi::tab_strip_report() const {
+    if (!horizontal_tabs())
+        return "null";
+    const auto rows = sidebar_rows();
+    const auto layout = horizontal_layout();
+    const auto nodes = app_.tree_rows(false);
+    auto rect = [](Rect r) {
+        return "[" + std::to_string(r.x) + "," + std::to_string(r.y) + "," +
+               std::to_string(r.width) + "," + std::to_string(r.height) + "]";
+    };
+    std::string out = "{\"first\":" + std::to_string(layout.first) +
+                      ",\"capacity\":" + std::to_string(layout.capacity) +
+                      ",\"overflow\":" + (layout.overflow ? "true" : "false") +
+                      ",\"add\":" + rect(layout.add) + ",\"previous\":" + rect(layout.previous) +
+                      ",\"next\":" + rect(layout.next) + ",\"caption\":" + rect(layout.caption) +
+                      ",\"menu\":[12,37,34,36],\"web\":" + rect(web_bounds()) + ",\"items\":[";
+    bool first = true;
+    for (const auto &slot : layout.slots) {
+        if (!first)
+            out += ',';
+        first = false;
+        const int index = rows[slot.position];
+        const auto node = std::find_if(nodes.begin(), nodes.end(),
+                                       [&](const auto &r) { return r.index == index; });
+        const bool children =
+            index >= 0 && app_.profile.tree_tabs && node != nodes.end() && node->descendants > 0;
+        out +=
+            "{\"position\":" + std::to_string(slot.position) +
+            ",\"tab_index\":" + std::to_string(index < 0 ? -1 : index) +
+            ",\"id\":" + std::to_string(index < 0 ? 0 : app_.tabs[index]->id) +
+            ",\"group\":" + std::to_string(index < 0 ? -index : app_.tabs[index]->group) +
+            ",\"bounds\":" + rect(slot.bounds) +
+            ",\"disclosure\":" + (children ? rect({slot.bounds.x + 4, 4, 20, 24}) : "null") +
+            ",\"close\":" +
+            rect({slot.bounds.x + slot.bounds.width - 24, slot.bounds.y, 24, slot.bounds.height}) +
+            "}";
+    }
+    return out + "],\"hint\":" + std::to_string(strip_hint_visible_) +
+           ",\"focus\":" + std::to_string(keyboard_focus_) + ",\"focus_bounds\":" +
+           (keyboard_focus_ >= 0 && keyboard_focus_ < int(focus_targets_.size())
+                ? rect(focus_targets_[keyboard_focus_])
+                : "null") +
+           "}";
+}
+} // namespace aura
+
+namespace aura {
+void BrowserUi::draw_tab_hint(SkCanvas &c) {
+    strip_hint_visible_ = 0;
+    if (!horizontal_tabs() || panel_ != None || editing || find_open || !app_.dialogs.empty() ||
+        app_.menu_action || app_.menu_callback || app_.extension_popup || drag_tab_ >= 0)
+        return;
+    const auto rows = sidebar_rows();
+    const auto layout = horizontal_layout();
+    const bool keyboard = keyboard_focus_ >= 0 && keyboard_focus_ < int(focus_targets_.size());
+    int x = hover_x_, y = hover_y_;
+    if (keyboard) {
+        const auto focus = focus_targets_[keyboard_focus_];
+        x = focus.x + focus.width / 2;
+        y = focus.y + focus.height / 2;
+    } else if (!strip_hint_ready_)
+        return;
+    for (const auto &slot : layout.slots)
+        if (inside(slot.bounds, x, y)) {
+            const int index = rows[slot.position];
+            const int id = index < 0 ? index : app_.tabs[index]->id;
+            if (!keyboard && id != strip_hint_id_)
+                return;
+            std::string title, address, context;
+            if (index < 0) {
+                const auto group = app_.profile.group(-index);
+                if (!group)
+                    return;
+                title = group->name;
+                int count = 0;
+                for (const auto &t : app_.tabs)
+                    if (t->group == group->id && t->workspace == app_.workspace && !t->page.closed)
+                        ++count;
+                context = app_.tr("Tabs") + ": " + std::to_string(count);
+            } else {
+                const auto &tab = *app_.tabs[index];
+                title = tab.page.title.empty() ? url_host(tab.page.url) : tab.page.title;
+                address = tab.page.url;
+                context = tab.private_tab ? app_.tr("Private browsing")
+                                          : app_.profile.container_label(tab.container);
+                if (auto g = app_.profile.group(tab.group))
+                    context += " / " + g->name;
+            }
+            const auto theme = interface_theme(app_.profile);
+            const int width = std::min(420, width_ - 24);
+            const auto lines = wrap_text(font(regular_, 12), title, width - 24, 3);
+            Rect r{std::clamp(slot.bounds.x, 12, width_ - width - 12), 82, width,
+                   30 + int(lines.size()) * 16 + (address.empty() ? 0 : 18)};
+            shadow(c, r, 8);
+            fill(c, r, 8, theme.surface);
+            int baseline = r.y + 21;
+            for (const auto &line : lines) {
+                label(c, medium_, line, r.x + 12, baseline, 12, theme.text, width - 24);
+                baseline += 16;
+            }
+            if (!address.empty()) {
+                label(c, regular_, address, r.x + 12, baseline, 11, theme.muted, width - 24);
+                baseline += 18;
+            }
+            label(c, regular_, context, r.x + 12, baseline, 11, theme.muted, width - 24);
+            strip_hint_visible_ = id;
+            return;
+        }
 }
 } // namespace aura

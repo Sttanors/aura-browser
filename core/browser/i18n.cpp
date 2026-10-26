@@ -3,6 +3,15 @@
 namespace aura {
 namespace {
 constexpr Translation catalog[] = {
+    {"Show the website address under each sidebar title.",
+     "Показывать адрес сайта под заголовком вкладки в боковой панели."},
+    {"Show favicons in the tab bar.", "Показывать значки сайтов на панели вкладок."},
+    {"More tools", "Другие инструменты"},
+    {"Tab bar position", "Расположение вкладок"},
+    {"Choose a sidebar or a horizontal tab bar. Pages stay open.",
+     "Выберите боковую или верхнюю панель. Страницы остаются открытыми."},
+    {"Sidebar", "Сбоку"},
+    {"Top", "Сверху"},
     {"Hidden tabs: ", "Скрыто вкладок: "},
     {"Level ", "Уровень "},
     {"Tree tabs", "Древовидные вкладки"},
