@@ -12,6 +12,9 @@
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/spdlog.h>
 #include <thread>
+#ifndef _WIN32
+#include "platform/linux/window_backend.hpp"
+#endif
 #ifdef _WIN32
 #include "include/cef_sandbox_win.h"
 #include "include/cef_version.h"
@@ -25,10 +28,10 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
         return 0;
     }
     if (command->HasSwitch("help")) {
-        std::cout
-            << "Aura browser\n  --version --url=URL --data-dir=PROFILE --theme=aurora-dark "
-               "--scale=1.5\n  --private --report=FILE --software-rendering (default) --gpu "
-               "(experimental)\n  --safe-mode --diagnostic-report=FILE --diagnostic-verbose\n";
+        std::cout << "Aura browser\n  --version --url=URL --data-dir=PROFILE --theme=aurora-dark "
+                     "--scale=1.5\n  --private --report=FILE --software-rendering (default) --gpu "
+                     "(experimental)\n  --safe-mode --diagnostic-report=FILE "
+                     "--diagnostic-verbose\n  --window-system=auto|x11|wayland (Linux)\n";
         return 0;
     }
     const auto path = command->HasSwitch("data-dir")
@@ -49,8 +52,19 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
         if (parsed != input.size() || !std::isfinite(scale) || scale < 1 || scale > 3)
             throw std::runtime_error("Scale must be between 1 and 3");
     }
-    const bool accelerated =
+#ifndef _WIN32
+    const char *backend_env = std::getenv("AURA_WINDOW_SYSTEM");
+    aura::select_linux_window_system(command->HasSwitch("window-system")
+                                         ? command->GetSwitchValue("window-system").ToString()
+                                     : backend_env ? backend_env
+                                                   : "x11");
+#endif
+    bool accelerated =
         !safe_mode && command->HasSwitch("gpu") && !command->HasSwitch("software-rendering");
+#ifndef _WIN32
+    if (aura::linux_window_system() == "wayland")
+        accelerated = false;
+#endif
     aura::BrowserController browser(path, binary / "fonts/InterVariable.ttf", scale, accelerated,
                                     {}, false, safe_mode);
     browser.state()->verbose_logging = verbose;
@@ -72,7 +86,7 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
     std::vector<std::string> restart_arguments{"--data-dir=" + aura::utf8_path(path),
                                                "--resume-session"};
     for (const char *name : {"report", "diagnostic-report", "diagnostic-verbose", "scale", "gpu",
-                             "software-rendering"})
+                             "software-rendering", "window-system"})
         if (command->HasSwitch(name)) {
             auto value = command->GetSwitchValue(name).ToString();
             if ((std::string_view(name) == "report" ||
@@ -89,7 +103,7 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
         extension_paths.clear();
     CefRefPtr<aura::DiagnosticApp> app = new aura::DiagnosticApp(
         schedule, false, !accelerated, extension_paths.empty() ? "-" : extension_paths, safe_mode,
-        verbose);
+        verbose, browser.window->backend());
     app->relaunch = [&browser](CefRefPtr<CefCommandLine> incoming) {
         if (incoming->HasSwitch("safe-mode") && !browser.safe_mode()) {
             browser.restart_in_mode(true);

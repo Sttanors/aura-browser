@@ -196,9 +196,22 @@ BrowserController::BrowserController(std::filesystem::path path, std::filesystem
             ++audit["native_pointer_down"];
         ui->pointer(p);
     };
-    hooks.key = [this](const CefKeyEvent &key) { return ui->key(key); };
-    hooks.text = [this](const std::string &text) { ui->text(text); };
+    hooks.key = [this](const CefKeyEvent &key) {
+        if (key.type == KEYEVENT_RAWKEYDOWN)
+            ++audit["native_key_down"];
+        return ui->key(key);
+    };
+    hooks.text = [this](const std::string &text) {
+        if (window && window->backend() == "wayland")
+            ui->commit_composition(text);
+        else
+            ui->text(text);
+    };
+    hooks.preedit = [this](const std::string &t, int start, int length) {
+        ui->composition(t, start, length);
+    };
     hooks.focus = [this](bool focus) {
+        ++audit[focus ? "native_focus_gained" : "native_focus_lost"];
         if (focus && window) {
             try {
                 state_->profiles.reload();
@@ -209,6 +222,7 @@ BrowserController::BrowserController(std::filesystem::path path, std::filesystem
             }
         }
         if (!focus) {
+            ui->composition("", 0, 0);
             ui->cancel_tab_gesture();
             close_extension_popup(false);
         }
@@ -1419,6 +1433,7 @@ void BrowserController::save_session() {
 std::string BrowserController::report() const {
     std::ostringstream out;
     out << "{\"safe_mode\":" << (safe_mode() ? "true" : "false")
+        << ",\"window_system\":" << json_quote(window->backend())
         << ",\"product\":\"Aura\",\"pid\":" << process_id() << ",\"window\":" << window->native_id()
         << ",\"window_uid\":" << window_uid
         << ",\"spelling_resources_ready\":" << (state_->spelling_resources_ready ? "true" : "false")
@@ -2023,6 +2038,8 @@ void BrowserController::open_profile(int id) {
         const auto executable = executable_directory() / "aura_browser";
 #endif
         std::vector<std::string> arguments{"--data-dir=" + utf8_path(directory)};
+        if (window->backend() == "wayland")
+            arguments.push_back("--window-system=wayland");
         // Keep disposable integration reports and renderer options scoped to this profile.
         if (const auto command = CefCommandLine::GetGlobalCommandLine()) {
             for (const char *option : {"scale", "gpu", "software-rendering"})

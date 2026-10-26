@@ -735,3 +735,58 @@ Windows не запускалась.
 Реализованы B1–B6 и улучшения 1–13. Остались нативный Wayland и реальная выгрузка
 документов вкладок. Публичные установщики остаются v0.4.0-preview.2, без этих
 изменений; релиз не создавался.
+
+
+Windows CI пункта 13 [40321438724](https://github.com/Sttanors/aura-browser/actions/runs/40321438724)
+PASS на 61f3d5cd9c41479fec64f96d5ff993ba47d1cc09: сборка, unit, native GUI,
+третий безопасный запуск и установщик.
+
+## 14. Нативный Wayland — проверен первый экспериментальный этап, пункт открыт
+
+X11 выделен за общий LinuxWindow interface. Отдельный Wayland backend использует
+статически собранный SDL 3.4.18 (SHA-256 в lockfile), native Wayland/Ozone и
+собственный Skia/SHM presenter: три буфера с ожиданием release и frame callback.
+GPU отключён, включая запуск с --gpu. По умолчанию остаётся X11; явный
+--window-system=wayland или opt-in auto сохраняется при перезапуске. Неудачный
+запуск Wayland не скрывается переключением на X11.
+
+Реализованы окна и кнопки заголовка, клавиатура/указатель, текстовый ввод,
+масштабирование и ограниченный нативный clipboard. Перед копированием из CEF
+проверяются edit permissions Chromium, включая запрет парольных полей. Вставка
+использует нативный IME commit. Передачи неблокирующие, до 16 МиБ и пяти секунд;
+слишком большой поток дочитывается без сохранения, чтобы не обрывать producer
+ранним закрытием pipe. Содержимое буфера в журнал не записывается.
+
+В закреплённом исходнике SDL применяются два проверяемых idempotent-патча:
+отключение второго владельца wl_data_device на той же connection и проверка
+null data_device при потере фокуса. Без первого Weston заменял clipboard offer,
+без второго SDL падал при смене фокуса. Патч и его лицензии входят в исходники;
+уведомления SDL и встроенных Wayland protocol XML добавлены в runtime archive.
+
+Проверено 26.10.2026: Linux Release build PASS без предупреждений, все 170 CTest
+PASS. Нативный GUI PASS отдельно при compositor scale 1 и 2 (100% и 200% DPI,
+UI zoom 100%). Только приватный Weston 15 Pixman, без DISPLAY/XWayland/GPU;
+тестовый модуль подаёт настоящий protocol input и никогда не входит в пакет.
+Проверены реальный CEF HTTP paint, ввод указателем/клавиатурой, Ctrl+T/Ctrl+W,
+запрет копирования пароля, page → address clipboard, native → CEF textarea,
+Unicode/emoji/многострочный round trip с независимым SDL clipboard peer,
+отказ 17 МиБ без изменения формы, сохранение формы после смены фокуса/вкладки,
+закрытие через protocol и сбалансированный CEF lifecycle. Это не проверка полного
+IME со сторонним input method и не проверка пользовательского desktop/GPU.
+
+На той же сборке последовательно прошли X11 browser, windows, clipboard,
+safe-mode и extension-access в приватном Weston Pixman + Xwayland SHM без GLX.
+Windows CI пункта 13 подтверждён выше; новый Windows CI этого этапа ещё не
+запускался. Локально Windows не запускалась.
+
+Для завершения пункта 14 остаются native DND между окнами, полная проверка
+IME/preedit, clipboard в попапах расширений/контекстном меню, системные chooser
+и дополнительные compositor, fractional/multi-monitor сценарии. Глобальные
+координаты окон не выдумываются; живой перенос через выбор окна остаётся доступен.
+Контрольный runtime ZIP PASS: бинарник совпадает с финальной сборкой, лицензия
+SDL и 23 protocol notices присутствуют, тестового модуля/peer и профиля нет.
+Динамической зависимости libSDL3.so нет. Python compile и git diff --check PASS.
+Пункт 15 ещё не начинался. Публичные установщики остаются v0.4.0-preview.2.
+
+Логи: artifacts/wayland-validation/. Снимки: artifacts/wayland-smoke/.
+[Запуск и ограничения RU/EN](wayland.md).

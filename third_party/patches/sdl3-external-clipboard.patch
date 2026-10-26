@@ -1,0 +1,17 @@
+--- a/src/video/wayland/SDL_waylandvideo.c
++++ b/src/video/wayland/SDL_waylandvideo.c
+@@ -1318,3 +1318,6 @@
+         Wayland_DisplayInitTextInputManager(d, id);
+-    } else if (SDL_strcmp(interface, "wl_data_device_manager") == 0) {
++    /* Aura integration: avoid two clipboard/data-device owners on one connection.
++     * The application's native service also owns future drag-and-drop handling. */
++    } else if (SDL_strcmp(interface, "wl_data_device_manager") == 0 &&
++               !SDL_GetHintBoolean("AURA_WAYLAND_EXTERNAL_CLIPBOARD", false)) {
+         d->data_device_manager = wl_registry_bind(d->registry, id, &wl_data_device_manager_interface, SDL_min(3, version));
+--- a/src/video/wayland/SDL_waylandevents.c
++++ b/src/video/wayland/SDL_waylandevents.c
+@@ -2155,3 +2155,3 @@
+     // The spec says that data offers are no longer valid when keyboard focus is lost.
+-    if (seat->data_device->selection_offer) {
++    if (seat->data_device && seat->data_device->selection_offer) {
+         Wayland_data_offer_destroy(seat->data_device->selection_offer);

@@ -493,11 +493,28 @@ void BrowserClient::OnFindResult(CefRefPtr<CefBrowser>, int, int count, const Ce
         controller().changed();
     }
 }
-void BrowserClient::OnBeforeContextMenu(CefRefPtr<CefBrowser> b, CefRefPtr<CefFrame>,
+void BrowserClient::OnBeforeContextMenu(CefRefPtr<CefBrowser> b, CefRefPtr<CefFrame> frame,
                                         CefRefPtr<CefContextMenuParams> p,
                                         CefRefPtr<CefMenuModel> model) {
     model->Clear();
     const auto tab = controller().tab(id_);
+    if (clipboard_query_) {
+        clipboard_query_ = false;
+        if (tab && tab == controller().current() &&
+            tab->navigation_serial == clipboard_navigation_ &&
+            std::chrono::steady_clock::now() < clipboard_deadline_) {
+            ++controller().audit["native_clipboard_queries"];
+            const auto flag = clipboard_cut_ ? CM_EDITFLAG_CAN_CUT : CM_EDITFLAG_CAN_COPY;
+            if ((p->GetEditStateFlags() & flag) && !p->GetSelectionText().empty()) {
+                controller().window->copy(p->GetSelectionText());
+                if (clipboard_cut_ && frame)
+                    frame->Delete();
+            } else
+                ++controller().audit["native_clipboard_refused"];
+            controller().changed();
+        }
+        return;
+    }
     spelling_menu_navigation_ = tab ? tab->navigation_serial : 0;
     // CEF 156 can report IsSpellCheckEnabled() == false even for a native
     // spelling marker with suggestions. The marker itself is authoritative;
@@ -551,6 +568,10 @@ void BrowserClient::OnBeforeContextMenu(CefRefPtr<CefBrowser> b, CefRefPtr<CefFr
 bool BrowserClient::RunContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
                                    CefRefPtr<CefContextMenuParams> p, CefRefPtr<CefMenuModel> model,
                                    CefRefPtr<CefRunContextMenuCallback> callback) {
+    if (model->GetCount() == 0) {
+        callback->Cancel();
+        return true;
+    }
     controller().close_menu();
     controller().menu_callback = callback;
     controller().menu.clear();
@@ -704,7 +725,7 @@ namespace aura {
 bool BrowserClient::GetScreenPoint(CefRefPtr<CefBrowser>, int x, int y, int &screen_x,
                                    int &screen_y) {
     const auto t = controller().tab(id_);
-    if (!t)
+    if (!t || controller().window->backend() == "wayland")
         return false;
     const auto r = controller().ui->page_bounds(*t);
     const auto p = controller().window->screen_point(r.x + int(x / controller().ui_scale),
@@ -712,5 +733,24 @@ bool BrowserClient::GetScreenPoint(CefRefPtr<CefBrowser>, int x, int y, int &scr
     screen_x = p.first;
     screen_y = p.second;
     return true;
+}
+} // namespace aura
+
+namespace aura {
+void BrowserClient::native_copy(bool cut) {
+    auto t = controller().tab(id_);
+    if (!t || !t->browser || t->closing)
+        return;
+    clipboard_query_ = true;
+    clipboard_cut_ = cut;
+    clipboard_navigation_ = t->navigation_serial;
+    clipboard_deadline_ = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    CefKeyEvent key;
+    key.windows_key_code = 0x5d;
+    key.native_key_code = 135;
+    key.type = KEYEVENT_RAWKEYDOWN;
+    t->browser->GetHost()->SendKeyEvent(key);
+    key.type = KEYEVENT_KEYUP;
+    t->browser->GetHost()->SendKeyEvent(key);
 }
 } // namespace aura

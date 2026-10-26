@@ -35,7 +35,7 @@ void DiagnosticApp::OnBeforeCommandLineProcessing(const CefString& process_type,
                                        blink_features + "SpellCheckCustomDictionaryAPI");
     }
 #ifndef _WIN32
-    command->AppendSwitchWithValue("ozone-platform", capture_ ? "headless" : "x11");
+    command->AppendSwitchWithValue("ozone-platform", capture_ ? "headless" : ozone_);
 #endif
     if (software_) {
         command->AppendSwitch("disable-gpu");

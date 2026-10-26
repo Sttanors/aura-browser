@@ -33,6 +33,7 @@ def runtime_archive(output: Path):
         license_names = ("LICENSE", "LICENSE.txt", "LICENSE.TXT", "OFL.txt", "CREDITS.html", "FTL.TXT", "zlib.h")
         for name, source in [("cef", cef), ("skia", ROOT / "third_party/src/skia"),
                              ("spdlog", ROOT / "third_party/src/spdlog"),
+                             ("sdl3", ROOT / "third_party/src/sdl3"),
                              ("tomlplusplus", ROOT / "third_party/src/tomlplusplus"),
                              ("inter", ROOT / "resources/fonts"),
                              ("freetype", ROOT / "third_party/src/skia/third_party/externals/freetype/docs"),
@@ -45,6 +46,17 @@ def runtime_archive(output: Path):
                     target = stage / "licenses" / name / filename
                     target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(candidate, target)
+        if platform == "linux64":
+            import xml.etree.ElementTree as ET
+            protocols = ROOT/'third_party/src/sdl3/wayland-protocols'
+            if not (ROOT/'third_party/src/sdl3/LICENSE.txt').is_file():
+                raise RuntimeError("Static Wayland dependency license is missing")
+            for protocol in protocols.glob('*.xml'):
+                notice = ET.parse(protocol).getroot().find('copyright')
+                if notice is not None:
+                    target = stage/'licenses/sdl3-wayland'/(protocol.stem+'.txt')
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text(''.join(notice.itertext()).strip()+'\n', encoding='utf-8')
         if platform == "windows64":
             share = build / "vcpkg_installed/x64-windows-static/share"
             if not share.is_dir():

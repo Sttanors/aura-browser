@@ -40,9 +40,10 @@ struct DiagnosticState {
 class DiagnosticApp final : public CefApp, public CefBrowserProcessHandler {
 public:
   DiagnosticApp(PumpSchedule &schedule, bool capture, bool software, std::string extension,
-                bool safe_mode = false, bool verbose_logging = true)
+                bool safe_mode = false, bool verbose_logging = true, std::string ozone = "x11")
       : schedule_(schedule), capture_(capture), software_(software), safe_mode_(safe_mode),
-        verbose_logging_(verbose_logging), extension_(std::move(extension)) {}
+        verbose_logging_(verbose_logging), extension_(std::move(extension)),
+        ozone_(std::move(ozone)) {}
   CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
   void OnScheduleMessagePumpWork(int64_t delay_ms) override { schedule_.schedule(delay_ms); }
   void OnContextInitialized() override { context_ready_ = true; }
@@ -59,7 +60,7 @@ private:
     PumpSchedule& schedule_;
     bool capture_, software_;
     bool safe_mode_, verbose_logging_;
-    std::string extension_;
+    std::string extension_, ozone_;
     bool context_ready_ = false;
     IMPLEMENT_REFCOUNTING(DiagnosticApp);
 };

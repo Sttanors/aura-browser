@@ -561,3 +561,7 @@ std::optional<std::pair<int, int>> BrowserWindow::point_from(const BrowserWindow
     return std::pair<int, int>{int(p.x / impl_->scale), int(p.y / impl_->scale)};
 }
 } // namespace aura
+
+namespace aura {
+std::string BrowserWindow::backend() const { return "win32"; }
+} // namespace aura

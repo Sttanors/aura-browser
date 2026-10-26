@@ -36,6 +36,9 @@ Linux 0.4.0 Preview 1: 122 CTest и 33 GUI-набора; подробные ре
 временный запуск без расширений, внедрений, блокировщика и GPU, с локальным
 обезличенным отчётом. В опубликованные установщики эта функция пока не входит.
 
+Экспериментальный [нативный Wayland backend](docs/wayland.md) доступен в dev-ветке
+через `--window-system=wayland`. X11/XWayland пока остаётся вариантом по умолчанию.
+
 ## Установка в систему
 
 Все варианты доступны в [релизе](https://github.com/Sttanors/aura-browser/releases/tag/v0.4.0-preview.2).
@@ -387,7 +390,8 @@ Scriptlets, изменение CSP ответа, regex/XPath в процедур
 
 ## Сборка
 
-Нужны Clang с C++20, CMake 3.31+, Python 3.12+, pkg-config, заголовки X11/EGL/GLES3,
+Нужны Clang с C++20, CMake 3.31+, Python 3.12+, pkg-config, заголовки X11/Xext,
+Xpresent/Xrandr, EGL/GLES3, wayland-client/libxkbcommon и wayland-protocols,
 Rust / Cargo 1.88+, заголовки OpenSSL, libarchive и SQLite3,
 и runtime-библиотеки CEF для вашего дистрибутива. При первой сборке Cargo скачивает
 зафиксированные в `core/adblock/Cargo.lock` зависимости; повторная сборка использует локальный кэш. GN/Ninja скачиваются bootstrap-скриптом.
@@ -405,6 +409,13 @@ bootstrap не устанавливает системные пакеты. URL �
 Повторная сборка из кэша: `python3 scripts/bootstrap.py --offline --jobs 8`.
 
 ## Проверка настоящего браузера
+
+В текущей ветке разработки проходят 170 CTest; результаты отдельных функций
+и ограничения записаны в [журнале](docs/improvements-progress.md).
+Нативный Wayland проверяется отдельно: `python3 scripts/verify_wayland.py`
+и запуск с `--scale=2`. Нужны Weston 15 с libweston headers, C compiler и Pillow.
+Используется приватный Pixman compositor без DISPLAY/XWayland/GPU;
+[покрытие и ограничения](docs/wayland.md).
 
 ```bash
 python3 scripts/verify_browser.py --suite=all

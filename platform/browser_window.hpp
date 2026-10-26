@@ -21,6 +21,7 @@ struct WindowCallbacks {
     std::function<void(const PointerInput &)> pointer;
     std::function<bool(const CefKeyEvent &)> key;
     std::function<void(const std::string &)> text;
+    std::function<void(const std::string &, int, int)> preedit;
     std::function<void(bool)> focus;
     std::function<void()> close;
     std::function<bool(int, int)> caption;
@@ -52,6 +53,7 @@ class BrowserWindow {
     void cursor(int kind);
     void copy(const std::string &text);
     void paste(std::function<void(std::string)> callback);
+    std::string backend() const;
     std::string compositor() const;
     std::string renderer() const;
     std::uint64_t frames() const;

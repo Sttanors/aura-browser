@@ -43,7 +43,7 @@ def main():
         runtime = Path(temporary)
         env = {**os.environ, 'XDG_RUNTIME_DIR': str(runtime), 'LIBGL_ALWAYS_SOFTWARE': '1',
             'DBUS_SESSION_BUS_ADDRESS': 'unix:path=/nonexistent/aura-test-bus',
-            'XDG_CURRENT_DESKTOP': '', 'AURA_TEST_ISOLATED_DISPLAY': '1', 'AURA_TEST_REFRESH': str(args.refresh)}
+            'XDG_CURRENT_DESKTOP': '', 'AURA_TEST_ISOLATED_DISPLAY': '1', 'AURA_TEST_REFRESH': str(args.refresh), 'AURA_WINDOW_SYSTEM':'x11'}
         # Fake-HOME installer tests must not detect packages on the developer host.
         env['AURA_INSTALL_SYSTEM_ROOT'] = str(runtime / 'empty-system')
         env.pop('DISPLAY', None)

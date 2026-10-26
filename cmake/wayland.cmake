@@ -1,0 +1,18 @@
+# Pin SDL's native Wayland protocol implementation; ship it statically.
+aura_dependency(sdl3)
+execute_process(COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/scripts/patch_sdl_wayland.py"
+  RESULT_VARIABLE AURA_SDL_PATCH_RESULT)
+if(NOT AURA_SDL_PATCH_RESULT EQUAL 0)
+  message(FATAL_ERROR "Pinned SDL Wayland patch failed")
+endif()
+set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+set(SDL_STATIC ON CACHE BOOL "" FORCE)
+set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
+set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+foreach(feature IN ITEMS AUDIO GPU RENDER CAMERA JOYSTICK HAPTIC HIDAPI POWER SENSOR DIALOG TRAY X11 OPENGL OPENGLES VULKAN KMSDRM OFFSCREEN DUMMYVIDEO)
+  set(SDL_${feature} OFF CACHE BOOL "" FORCE)
+endforeach()
+set(SDL_WAYLAND ON CACHE BOOL "" FORCE)
+set(SDL_WAYLAND_LIBDECOR OFF CACHE BOOL "" FORCE)
+add_subdirectory("${PROJECT_SOURCE_DIR}/third_party/src/sdl3" "third_party/sdl3" EXCLUDE_FROM_ALL)
