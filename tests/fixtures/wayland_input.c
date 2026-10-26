@@ -85,6 +85,7 @@ static int command(int fd, uint32_t mask, void *data) {
     } else if (sscanf(b, "move %f %f", &x, &y) == 2) {
         struct weston_view *v = selected(p);
         if (v) {
+            weston_view_update_transform(v);
             struct weston_coord_global pos =
                 weston_coord_surface_to_global(v, weston_coord_surface(x, y, v->surface));
             notify_motion_absolute(&p->seat, &t, pos);

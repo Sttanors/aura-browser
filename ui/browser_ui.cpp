@@ -7,6 +7,7 @@
 #include "common/text.hpp"
 #include "common/update_key.hpp"
 #include "core/browser/client.hpp"
+#include "core/browser/native_clipboard.hpp"
 #include "core/browser/permissions.hpp"
 #include "core/browser/spelling.hpp"
 #include "core/browser/translation.hpp"
@@ -3380,6 +3381,9 @@ bool BrowserUi::key_default(const CefKeyEvent &key) {
         if (down && browser_shortcut)
             app_.close_extension_popup();
         else {
+            if (down && ctrl && !alt && app_.window->backend() == "wayland" &&
+                app_.extension_clipboard_key(code))
+                return true;
             if (p->browser)
                 p->browser->GetHost()->SendKeyEvent(key);
             return false;
@@ -4260,16 +4264,14 @@ bool BrowserUi::key_default(const CefKeyEvent &key) {
             if (code == 'V') {
                 const int id = t->id;
                 const auto navigation = t->navigation_serial;
-                std::weak_ptr<void> weak = app_.callback_lifetime;
-                app_.window->paste([this, weak, id, navigation](std::string text) {
-                    if (weak.expired() || text.empty())
-                        return;
+                auto current = [this, id, navigation] {
                     auto tab = app_.tab(id);
-                    if (tab && tab == app_.current() && tab->browser &&
-                        tab->navigation_serial == navigation && !editing && panel_ == None &&
-                        app_.dialogs.empty())
-                        tab->browser->GetHost()->ImeCommitText(text, CefRange(-1, -1), 0);
-                });
+                    return tab && tab == app_.current() && tab->browser && !tab->closing &&
+                           tab->navigation_serial == navigation && !app_.extension_popup &&
+                           !editing && !find_open && panel_ == None && app_.dialogs.empty();
+                };
+                paste_native_selection(app_, t->browser, t->browser->GetFocusedFrame(),
+                                       std::move(current));
                 return true;
             }
         }

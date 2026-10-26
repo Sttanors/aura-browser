@@ -790,3 +790,49 @@ SDL и 23 protocol notices присутствуют, тестового моду
 
 Логи: artifacts/wayland-validation/. Снимки: artifacts/wayland-smoke/.
 [Запуск и ограничения RU/EN](wayland.md).
+
+
+### 14.1. Clipboard в контекстных меню и попапах расширений
+
+Задача: пользователь Wayland копирует, вырезает и вставляет текст в странице и
+оверлее расширения привычными клавишами или контекстным меню. Сохранён нативный
+компактный список Aura: Undo/Cut/Copy/Paste/Select all, существующие RU/EN строки,
+Inter 12, строки 32 и прежние focus/disabled состояния. Копирование и вырезание
+пароля отключены по edit permissions Chromium; меню закрывается по Escape раньше
+оверлея. Нового отдельного окна/панели для этих действий нет.
+
+Общий native clipboard bridge проверяет разрешения и размер до удаления при cut.
+Для paste сохраняет frame, URL и navigation serial и повторно проверяет активное
+окно/вкладку/попап, фокус frame и состояние интерфейса после асинхронного чтения.
+Потеря фокуса, закрытый/заменённый попап, новый документ или вкладка не становятся
+получателем старой вставки. Popup navigation и закрытие отменяют его меню, включая самостоятельный window.close.
+Тестовый Weston module обновляет view transform перед вводом сразу после смены
+фокуса; это устраняет его собственный assertion на ещё не пересчитанной геометрии.
+
+Native Wayland GUI PASS при compositor scale 1 и 2 (DPI 100/200%, UI zoom 100%)
+на отдельном Weston 15 Pixman без DISPLAY/XWayland/GPU. Проверены клавиши и меню
+Copy/Cut/Paste страницы и настоящего MV3 popup, клавиатурная активация команд,
+отключённые Copy/Cut пароля без изменения значения, перенос popup → page и порядок
+Escape menu → popup. Независимый SDL producer удерживает передачу в pipe:
+проверяется реальное read_pending, затем закрывается попап либо меняется вкладка;
+после завершения чтения новая адресная строка и фоновая форма не изменяются.
+Полный предыдущий native сценарий Unicode/emoji/многострочный текст, отказ 17 МиБ,
+фокус и сбалансированный CEF lifecycle также PASS на обоих DPI.
+
+Linux Release build PASS без предупреждений; все 170 CTest PASS (9,75 с).
+X11 spelling, reader, extensions (upgrade/restart lifecycle) и browser PASS на
+финальной сборке. Контрольный runtime ZIP PASS: точное совпадение бинарника,
+SDL license, 23 protocol notices, отсутствие тестовых инструментов/профиля.
+Python compile и git diff --check PASS.
+
+Windows CI предыдущего этапа [40363601761](https://github.com/Sttanors/aura-browser/actions/runs/40363601761)
+на 53cec99062ce77437115f4dbb8ddcf44645457f3: сборка, unit, основной native GUI и
+portable PASS; GUI установленной версии FAIL на отсутствии английской подсказки
+«hello». Причина пока не подтверждена. Проверка остаётся обязательной; тест
+ожидает фактического открытия/закрытия меню вместо фиксированных 200 мс и сохраняет
+последнее меню в spelling-context JSON для следующего CI. Успех Windows этого
+этапа пока не заявляется.
+
+Логи: artifacts/wayland-validation/popup-*. Снимки: artifacts/wayland-smoke/popup-*.
+Пункт 14 открыт: native DND, полный IME/preedit, chooser, другие compositor и
+fractional/multi-monitor остаются. Пункт 15 не начинался; релиз не публиковался.

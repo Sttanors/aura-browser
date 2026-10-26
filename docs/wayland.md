@@ -27,17 +27,22 @@ use the Wayland backend. Clipboard transfers use wl_data_device on the focused
 client's connection, with nonblocking pipes, a 16 MiB cap and a five-second
 transfer deadline. Oversized incoming streams are drained without retaining their
 payload until EOF/deadline, then refused. A checked patch disables SDL's duplicate
-clipboard owner and guards its keyboard-leave path when that owner is absent. CEF page paste uses native text insertion. Copy/cut obtain
+clipboard owner and guards its keyboard-leave path when that owner is absent.
+CEF page paste uses native text insertion. Copy/cut obtain
 Chromium's context-menu edit permissions before exposing selected text; cached
 selection text alone is insufficient for password-field protection.
 
 Wayland does not expose global window positions. OSR screen-point callbacks do
 not fabricate them; live tab transfers remain available through the existing
-window picker. Cross-window drag gestures, complete IME/preedit coverage,
-clipboard behavior in extension popups/context menus and checks on additional
+window picker.
+
+Page and extension-popup copy/cut/paste shortcuts and native context menus use
+the same clipboard bridge. Password copy/cut items are disabled. A pending paste
+checks the focused frame, document/navigation and active tab/popup again before
+inserting; closing the popup or switching tabs discards the old result.
+Cross-window drag gestures, complete IME/preedit coverage, checks on additional
 compositors, system file choosers and fractional/multi-monitor setups remain work
-in progress. This is why item 14 stays open and automatic
-selection is opt-in.
+in progress. This is why item 14 stays open and automatic selection is opt-in.
 
 The native validation harness `python3 scripts/verify_wayland.py` launches a
 private Weston 15 Pixman compositor with no DISPLAY/XWayland. A test-only module
@@ -79,10 +84,15 @@ wl_data_device, неблокирующие pipe, лимит 16 МиБ и сро�
 разрешения редактирования Chromium: одного кэшированного текста выделения
 недостаточно для защиты парольных полей.
 
+Клавиши и контекстное меню Copy/Cut/Paste страниц и попапов расширений используют
+общий native clipboard bridge. Копирование/вырезание паролей отключено. После
+асинхронного чтения повторно проверяются focus frame, документ/navigation и
+активный получатель: закрытие попапа или смена вкладки отбрасывают старую вставку.
+
 Глобальные координаты окон не выдумываются. Перенос живой вкладки остаётся
 доступен через выбор окна. Для завершения пункта 14 ещё нужны native DND между
-окнами, полная проверка IME/preedit, clipboard в меню/попапах расширений и
-системные chooser, проверки других compositor и fractional/multi-monitor сценариев. Поэтому пункт остаётся открытым, а Wayland требует
+окнами, полная проверка IME/preedit, системные chooser, проверки других compositor
+и fractional/multi-monitor сценариев. Поэтому пункт остаётся открытым, а Wayland требует
 явного включения.
 
 Проверка `python3 scripts/verify_wayland.py` создаёт отдельный Weston 15 Pixman

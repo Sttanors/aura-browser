@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 #include <chrono>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 namespace {
@@ -10,6 +11,11 @@ std::string clipboard_text, clipboard_status;
 const void *payload(void *, const char *, size_t *size) {
     *size = clipboard_text.size();
     std::ofstream(clipboard_status) << *size;
+    // Test-only external producer: hold the pipe open until the receiver changes UI.
+    const auto pause = clipboard_status + ".pause";
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (std::filesystem::exists(pause) && std::chrono::steady_clock::now() < deadline)
+        SDL_Delay(5);
     return clipboard_text.data();
 }
 } // namespace

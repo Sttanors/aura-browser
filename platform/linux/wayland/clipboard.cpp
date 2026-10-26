@@ -361,6 +361,7 @@ namespace aura {
 std::string WaylandClipboard::report() const {
     const auto &p = *impl_;
     return "{\"focused\":" + std::string(p.focused ? "true" : "false") +
+           ",\"read_pending\":" + (p.read_fd >= 0 ? "true" : "false") +
            ",\"selection_events\":" + std::to_string(p.selection_events) +
            ",\"cancellations\":" + std::to_string(p.cancellations) +
            ",\"has_source\":" + (p.source ? "true" : "false") +

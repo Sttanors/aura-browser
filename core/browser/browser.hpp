@@ -96,6 +96,7 @@ struct ExtensionPopup {
     CefRefPtr<DiagnosticClient> client;
     CefRefPtr<CefBrowser> browser;
     std::string extension_id, name, url;
+    uint64_t navigation_serial = 0;
     int desired_width = 360, desired_height = 400;
     Rect bounds, content;
 };
@@ -271,7 +272,7 @@ class BrowserController {
     std::string profile_name() const;
     void update_window_title();
     double scale = 1, ui_scale = 1;
-    bool quitting = false;
+    bool quitting = false, native_focus = false;
     int find_matches = 0, find_active = 0, tools_open = 0;
     std::map<std::string, int> audit;
     ExtensionManager &extensions;
@@ -394,6 +395,7 @@ class BrowserController {
     void extension_page(size_t index, bool options);
     void open_extension_popup(size_t index);
     void close_extension_popup(bool restore_focus = true);
+    bool extension_clipboard_key(int code);
     void popup_created(const std::shared_ptr<ExtensionPopup> &popup, CefRefPtr<CefBrowser> browser);
     void popup_closed(const std::shared_ptr<ExtensionPopup> &popup);
     void resize_extension_popup();

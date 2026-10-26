@@ -211,6 +211,7 @@ BrowserController::BrowserController(std::filesystem::path path, std::filesystem
         ui->composition(t, start, length);
     };
     hooks.focus = [this](bool focus) {
+        native_focus = focus;
         ++audit[focus ? "native_focus_gained" : "native_focus_lost"];
         if (focus && window) {
             try {

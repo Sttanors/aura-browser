@@ -1,4 +1,5 @@
 #include "core/browser/client.hpp"
+#include "core/browser/native_clipboard.hpp"
 #include "include/cef_frame.h"
 #include "include/cef_menu_model.h"
 #include "include/cef_resource_handler.h"
@@ -500,17 +501,13 @@ void BrowserClient::OnBeforeContextMenu(CefRefPtr<CefBrowser> b, CefRefPtr<CefFr
     const auto tab = controller().tab(id_);
     if (clipboard_query_) {
         clipboard_query_ = false;
-        if (tab && tab == controller().current() &&
+        if (tab && tab == controller().current() && !controller().extension_popup &&
+            controller().dialogs.empty() && !controller().ui->editing &&
+            controller().ui->visible_panel() == BrowserUi::None &&
             tab->navigation_serial == clipboard_navigation_ &&
             std::chrono::steady_clock::now() < clipboard_deadline_) {
             ++controller().audit["native_clipboard_queries"];
-            const auto flag = clipboard_cut_ ? CM_EDITFLAG_CAN_CUT : CM_EDITFLAG_CAN_COPY;
-            if ((p->GetEditStateFlags() & flag) && !p->GetSelectionText().empty()) {
-                controller().window->copy(p->GetSelectionText());
-                if (clipboard_cut_ && frame)
-                    frame->Delete();
-            } else
-                ++controller().audit["native_clipboard_refused"];
+            copy_native_selection(controller(), frame, p, clipboard_cut_);
             controller().changed();
         }
         return;
@@ -558,6 +555,11 @@ void BrowserClient::OnBeforeContextMenu(CefRefPtr<CefBrowser> b, CefRefPtr<CefFr
         model->AddItem(MENU_ID_PASTE, controller().tr("Paste"));
     }
     model->AddItem(MENU_ID_COPY, controller().tr("Copy"));
+    model->SetEnabled(MENU_ID_COPY, (p->GetEditStateFlags() & CM_EDITFLAG_CAN_COPY) != 0);
+    if (p->IsEditable()) {
+        model->SetEnabled(MENU_ID_CUT, (p->GetEditStateFlags() & CM_EDITFLAG_CAN_CUT) != 0);
+        model->SetEnabled(MENU_ID_UNDO, (p->GetEditStateFlags() & CM_EDITFLAG_CAN_UNDO) != 0);
+    }
     model->AddItem(MENU_ID_SELECT_ALL, controller().tr("Select all"));
     model->AddItem(MENU_ID_USER_FIRST + 3, controller().tr("Translate selection"));
     model->SetEnabled(MENU_ID_USER_FIRST + 3, !p->GetSelectionText().empty());
@@ -590,9 +592,30 @@ bool BrowserClient::RunContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
     controller().changed();
     return true;
 }
-bool BrowserClient::OnContextMenuCommand(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
+bool BrowserClient::OnContextMenuCommand(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
                                          CefRefPtr<CefContextMenuParams> p, int command,
                                          EventFlags) {
+    if (controller().window->backend() == "wayland" &&
+        (command == MENU_ID_COPY || command == MENU_ID_CUT || command == MENU_ID_PASTE)) {
+        auto &owner = controller();
+        const auto navigation = spelling_menu_navigation_;
+        const int id = id_;
+        auto current = [&owner, navigation, id] {
+            auto tab = owner.tab(id);
+            return tab && tab == owner.current() && !tab->closing &&
+                   tab->navigation_serial == navigation && !owner.extension_popup &&
+                   owner.dialogs.empty() && !owner.ui->editing && !owner.ui->find_open &&
+                   owner.ui->visible_panel() == BrowserUi::None;
+        };
+        if (current()) {
+            if (command == MENU_ID_PASTE) {
+                if (p->IsEditable())
+                    paste_native_selection(owner, browser, frame, std::move(current));
+            } else
+                copy_native_selection(owner, frame, p, command == MENU_ID_CUT);
+        }
+        return true;
+    }
     if (command == MENU_ID_USER_FIRST + 21) {
         controller().ui->open_spelling_dictionary();
         return true;
@@ -745,12 +768,6 @@ void BrowserClient::native_copy(bool cut) {
     clipboard_cut_ = cut;
     clipboard_navigation_ = t->navigation_serial;
     clipboard_deadline_ = std::chrono::steady_clock::now() + std::chrono::seconds(1);
-    CefKeyEvent key;
-    key.windows_key_code = 0x5d;
-    key.native_key_code = 135;
-    key.type = KEYEVENT_RAWKEYDOWN;
-    t->browser->GetHost()->SendKeyEvent(key);
-    key.type = KEYEVENT_KEYUP;
-    t->browser->GetHost()->SendKeyEvent(key);
+    request_native_copy(t->browser);
 }
 } // namespace aura

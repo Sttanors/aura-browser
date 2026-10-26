@@ -193,12 +193,15 @@ def main():
                 # The marker arrives asynchronously after the input event.
                 deadline=time.monotonic()+30
                 while True:
-                    spelling_context();time.sleep(.2)
-                    suggestions=read().get('menu_ui') or []
+                    spelling_context()
+                    opened=wait(lambda s: bool(s.get('menu_ui')), 'Native spelling menu must open on Windows',timeout=5)
+                    suggestions=opened['menu_ui']
+                    (output/f'spelling-context-{launch}.json').write_text(json.dumps(suggestions,ensure_ascii=False,indent=2),encoding='utf-8')
                     correction=next((i for i in suggestions if 200<=i['id']<=204 and i['label'].lower()=='hello'),None)
                     if correction:break
                     user.SendMessageW(window,0x100,27,1);user.SendMessageW(window,0x101,27,1)
-                    if time.monotonic()>deadline:raise RuntimeError('Native English spelling suggestions missing on Windows')
+                    wait(lambda s: not s.get('menu_ui'), 'Native spelling menu must dismiss on Windows',timeout=5)
+                    if time.monotonic()>deadline:raise RuntimeError('Native English spelling suggestions missing on Windows; see spelling-context JSON')
                     time.sleep(.3)
                 rect=correction['bounds'];click(rect[0]+rect[2]/2,rect[1]+rect[3]/2)
                 wait(lambda s:any(t.get('title')=='Spelling [hello ]' for t in s.get('tabs',[])),'Native spelling replacement must update the field')
