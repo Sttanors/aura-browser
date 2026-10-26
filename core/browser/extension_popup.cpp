@@ -7,6 +7,22 @@
 #include <algorithm>
 #include <cstring>
 namespace aura {
+void BrowserController::edit_extension_access(const std::string &id, const std::string &operation,
+                                              const std::string &value) {
+    if (quitting || private_window ||
+        (current() && (current()->private_tab || current()->container))) {
+        ui->toast(tr("Site access is managed from a regular tab in the default container."));
+        return;
+    }
+    const auto it = std::find_if(extensions.items.begin(), extensions.items.end(),
+                                 [&](const auto &e) { return e.id == id; });
+    if (it == extensions.items.end() || !it->enabled || !it->load_requested || it->pending_update) {
+        ui->toast(tr("Restart Aura to load the extension."));
+        return;
+    }
+    state_->extension_access.request(id, operation, value);
+    changed();
+}
 namespace {
 class ExtensionPopupClient final : public DiagnosticClient,
                                    public CefContextMenuHandler,

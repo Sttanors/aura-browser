@@ -443,6 +443,7 @@ void BrowserController::defer(std::function<void()> action) {
     pending_.push_back(std::move(action));
 }
 void BrowserController::tick() {
+    state_->extension_access.tick();
     tick_duplicate_merge();
     const auto now = std::chrono::steady_clock::now();
     for (auto &t : tabs)
@@ -1136,6 +1137,10 @@ bool BrowserController::finished() {
                    std::all_of(w->tabs.begin(), w->tabs.end(),
                                [](const auto &t) { return t->page.closed; });
         });
+    if (browsers_closed && all_closed && !state_->extension_access.closed()) {
+        state_->extension_access.close();
+        return false;
+    }
     if (browsers_closed && all_closed && !state_->cleanup_started) {
         state_->cleanup_started = true;
         profile.session_clean = true;
@@ -1424,8 +1429,10 @@ std::string BrowserController::report() const {
         << ",\"blocked_requests\":" << request_policy->protection->blocked.load()
         << ",\"rewritten_requests\":" << request_policy->protection->rewritten_requests.load()
         << ",\"adblock_ready\":" << (request_policy->protection->ready() ? "true" : "false")
+        << ",\"extension_access\":" << state_->extension_access.report()
         << ",\"spelling\":" << spelling_status() << ",\"extensions\":" << extensions.report()
         << ",\"spelling_ui\":" << ui->spelling_report()
+        << ",\"extension_access_ui\":" << ui->extension_access_report()
         << ",\"filters_ui\":" << ui->filters_report()
         << ",\"workspaces_ui\":" << ui->workspaces_report()
         << ",\"groups_ui\":" << ui->groups_report() << ",\"sidebar\":" << ui->sidebar_report()

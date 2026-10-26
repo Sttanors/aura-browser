@@ -14,6 +14,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from dependencies import ROOT
 from release_identity import read_identity
 from smoke_compatibility import Server as CompatServer, Handler as CompatHandler
+from smoke_extension_access import seed as seed_access_extension
 
 
 def main():
@@ -32,6 +33,7 @@ def main():
     profile = output/'profile-кириллица'
     shutil.rmtree(profile, ignore_errors=True)
     profile.mkdir()
+    access_extension_id = seed_access_extension(profile)
     (profile/'profile.toml').write_text('language="ru"\nfilter_updates=false\ncheck_updates=false\nrestore=false\nblock_popups=true\n', encoding='utf-8')
     server = ThreadingHTTPServer(('127.0.0.1', 0), partial(SimpleHTTPRequestHandler, directory=str(ROOT/'tests/fixtures')))
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -174,6 +176,25 @@ def main():
                     time.sleep(.3)
                 rect=correction['bounds'];click(rect[0]+rect[2]/2,rect[1]+rect[3]/2)
                 wait(lambda s:any(t.get('title')=='Spelling [hello ]' for t in s.get('tabs',[])),'Native spelling replacement must update the field')
+                # Chromium's real host permissions must also apply to Alloy OSR tabs.
+                access_url=f'http://127.0.0.1:{server.server_port}/browser/extension-access.html'
+                def access_page(injected):
+                    click(480,55);type_text(access_url)
+                    user.SendMessageW(window,0x100,13,1);user.SendMessageW(window,0x101,13,1)
+                    expected='Access injected' if injected else 'Access withheld'
+                    wait(lambda s:any(t.get('title')==expected for t in s.get('tabs',[])),'Runtime host permissions must enforce '+expected)
+                def access_mode(index):
+                    click(read()['interface']['width']-173,55)
+                    panel=wait(lambda s:bool(s.get('extensions_ui')),'Extension manager must open')['extensions_ui']['bounds']
+                    click(panel[0]+panel[2]-240,panel[1]+234)
+                    wait(lambda s:s.get('extension_access_ui') and not s['extension_access']['busy'] and s['extension_access']['available'],'Native host permissions must load')
+                    assert read()['extension_access']['id']==access_extension_id and not read()['extension_access']['service_visible']
+                    revision=read()['extension_access']['revision'];rect=read()['extension_access_ui']['modes'][index]
+                    click(rect[0]+rect[2]/2,rect[1]+rect[3]/2)
+                    wait(lambda s:not s['extension_access']['busy'] and s['extension_access']['revision']>=revision+2,'Host mode must apply')
+                    assert not read()['extension_access']['error']
+                    user.SendMessageW(window,0x100,27,1);user.SendMessageW(window,0x101,27,1)
+                access_page(True);access_mode(0);access_page(False);access_mode(2);access_page(True)
                 popup_url=f'http://127.0.0.1:{server.server_port}/browser/popup-parent.html'
                 click(480,55);type_text(popup_url)
                 user.SendMessageW(window,0x100,13,1);user.SendMessageW(window,0x101,13,1)

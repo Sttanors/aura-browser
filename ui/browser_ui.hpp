@@ -36,7 +36,8 @@ class BrowserUi {
         ReadingListPanel,
         SearchProviders,
         DuplicateTabs,
-        SpellingDictionary
+        SpellingDictionary,
+        ExtensionAccess
     };
     BrowserUi(BrowserController &owner, const std::filesystem::path &font);
     ~BrowserUi();
@@ -97,6 +98,8 @@ class BrowserUi {
     std::string duplicates_report() const;
     void open_spelling_dictionary();
     std::string spelling_report() const;
+    void open_extension_access(const std::string &id);
+    std::string extension_access_report() const;
     void open_search_providers();
     std::string search_providers_report() const;
     void open_reading_list();
@@ -166,6 +169,14 @@ class BrowserUi {
     bool spelling_focus_ = false, spelling_private_ = false;
     int spelling_scroll_ = 0;
     std::string spelling_error_;
+    void draw_extension_access(SkCanvas &, Rect);
+    void extension_access_pointer(Rect, int, int);
+    void add_extension_site();
+    TextEditor extension_site_input_;
+    std::string extension_access_id_, extension_site_error_;
+    bool extension_site_focus_ = false, extension_sites_draft_ = false;
+    int extension_site_scroll_ = 0;
+    uint64_t extension_site_revision_ = 0;
     TextEditor reading_search_;
     bool reading_focus_ = false;
     int reading_scroll_ = 0;

@@ -1006,6 +1006,16 @@ TEST(Translation, EncodesTextAndPageAsDataAndRejectsUnsupportedModes) {
     EXPECT_NO_THROW(translation_url("google", "en", false, std::string(5000, 'a')));
 }
 
+TEST(Permissions, ExtensionSitesKeepExactHostsAndSchemesWhileIgnoringPorts) {
+    EXPECT_EQ(extension_site_pattern(" HTTPS://Example.COM:8443/ "), "https://example.com/*");
+    EXPECT_EQ(extension_site_pattern("http://127.0.0.2:1234"), "http://127.0.0.2/*");
+    EXPECT_EQ(extension_site_pattern("https://[::1]:443/*"), "https://[::1]/*");
+    for (const auto *site : {"", "<all_urls>", "https://*.example.com", "*://example.com/*",
+                             "https://example.com/path", "https://example.com?query",
+                             "https://user@example.com", "https://example.com\\evil",
+                             "file:///tmp/a", "javascript:alert(1)", "https://example.com:99999"})
+        EXPECT_TRUE(extension_site_pattern(site).empty()) << site;
+}
 TEST(Permissions, OriginsHaveExactSchemeHostPortAndNeverWildcardOrCredentials) {
     for (const auto &origin :
          {"https://example.com", "https://www.example.com:8443", "http://127.0.0.1:3030",

@@ -2,6 +2,7 @@
 #include "common/text_editor.hpp"
 #include "core/browser/devtools.hpp"
 #include "core/browser/duplicate_tabs.hpp"
+#include "core/browser/extension_access.hpp"
 #include "core/browser/extensions.hpp"
 #include "core/browser/filter_lists.hpp"
 #include "core/browser/i18n.hpp"
@@ -175,6 +176,7 @@ struct BrowserState {
     std::vector<SiteZoom> private_site_zooms;
     bool private_permissions_initialized = false;
     ExtensionManager extensions;
+    ExtensionSiteAccess extension_access;
     UpdateManager updates;
     BrowserImporter importer;
     PasswordManager passwords;
@@ -389,6 +391,8 @@ class BrowserController {
     void popup_closed(const std::shared_ptr<ExtensionPopup> &popup);
     void resize_extension_popup();
     void pin_extension(size_t index);
+    void edit_extension_access(const std::string &id, const std::string &operation = "read",
+                               const std::string &value = "");
     const PaintBuffer &extension_icon(size_t index);
     void open_new_tab(bool private_tab = false);
     std::filesystem::path downloads_directory() const;

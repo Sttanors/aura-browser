@@ -6,6 +6,7 @@
 #include "common/platform.hpp"
 #include "common/text.hpp"
 #include "common/update_key.hpp"
+#include "core/browser/permissions.hpp"
 #include "core/browser/spelling.hpp"
 #include "core/browser/translation.hpp"
 #include "include/cef_frame.h"
@@ -390,6 +391,7 @@ Rect BrowserUi::panel_bounds() const {
                            : panel_ == Commands           ? 900
                            : panel_ == Hotkeys            ? 900
                            : panel_ == DuplicateTabs      ? 900
+                           : panel_ == ExtensionAccess    ? 900
                            : panel_ == SpellingDictionary ? 900
                            : panel_ == SearchProviders    ? 900
                            : panel_ == ReadingListPanel   ? 900
@@ -421,6 +423,7 @@ Rect BrowserUi::panel_bounds() const {
         : panel_ == Hotkeys
             ? std::clamp(280 + int(std::min<size_t>(7, hotkey_results().size())) * 56, 392, 700)
         : panel_ == DuplicateTabs      ? 700
+        : panel_ == ExtensionAccess    ? 700
         : panel_ == SpellingDictionary ? 620
         : panel_ == SearchProviders    ? 700
         : panel_ == ReadingListPanel   ? 700
@@ -938,7 +941,8 @@ void BrowserUi::draw(SkCanvas &c) {
             app_.tr("Read later"),
             app_.tr("Search engines"),
             app_.tr("Duplicate tabs"),
-            app_.tr(spelling_private_ ? "Private session dictionary" : "Spelling dictionary")};
+            app_.tr(spelling_private_ ? "Private session dictionary" : "Spelling dictionary"),
+            app_.tr("Extension site access")};
         label(c, medium_, titles[panel_], r.x + 28, r.y + 47, 23, ink);
         if (panel_ == Bookmarks || panel_ == Settings || panel_ == Groups) {
             Rect button{r.x + r.width - 220, r.y + 21, 160, 32};
@@ -1106,6 +1110,8 @@ void BrowserUi::draw(SkCanvas &c) {
             draw_duplicates(c, r);
         if (panel_ == SpellingDictionary)
             draw_spelling(c, r);
+        if (panel_ == ExtensionAccess)
+            draw_extension_access(c, r);
         if (panel_ == SearchProviders)
             draw_search_providers(c, r);
         if (panel_ == ReadingListPanel)
@@ -2737,6 +2743,7 @@ void BrowserUi::focus_address(bool select) {
     provider_focus_ = -1;
     reading_focus_ = false;
     spelling_focus_ = false;
+    extension_site_focus_ = false;
     data_search_focus_ = false;
     clear_password_fields();
     app_.close_extension_popup();
@@ -2760,6 +2767,10 @@ void BrowserUi::toast(std::string message) {
     app_.changed();
 }
 void BrowserUi::panel(Panel value) {
+    if (value != ExtensionAccess) {
+        extension_site_input_.set("");
+        extension_site_error_.clear();
+    }
     if (value != SpellingDictionary) {
         spelling_input_.set("");
         spelling_error_.clear();
@@ -2779,6 +2790,7 @@ void BrowserUi::panel(Panel value) {
     provider_focus_ = -1;
     reading_focus_ = false;
     spelling_focus_ = false;
+    extension_site_focus_ = false;
     if (value != Sessions)
         session_input_focus_ = false;
     hotkey_search_focus_ = false;
@@ -2839,6 +2851,8 @@ void BrowserUi::commit_address() {
     app_.navigate(value);
 }
 void BrowserUi::dismiss() {
+    extension_site_input_.set("");
+    extension_site_error_.clear();
     spelling_input_.set("");
     spelling_error_.clear();
     if (panel_ == TaskManager)
@@ -2850,6 +2864,7 @@ void BrowserUi::dismiss() {
     provider_focus_ = -1;
     reading_focus_ = false;
     spelling_focus_ = false;
+    extension_site_focus_ = false;
     data_search_focus_ = false;
     clear_password_fields();
     editing = false;
@@ -2894,6 +2909,10 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
                     (provider_focus_ == 0   ? 120u
                      : provider_focus_ == 1 ? 16u
                                             : 4096u))
+                live = target;
+            if (panel_ == ExtensionAccess && extension_site_focus_ &&
+                target == &extension_site_input_ &&
+                text.size() + target->value.size() - target->selected().size() <= 2048)
                 live = target;
             if (panel_ == SpellingDictionary && spelling_focus_ && target == &spelling_input_ &&
                 text.size() + target->value.size() - target->selected().size() <= 99)
@@ -3278,6 +3297,7 @@ bool BrowserUi::key_default(const CefKeyEvent &key) {
         provider_focus_ = -1;
         reading_focus_ = false;
         spelling_focus_ = false;
+        extension_site_focus_ = false;
         hotkey_search_focus_ = false;
         if (auto tab = app_.current(); tab && tab->browser)
             tab->browser->GetHost()->SetFocus(false);
@@ -3298,7 +3318,8 @@ bool BrowserUi::key_default(const CefKeyEvent &key) {
         password_focus_ < 0 && !workspace_input_focus_ && !group_input_focus_ &&
         !container_input_focus_ && !profile_input_focus_ && !permissions_search_focus_ &&
         !data_search_focus_ && bookmark_focus_ < 0 && !session_input_focus_ && !reading_focus_ &&
-        !hotkey_search_focus_ && provider_focus_ < 0 && !spelling_focus_ && !editing) {
+        !hotkey_search_focus_ && provider_focus_ < 0 && !spelling_focus_ &&
+        !extension_site_focus_ && !editing) {
         const auto r = focus_targets_[keyboard_focus_];
         const int previous = keyboard_focus_;
         const auto previous_panel = panel_;
@@ -3416,6 +3437,34 @@ bool BrowserUi::key_default(const CefKeyEvent &key) {
                            : code == 0x23 ? maximum
                                           : duplicate_scroll_ + (code == 0x21 ? -cap : cap),
                            0, maximum);
+            app_.changed();
+            return true;
+        }
+        if (panel_ == ExtensionAccess && extension_site_focus_ &&
+            (!ctrl || (code != 'L' && code != 'T' && code != 'W' && code != 'Q' && code != 'N'))) {
+            if (code == 0x1B) {
+                dismiss();
+                return true;
+            }
+            if (code == 0x0D) {
+                add_extension_site();
+                return true;
+            }
+            editor_key(extension_site_input_, key);
+            extension_site_error_.clear();
+            app_.changed();
+            return code < 0x20 || ctrl || (code >= 0x21 && code <= 0x2E);
+        }
+        if (panel_ == ExtensionAccess &&
+            (code == 0x21 || code == 0x22 || code == 0x24 || code == 0x23)) {
+            const auto &a = app_.state()->extension_access.snapshot();
+            const int cap = std::max(1, (panel_bounds().height - 420) / 36),
+                      last = std::max(0, int(a.hosts.size()) - cap);
+            extension_site_scroll_ =
+                std::clamp(code == 0x24   ? 0
+                           : code == 0x23 ? last
+                                          : extension_site_scroll_ + (code == 0x21 ? -cap : cap),
+                           0, last);
             app_.changed();
             return true;
         }
@@ -4239,6 +4288,12 @@ void BrowserUi::text(const std::string &value) {
         if (hotkey_search_.value.size() + clean.size() <= 512)
             hotkey_search_.insert(clean);
         hotkey_scroll_ = 0;
+    } else if (panel_ == ExtensionAccess && extension_site_focus_) {
+        if (extension_site_input_.value.size() - extension_site_input_.selected().size() +
+                clean.size() <=
+            2048)
+            extension_site_input_.insert(clean);
+        extension_site_error_.clear();
     } else if (panel_ == SpellingDictionary && spelling_focus_) {
         if (spelling_input_.value.size() - spelling_input_.selected().size() + clean.size() <= 99)
             spelling_input_.insert(clean);
@@ -4331,6 +4386,21 @@ void BrowserUi::text(const std::string &value) {
     app_.changed();
 }
 bool BrowserUi::tick() {
+    if (panel_ == ExtensionAccess) {
+        const auto it = std::find_if(app_.extensions.items.begin(), app_.extensions.items.end(),
+                                     [&](const auto &e) { return e.id == extension_access_id_; });
+        if (it == app_.extensions.items.end() || !it->enabled || !it->load_requested ||
+            it->pending_update || app_.private_window ||
+            (app_.current() && (app_.current()->private_tab || app_.current()->container))) {
+            panel(Extensions);
+            return true;
+        }
+    }
+    if (panel_ == ExtensionAccess &&
+        extension_site_revision_ != app_.state()->extension_access.snapshot().revision) {
+        extension_site_revision_ = app_.state()->extension_access.snapshot().revision;
+        return true;
+    }
     if (panel_ == SpellingDictionary && spelling_private_ && !app_.private_window &&
         (!app_.current() || !app_.current()->private_tab)) {
         panel(None);
@@ -4581,6 +4651,14 @@ void BrowserUi::pointer(const PointerInput &input) {
         int cap = std::max(1, (panel_bounds().height - 200) / 88);
         provider_scroll_ = std::clamp(provider_scroll_ + (input.dy < 0 ? 1 : -1), 0,
                                       std::max(0, int(app_.profile.search_providers.size()) - cap));
+        app_.changed();
+        return;
+    }
+    if (input.kind == PointerInput::Wheel && panel_ == ExtensionAccess) {
+        const auto &a = app_.state()->extension_access.snapshot();
+        const int cap = std::max(1, (panel_bounds().height - 420) / 36);
+        extension_site_scroll_ = std::clamp(extension_site_scroll_ + (input.dy < 0 ? 1 : -1), 0,
+                                            std::max(0, int(a.hosts.size()) - cap));
         app_.changed();
         return;
     }
@@ -4903,6 +4981,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                 duplicates_pointer(r, x, y);
             else if (panel_ == SpellingDictionary)
                 spelling_pointer(r, x, y);
+            else if (panel_ == ExtensionAccess)
+                extension_access_pointer(r, x, y);
             else if (panel_ == SearchProviders)
                 search_providers_pointer(r, x, y);
             else if (panel_ == ReadingListPanel)
@@ -5291,9 +5371,11 @@ void BrowserUi::draw_extensions(SkCanvas &c, Rect r) {
             else
                 icon(c, "extension", r.x + 40, y + 11, 22, t.accent);
             label(c, medium_, e.name + " · " + e.version, r.x + 72, y + 27, 15, t.text,
-                  r.width - 240);
+                  r.width - 400);
             chip({r.x + r.width - 156, y + 8, 128, 32},
                  e.pinned ? "Unpin extension" : "Pin extension");
+            chip({r.x + r.width - 316, y + 8, 152, 32}, "Site access", false,
+                 e.load_requested && e.enabled && !e.pending_update);
             label(c, regular_,
                   app_.tr(e.pending_update ? "Update after restart"
                           : !e.enabled ? (e.load_requested ? "Disabled after restart" : "Disabled")
@@ -5364,7 +5446,9 @@ void BrowserUi::extensions_pointer(Rect r, int x, int y) {
     if (index >= m.items.size())
         return;
     int top = r.y + 210 + (index - panel_scroll_) * 119;
-    if (inside({r.x + r.width - 156, top + 8, 128, 32}, x, y))
+    if (inside({r.x + r.width - 316, top + 8, 152, 32}, x, y))
+        open_extension_access(m.items[index].id);
+    else if (inside({r.x + r.width - 156, top + 8, 128, 32}, x, y))
         app_.pin_extension(index);
     else if (inside({r.x + 40, top + 60, 104, 34}, x, y))
         m.toggle(index);
@@ -9757,6 +9841,7 @@ void BrowserUi::reading_pointer(Rect r, int x, int y) {
     provider_focus_ = -1;
     reading_focus_ = false;
     spelling_focus_ = false;
+    extension_site_focus_ = false;
     if (inside({r.x + 28, r.y + 66, r.width - 56, 34}, x, y)) {
         app_.save_reading_article();
         return;
@@ -10968,6 +11053,198 @@ std::string BrowserUi::spelling_report() const {
             out += ',';
         out += "{\"word\":" + json_quote(words[i]) + ",\"delete\":" +
                rect({r.x + r.width - 116, r.y + 212 + (i - spelling_scroll_) * 40, 88, 32}) + "}";
+    }
+    return out + "]}";
+}
+} // namespace aura
+
+namespace aura {
+void BrowserUi::open_extension_access(const std::string &id) {
+    if (app_.private_window ||
+        (app_.current() && (app_.current()->private_tab || app_.current()->container))) {
+        toast(app_.tr("Site access is managed from a regular tab in the default container."));
+        return;
+    }
+    app_.edit_extension_access(id);
+    panel(ExtensionAccess);
+    extension_access_id_ = id;
+    extension_site_scroll_ = 0;
+    extension_sites_draft_ = false;
+    extension_site_input_.set(app_.current() ? permission_origin(app_.current()->page.url) : "");
+    extension_site_focus_ = false;
+    extension_site_error_.clear();
+    if (auto tab = app_.current(); tab && tab->browser)
+        tab->browser->GetHost()->SetFocus(false);
+    app_.changed();
+}
+void BrowserUi::add_extension_site() {
+    const auto &s = app_.state()->extension_access.snapshot();
+    if (s.busy || !s.available || s.id != extension_access_id_ ||
+        (s.mode != "ON_SPECIFIC_SITES" && !extension_sites_draft_))
+        return;
+    auto pattern = extension_site_pattern(extension_site_input_.value);
+    if (pattern.empty())
+        extension_site_error_ =
+            app_.tr("Enter an http:// or https:// site address, without a path.");
+    else if (std::find(s.hosts.begin(), s.hosts.end(), pattern) != s.hosts.end())
+        extension_site_error_ = app_.tr("This site is already allowed.");
+    else {
+        extension_site_error_.clear();
+        app_.edit_extension_access(extension_access_id_, "add", pattern);
+    }
+    app_.changed();
+}
+void BrowserUi::draw_extension_access(SkCanvas &c, Rect r) {
+    const auto t = interface_theme(app_.profile);
+    const auto &s = app_.state()->extension_access.snapshot();
+    const bool ready = s.id == extension_access_id_ && s.available && !s.busy;
+    const auto it = std::find_if(app_.extensions.items.begin(), app_.extensions.items.end(),
+                                 [&](const auto &e) { return e.id == extension_access_id_; });
+    label(c, medium_, it == app_.extensions.items.end() ? "" : it->name, r.x + 28, r.y + 79, 13,
+          t.text, r.width - 56);
+    auto button = [&](Rect b, const std::string &name, bool selected, bool enabled,
+                      bool outlined = true) {
+        if (enabled)
+            focus_target(b);
+        if (selected)
+            fill(c, b, 6, SkColorSetA(t.accent, 28));
+        if (outlined)
+            border(c, b, 6, selected ? t.accent : SkColorSetA(t.muted, 110));
+        if (selected)
+            icon(c, "check", b.x + 10, b.y + 7, 18, t.accent);
+        centered_label(c, medium_, app_.tr(name), b, 12, enabled ? t.text : t.muted, 8, 8);
+    };
+    const char *modes[] = {"ON_CLICK", "ON_SPECIFIC_SITES", "ON_ALL_SITES"};
+    const char *names[] = {"Block automatic access", "On selected sites", "On all requested sites"};
+    for (int i = 0; i < 3; ++i)
+        button({r.x + 28, r.y + 94 + i * 38, r.width - 56, 32}, names[i],
+               s.id == extension_access_id_ &&
+                   (extension_sites_draft_ ? i == 1 : s.mode == modes[i]),
+               ready);
+    label(c, regular_, app_.tr("Reload open pages to finish applying the restriction."), r.x + 28,
+          r.y + 221, 11, t.muted, r.width - 56);
+    label(c, regular_, app_.tr("Site address (scheme and host; all ports)"), r.x + 28, r.y + 253,
+          12, t.muted, r.width - 56);
+    Rect input{r.x + 28, r.y + 265, r.width - 180, 36},
+        add{r.x + r.width - 140, r.y + 265, 112, 36};
+    const bool editing_allowed = ready && (s.mode == "ON_SPECIFIC_SITES" || extension_sites_draft_);
+    if (editing_allowed)
+        focus_target(input);
+    fill(c, input, 7, t.background);
+    border(c, input, 7, extension_site_focus_ ? t.accent : t.muted);
+    draw_editor(c, extension_site_input_, {input.x + 10, input.y + 2, input.width - 20, 32}, 13,
+                extension_site_focus_);
+    button(add, "Add site", false, editing_allowed);
+    std::string message =
+        !extension_site_error_.empty() ? extension_site_error_
+        : s.busy                       ? app_.tr("Reading site access...")
+        : s.id != extension_access_id_ ? app_.tr("Refresh to read this extension's access.")
+        : !s.error.empty()             ? app_.tr(s.error)
+        : extension_sites_draft_ && s.hosts.empty()
+            ? app_.tr("Add a site to allow the extension there.")
+        : s.mode == "ON_CLICK" ? app_.tr("Website access is withheld. Temporary activeTab actions "
+                                         "are unavailable in Aura.")
+        : s.mode == "ON_ALL_SITES"
+            ? app_.tr("Access stays within the extension's requested websites.")
+            : app_.tr("Only allowed sites are listed below.");
+    label(c, regular_, message, r.x + 28, r.y + 324, 11, t.muted, r.width - 56);
+    const int cap = std::max(1, (r.height - 420) / 36);
+    extension_site_scroll_ =
+        std::clamp(extension_site_scroll_, 0, std::max(0, int(s.hosts.size()) - cap));
+    if (s.id == extension_access_id_ && s.hosts.empty() && !s.busy)
+        label(c, regular_, app_.tr("No allowed sites."), r.x + 28, r.y + 362, 13, t.muted,
+              r.width - 56);
+    if (s.id == extension_access_id_)
+        for (int i = extension_site_scroll_;
+             i < int(s.hosts.size()) && i < extension_site_scroll_ + cap; ++i) {
+            const int y = r.y + 342 + (i - extension_site_scroll_) * 36;
+            label(c, regular_, s.hosts[i], r.x + 28, y + 23, 12, t.text, r.width - 176);
+            button({r.x + r.width - 124, y, 96, 30}, "Remove", false, editing_allowed, false);
+        }
+    button({r.x + 28, r.y + r.height - 58, 100, 32}, "Back", false, true);
+    button({r.x + 140, r.y + r.height - 58, 116, 32}, "Refresh", false, !s.busy);
+    button({r.x + r.width - 248, r.y + r.height - 58, 220, 32}, "Reload current page", false,
+           app_.current() && app_.current()->browser);
+}
+void BrowserUi::extension_access_pointer(Rect r, int x, int y) {
+    const auto &s = app_.state()->extension_access.snapshot();
+    extension_site_focus_ = false;
+    if (inside({r.x + 28, r.y + r.height - 58, 100, 32}, x, y)) {
+        panel(Extensions);
+        return;
+    }
+    if (inside({r.x + 140, r.y + r.height - 58, 116, 32}, x, y)) {
+        extension_sites_draft_ = false;
+        app_.edit_extension_access(extension_access_id_);
+        return;
+    }
+    if (inside({r.x + r.width - 248, r.y + r.height - 58, 220, 32}, x, y)) {
+        panel(None);
+        if (auto t = app_.current(); t && t->browser)
+            t->browser->Reload();
+        return;
+    }
+    if (s.busy || !s.available || s.id != extension_access_id_)
+        return;
+    const char *modes[] = {"ON_CLICK", "ON_SPECIFIC_SITES", "ON_ALL_SITES"};
+    for (int i = 0; i < 3; ++i)
+        if (inside({r.x + 28, r.y + 94 + i * 38, r.width - 56, 32}, x, y)) {
+            extension_sites_draft_ = i == 1;
+            app_.edit_extension_access(extension_access_id_, "mode", modes[i]);
+            extension_site_error_.clear();
+            return;
+        }
+    if (s.mode != "ON_SPECIFIC_SITES" && !extension_sites_draft_)
+        return;
+    if (inside({r.x + 28, r.y + 265, r.width - 180, 36}, x, y)) {
+        extension_site_focus_ = true;
+        extension_site_input_.select_all();
+        return;
+    }
+    if (inside({r.x + r.width - 140, r.y + 265, 112, 36}, x, y)) {
+        add_extension_site();
+        return;
+    }
+    const int cap = std::max(1, (r.height - 420) / 36);
+    for (int i = extension_site_scroll_;
+         i < int(s.hosts.size()) && i < extension_site_scroll_ + cap; ++i)
+        if (inside({r.x + r.width - 124, r.y + 342 + (i - extension_site_scroll_) * 36, 96, 30}, x,
+                   y)) {
+            app_.edit_extension_access(extension_access_id_, "remove", s.hosts[i]);
+            return;
+        }
+}
+std::string BrowserUi::extension_access_report() const {
+    if (panel_ != ExtensionAccess)
+        return "null";
+    const auto r = panel_bounds();
+    const auto &s = app_.state()->extension_access.snapshot();
+    auto rect = [](Rect b) {
+        return "[" + std::to_string(b.x) + "," + std::to_string(b.y) + "," +
+               std::to_string(b.width) + "," + std::to_string(b.height) + "]";
+    };
+    std::string out = "{\"id\":" + json_quote(extension_access_id_) +
+                      ",\"query\":" + json_quote(extension_site_input_.value) +
+                      ",\"error\":" + json_quote(extension_site_error_) +
+                      ",\"input\":" + rect({r.x + 28, r.y + 265, r.width - 180, 36}) +
+                      ",\"add\":" + rect({r.x + r.width - 140, r.y + 265, 112, 36}) +
+                      ",\"back\":" + rect({r.x + 28, r.y + r.height - 58, 100, 32}) +
+                      ",\"refresh\":" + rect({r.x + 140, r.y + r.height - 58, 116, 32}) +
+                      ",\"modes\":[";
+    for (int i = 0; i < 3; ++i) {
+        if (i)
+            out += ',';
+        out += rect({r.x + 28, r.y + 94 + i * 38, r.width - 56, 32});
+    }
+    out += "],\"items\":[";
+    const int cap = std::max(1, (r.height - 420) / 36);
+    for (int i = extension_site_scroll_;
+         i < int(s.hosts.size()) && i < extension_site_scroll_ + cap; ++i) {
+        if (i != extension_site_scroll_)
+            out += ',';
+        out += "{\"host\":" + json_quote(s.hosts[i]) + ",\"remove\":" +
+               rect({r.x + r.width - 124, r.y + 342 + (i - extension_site_scroll_) * 36, 96, 30}) +
+               "}";
     }
     return out + "]}";
 }

@@ -117,7 +117,8 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
             first = false;
             text += w->report();
         }
-        int created = retired_created, closed = retired_closed;
+        int created = retired_created + browser.state()->extension_access.created_count();
+        int closed = retired_closed + browser.state()->extension_access.closed_count();
         for (auto *w : browser.state()->windows) {
             created += w->created_count();
             closed += w->closed_count();

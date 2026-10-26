@@ -102,7 +102,8 @@ def main():
                     def shot(w,name):
                         subprocess.run(['xdotool','windowraise',str(w)],check=True);time.sleep(.35)
                         subprocess.run(['import','-window',str(w),str(out/name)],check=True,timeout=10)
-                    wait_until(lambda:find('normal') and find('container') and all(t['loaded'] and t['spelling_supported'] for s in windows() for t in s['tabs']),'Spelling bootstrap failed',timeout=40)
+                    # Loading/isolated-world readiness can precede the fixture's first timer.
+                    wait_until(lambda:find('normal') and find('container') and probes.get('normal') and probes.get('container') and all(t['loaded'] and t['spelling_supported'] for s in windows() for t in s['tabs']),'Spelling bootstrap failed',timeout=40)
                     w=find('normal');other=find('container')
                     assert state(w)['spelling_resources_ready'] and not state(w)['spelling']['remote']
                     assert not state(w)['audit'].get('spelling_preference_errors')

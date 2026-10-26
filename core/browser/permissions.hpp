@@ -17,6 +17,7 @@ struct SitePermission {
 std::span<const PermissionSpec> permission_catalog();
 const PermissionSpec *find_permission(const std::string &id);
 bool valid_permission_origin(const std::string &origin);
+std::string extension_site_pattern(std::string input);
 bool trustworthy_permission_origin(const std::string &origin);
 std::string permission_scope(const std::string &requesting, const std::string &top,
                              const std::string &id);
