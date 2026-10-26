@@ -13,6 +13,10 @@ CefRefPtr<CefDictionaryValue> dictionary(const std::string &json) {
 }
 } // namespace
 void BrowserController::save_reading_article() {
+    if (safe_mode()) {
+        ui->toast(tr("This tool is paused in safe mode."));
+        return;
+    }
     auto t = current();
     if (!t || t->private_tab || private_window) {
         ui->toast(tr("Private pages cannot be saved to the reading list."));
@@ -173,6 +177,10 @@ void BrowserController::open_reading_article(int id) {
     }
 }
 void BrowserController::toggle_reader() {
+    if (safe_mode()) {
+        ui->toast(tr("This tool is paused in safe mode."));
+        return;
+    }
     auto t = current();
     if (!t || !t->devtools || !t->browser || t->ntp || t->closing)
         return;

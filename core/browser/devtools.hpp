@@ -7,7 +7,7 @@ namespace aura {
 class DevToolsSession final : public CefDevToolsMessageObserver {
   public:
     using Callback = std::function<void(bool, const std::string &)>;
-    explicit DevToolsSession(CefRefPtr<CefBrowser> browser);
+    explicit DevToolsSession(CefRefPtr<CefBrowser> browser, bool safe_mode = false);
     Callback event;
     void OnDevToolsEvent(CefRefPtr<CefBrowser>, const CefString &, const void *, size_t) override;
     void attach();
@@ -22,6 +22,7 @@ class DevToolsSession final : public CefDevToolsMessageObserver {
     CefRefPtr<CefRegistration> registration_;
     std::map<int, Callback> callbacks_;
     int next_id_ = 700000;
+    bool safe_mode_ = false;
     IMPLEMENT_REFCOUNTING(DevToolsSession);
 };
 } // namespace aura

@@ -391,6 +391,7 @@ Rect BrowserUi::panel_bounds() const {
                            : panel_ == Commands           ? 900
                            : panel_ == Hotkeys            ? 900
                            : panel_ == DuplicateTabs      ? 900
+                           : panel_ == Diagnostics        ? 900
                            : panel_ == ExtensionAccess    ? 900
                            : panel_ == SpellingDictionary ? 900
                            : panel_ == SearchProviders    ? 900
@@ -423,6 +424,7 @@ Rect BrowserUi::panel_bounds() const {
         : panel_ == Hotkeys
             ? std::clamp(280 + int(std::min<size_t>(7, hotkey_results().size())) * 56, 392, 700)
         : panel_ == DuplicateTabs      ? 700
+        : panel_ == Diagnostics        ? 580
         : panel_ == ExtensionAccess    ? 700
         : panel_ == SpellingDictionary ? 620
         : panel_ == SearchProviders    ? 700
@@ -789,7 +791,8 @@ void BrowserUi::draw(SkCanvas &c) {
         icon(c, name, rect.x + (rect.width - 19) / 2.f, rect.y + (rect.height - 19) / 2.f, 19,
              enabled ? ink : SkColorSetA(muted, 90));
     };
-    const std::string title = current ? current->page.title : "Aura";
+    const std::string title =
+        app_.safe_mode() ? app_.tr("Safe mode") : (current ? current->page.title : "Aura");
     if (!horizontal_tabs())
         label(c, regular_, title, 265, 21, 10, muted, width_ - 435);
     if (!horizontal_tabs())
@@ -942,7 +945,8 @@ void BrowserUi::draw(SkCanvas &c) {
             app_.tr("Search engines"),
             app_.tr("Duplicate tabs"),
             app_.tr(spelling_private_ ? "Private session dictionary" : "Spelling dictionary"),
-            app_.tr("Extension site access")};
+            app_.tr("Extension site access"),
+            app_.tr("Diagnostics")};
         label(c, medium_, titles[panel_], r.x + 28, r.y + 47, 23, ink);
         if (panel_ == Bookmarks || panel_ == Settings || panel_ == Groups) {
             Rect button{r.x + r.width - 220, r.y + 21, 160, 32};
@@ -1112,6 +1116,8 @@ void BrowserUi::draw(SkCanvas &c) {
             draw_spelling(c, r);
         if (panel_ == ExtensionAccess)
             draw_extension_access(c, r);
+        if (panel_ == Diagnostics)
+            draw_diagnostics(c, r);
         if (panel_ == SearchProviders)
             draw_search_providers(c, r);
         if (panel_ == ReadingListPanel)
@@ -2309,6 +2315,8 @@ std::vector<BrowserUi::SettingsRow> BrowserUi::settings_rows(Rect panel) const {
         {"passwords", "Data", "Passwords", "Manage saved logins and encrypted transfer files."},
         {"import", "Data", "Import browser data",
          "Preview bookmarks and history from Firefox, Chrome or an HTML export."},
+        {"diagnostics", "General", "Diagnostics",
+         "Restart without add-ons or save a report without website addresses."},
         {"updates", "General", "About Aura and updates",
          "View your version and check for verified browser updates."},
         {"shortcuts", "Start page", "Manage quick links",
@@ -2608,7 +2616,9 @@ void BrowserUi::settings_pointer(Rect r, int x, int y) {
         const auto spec = row.spec;
         if (!spec) {
             if (inside({b.x, b.y + 66, std::min(300, b.width), 32}, x, y)) {
-                if (row.action == "spelling_dictionary")
+                if (row.action == "diagnostics")
+                    open_diagnostics();
+                else if (row.action == "spelling_dictionary")
                     open_spelling_dictionary();
                 else if (row.action == "shortcuts")
                     open_shortcuts();
@@ -2767,6 +2777,11 @@ void BrowserUi::toast(std::string message) {
     app_.changed();
 }
 void BrowserUi::panel(Panel value) {
+    if (app_.safe_mode() && (value == Filters || value == SpellingDictionary ||
+                             value == Screenshot || value == DuplicateTabs)) {
+        toast(app_.tr("This tool is paused in safe mode."));
+        return;
+    }
     if (value != ExtensionAccess) {
         extension_site_input_.set("");
         extension_site_error_.clear();
@@ -4983,6 +4998,8 @@ void BrowserUi::pointer(const PointerInput &input) {
                 spelling_pointer(r, x, y);
             else if (panel_ == ExtensionAccess)
                 extension_access_pointer(r, x, y);
+            else if (panel_ == Diagnostics)
+                diagnostics_pointer(r, x, y);
             else if (panel_ == SearchProviders)
                 search_providers_pointer(r, x, y);
             else if (panel_ == ReadingListPanel)
@@ -5292,6 +5309,7 @@ void BrowserUi::draw_extensions(SkCanvas &c, Rect r) {
     const auto &t = interface_theme(app_.profile);
     auto &m = app_.extensions;
     auto chip = [&](Rect b, const std::string &text, bool primary = false, bool enabled = true) {
+        enabled = enabled && !app_.safe_mode();
         if (enabled && b.y >= r.y + 202 && b.y + b.height <= r.y + r.height - 116)
             focus_target(b);
         if (enabled && b.y < r.y + 202)
@@ -5312,7 +5330,8 @@ void BrowserUi::draw_extensions(SkCanvas &c, Rect r) {
     label(c, regular_, app_.tr("Chrome Web Store URL / ID, or an absolute .crx path"), r.x + 28,
           r.y + 77, 12, t.muted, r.width - 56);
     Rect input{r.x + 28, r.y + 90, r.width - 180, 37};
-    focus_target(input);
+    if (!app_.safe_mode())
+        focus_target(input);
     fill(c, input, 9, SkColorSetA(t.text, 7));
     border(c, input, 9,
            SkColorSetA(extension_input_focus_ ? t.accent : t.muted,
@@ -5354,8 +5373,10 @@ void BrowserUi::draw_extensions(SkCanvas &c, Rect r) {
              old == m.items.end() ? "Install extension" : "Update extension", true);
         chip({r.x + 198, r.y + r.height - 88, 112, 36}, "Cancel");
     } else {
-        label(c, regular_, app_.tr("Changes take effect after restarting Aura."), r.x + 28,
-              r.y + 188, 12, t.muted, r.width - 56);
+        label(c, regular_,
+              app_.tr(app_.safe_mode() ? "Extensions are paused in safe mode."
+                                       : "Changes take effect after restarting Aura."),
+              r.x + 28, r.y + 188, 12, t.muted, r.width - 56);
         c.save();
         c.clipRect(SkRect::MakeXYWH(r.x + 20, r.y + 202, r.width - 40, r.height - 318));
         if (m.items.empty())
@@ -5377,7 +5398,8 @@ void BrowserUi::draw_extensions(SkCanvas &c, Rect r) {
             chip({r.x + r.width - 316, y + 8, 152, 32}, "Site access", false,
                  e.load_requested && e.enabled && !e.pending_update);
             label(c, regular_,
-                  app_.tr(e.pending_update ? "Update after restart"
+                  app_.tr(app_.safe_mode()   ? "Paused in safe mode."
+                          : e.pending_update ? "Update after restart"
                           : !e.enabled ? (e.load_requested ? "Disabled after restart" : "Disabled")
                           : !e.load_requested ? "Restart Aura to activate"
                           : e.observed        ? "Activity detected"
@@ -5406,6 +5428,10 @@ void BrowserUi::draw_extensions(SkCanvas &c, Rect r) {
           r.x + 28, r.y + r.height - 25, 11, m.restart_required ? t.accent : t.muted, r.width - 56);
 }
 void BrowserUi::extensions_pointer(Rect r, int x, int y) {
+    if (app_.safe_mode()) {
+        toast(app_.tr("Extensions are paused in safe mode."));
+        return;
+    }
     auto &m = app_.extensions;
     extension_input_focus_ = inside({r.x + 28, r.y + 90, r.width - 180, 37}, x, y);
     if (extension_input_focus_) {
@@ -5487,6 +5513,8 @@ std::string BrowserUi::extensions_report() const {
 
 namespace aura {
 std::vector<std::pair<size_t, Rect>> BrowserUi::extension_buttons() const {
+    if (app_.safe_mode())
+        return {};
     std::vector<size_t> indices;
     const size_t capacity = std::max(0, (width_ - (horizontal_tabs() ? 424 : 628) - 180) / 36);
     for (size_t i = 0; i < app_.extensions.items.size() && indices.size() < capacity; i++)
@@ -7228,6 +7256,7 @@ std::vector<BrowserUi::CommandResult> BrowserUi::command_results() const {
         {"passwords", "Passwords", "Ctrl+Shift+Y", true},
         {"filters", "Filter lists", "", true},
         {"import", "Import browser data", "", true},
+        {"diagnostics", "Diagnostics", "", true},
         {"updates", "About Aura and updates", "", true},
         {"quick_links", "Manage quick links", "", current && current->ntp},
         {"split", app_.split_enabled() ? "Exit split view" : "Two pages side by side", "Ctrl+Alt+V",
@@ -7257,10 +7286,17 @@ std::vector<BrowserUi::CommandResult> BrowserUi::command_results() const {
         {"tree_child", "New child tab", "", current && app_.profile.tree_tabs},
         {"save_article", "Save article offline", "", page && !private_mode},
     };
-    for (const auto &action : actions)
-        add({"action", action.id, app_.tr(action.title), app_.tr("Action"),
-             shortcut_hint(action.id), 0, 0, action.enabled},
+    for (const auto &action : actions) {
+        const std::string_view id = action.id;
+        const bool paused =
+            app_.safe_mode() &&
+            (id == "filters" || id == "sleep" || id == "reader" || id == "screenshot" ||
+             id == "spelling_dictionary" || id == "duplicates" || id == "save_article");
+        add({"action", action.id, app_.tr(action.title),
+             app_.tr(paused ? "This tool is paused in safe mode." : "Action"),
+             shortcut_hint(action.id), 0, 0, action.enabled && !paused},
             action.title);
+    }
     for (const auto &spec : settings_catalog())
         add({"setting", spec.id, app_.tr(spec.title),
              app_.tr("Setting") + " · " + app_.tr(spec.section) + " · " +
@@ -7410,6 +7446,8 @@ void BrowserUi::run_command(int index) {
         panel(Filters);
     else if (id == "import")
         panel(Import);
+    else if (id == "diagnostics")
+        open_diagnostics();
     else if (id == "updates")
         panel(Updates);
     else if (id == "quick_links")
@@ -8995,6 +9033,10 @@ std::string BrowserUi::sessions_report() const {
     return out + "]}";
 }
 void BrowserUi::open_screenshot() {
+    if (app_.safe_mode()) {
+        toast(app_.tr("This tool is paused in safe mode."));
+        return;
+    }
     app_.cancel_screenshot();
     app_.close_menu();
     panel(Screenshot);
@@ -10127,6 +10169,10 @@ std::string BrowserUi::search_providers_report() const {
 
 namespace aura {
 void BrowserUi::open_duplicates() {
+    if (app_.safe_mode()) {
+        toast(app_.tr("This tool is paused in safe mode."));
+        return;
+    }
     app_.close_menu();
     panel(DuplicateTabs);
     duplicate_selected_.reset();
@@ -10935,6 +10981,10 @@ void BrowserUi::draw_tab_drop(SkCanvas &c) {
 
 namespace aura {
 void BrowserUi::open_spelling_dictionary() {
+    if (app_.safe_mode()) {
+        toast(app_.tr("This tool is paused in safe mode."));
+        return;
+    }
     panel(SpellingDictionary);
     spelling_private_ = app_.private_window || (app_.current() && app_.current()->private_tab);
     spelling_input_.set("");
@@ -11247,5 +11297,70 @@ std::string BrowserUi::extension_access_report() const {
                "}";
     }
     return out + "]}";
+}
+} // namespace aura
+
+namespace aura {
+void BrowserUi::open_diagnostics() {
+    app_.close_extension_popup();
+    panel(Diagnostics);
+    app_.close_menu();
+    if (auto t = app_.current(); t && t->browser)
+        t->browser->GetHost()->SetFocus(false);
+    app_.changed();
+}
+void BrowserUi::draw_diagnostics(SkCanvas &c, Rect r) {
+    const auto t = interface_theme(app_.profile);
+    const bool safe = app_.safe_mode();
+    label(c, medium_, app_.tr(safe ? "Safe mode is active" : "Normal mode is active"), r.x + 28,
+          r.y + 96, 18, t.text, r.width - 56);
+    label(c, regular_, app_.tr("Temporary mode. Your saved preferences stay unchanged."), r.x + 28,
+          r.y + 130, 12, t.muted, r.width - 56);
+    const char *labels[] = {"Extensions and page injections", "Network ad filtering",
+                            "Hardware acceleration"};
+    for (int i = 0; i < 3; ++i) {
+        label(c, regular_, app_.tr(labels[i]), r.x + 28, r.y + 180 + i * 32, 13, t.text,
+              r.width - 220);
+        label(c, medium_, app_.tr(safe ? "Paused" : "Normal settings"), r.x + r.width - 184,
+              r.y + 180 + i * 32, 12, t.muted, 156);
+    }
+    label(c, regular_, app_.tr("Report: technical counts and event codes."), r.x + 28, r.y + 282,
+          12, t.muted, r.width - 56);
+    label(c, regular_, app_.tr("No addresses, page text, logins or old logs."), r.x + 28, r.y + 309,
+          12, t.muted, r.width - 56);
+    auto button = [&](Rect b, const std::string &text, bool primary) {
+        focus_target(b);
+        if (primary)
+            fill(c, b, 8, t.accent);
+        else
+            border(c, b, 8, t.muted);
+        centered_label(c, medium_, app_.tr(text), b, 12, primary ? t.background : t.text, 12, 12);
+    };
+    button({r.x + 28, r.y + r.height - 130, r.width - 56, 36},
+           safe ? "Restart in normal mode" : "Restart in safe mode", true);
+    button({r.x + 28, r.y + r.height - 84, r.width - 56, 36}, "Save diagnostics report", false);
+    label(c, regular_, app_.tr("Nothing is uploaded automatically."), r.x + 28, r.y + r.height - 20,
+          11, t.muted, r.width - 56);
+}
+void BrowserUi::diagnostics_pointer(Rect r, int x, int y) {
+    if (inside({r.x + 28, r.y + r.height - 130, r.width - 56, 36}, x, y))
+        app_.restart_in_mode(!app_.safe_mode());
+    else if (inside({r.x + 28, r.y + r.height - 84, r.width - 56, 36}, x, y))
+        save_export(app_.diagnostics_report(), "aura-diagnostics.json", "*.json",
+                    "Save diagnostics report");
+}
+std::string BrowserUi::diagnostics_report() const {
+    if (panel_ != Diagnostics)
+        return "null";
+    const auto r = panel_bounds();
+    auto rect = [](Rect b) {
+        return "[" + std::to_string(b.x) + "," + std::to_string(b.y) + "," +
+               std::to_string(b.width) + "," + std::to_string(b.height) + "]";
+    };
+    return "{\"picker_pid\":" + std::to_string(picker_pid_) +
+           ",\"last_export\":" + json_quote(last_export_) +
+           ",\"error\":" + json_quote(save_error_) +
+           ",\"restart\":" + rect({r.x + 28, r.y + r.height - 130, r.width - 56, 36}) +
+           ",\"save\":" + rect({r.x + 28, r.y + r.height - 84, r.width - 56, 36}) + "}";
 }
 } // namespace aura

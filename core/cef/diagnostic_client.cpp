@@ -16,11 +16,24 @@ void DiagnosticClient::OnRenderProcessTerminated(CefRefPtr<CefBrowser>, Terminat
 void DiagnosticApp::OnBeforeCommandLineProcessing(const CefString& process_type,
                                                  CefRefPtr<CefCommandLine> command) {
     if (!process_type.empty()) return;
-    auto blink_features = command->GetSwitchValue("enable-blink-features").ToString();
-    if (!blink_features.empty())
-        blink_features += ",";
-    command->AppendSwitchWithValue("enable-blink-features",
-                                   blink_features + "SpellCheckCustomDictionaryAPI");
+    if (!verbose_logging_) {
+        for (const char *flag : {"enable-logging", "log-file", "log-severity", "v", "vmodule",
+                                 "log-net-log", "net-log-capture-mode"})
+            command->RemoveSwitch(flag);
+        command->AppendSwitchWithValue("log-severity", "disable");
+    }
+    if (safe_mode_) {
+        command->RemoveSwitch("load-extension");
+        command->RemoveSwitch("disable-extensions-except");
+        command->AppendSwitch("disable-extensions");
+    }
+    if (!safe_mode_) {
+        auto blink_features = command->GetSwitchValue("enable-blink-features").ToString();
+        if (!blink_features.empty())
+            blink_features += ",";
+        command->AppendSwitchWithValue("enable-blink-features",
+                                       blink_features + "SpellCheckCustomDictionaryAPI");
+    }
 #ifndef _WIN32
     command->AppendSwitchWithValue("ozone-platform", capture_ ? "headless" : "x11");
 #endif
@@ -30,7 +43,8 @@ void DiagnosticApp::OnBeforeCommandLineProcessing(const CefString& process_type,
         command->AppendSwitch("disable-accelerated-video-decode");
         command->AppendSwitch("disable-accelerated-video-encode");
     }
-    if(extension_=="-")command->AppendSwitch("disable-extensions");
+    if (safe_mode_ || extension_ == "-")
+        command->AppendSwitch("disable-extensions");
     else if (!extension_.empty()) {command->AppendSwitchWithValue("load-extension", extension_);command->AppendSwitchWithValue("disable-extensions-except", extension_); }
 }
 void DiagnosticClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {

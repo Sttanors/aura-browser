@@ -1,6 +1,7 @@
 #include "core/browser/browser.hpp"
 #include "aura/design_tokens.hpp"
 #include "common/config.hpp"
+#include "common/diagnostics.hpp"
 #include "common/platform.hpp"
 #include "common/update_key.hpp"
 #include "core/browser/client.hpp"
@@ -57,6 +58,8 @@ std::string tabs_json(const std::vector<std::unique_ptr<Tab>> &tabs) {
             << ",\"reader_ui\":" << t->reader_ui
             << ",\"selection_bytes\":" << t->selected_text.size()
             << ",\"buffer_bytes\":" << t->page.view.bytes().size() + t->page.popup.bytes().size()
+            << ",\"injection_scripts\":"
+            << (!t->protection_script.empty() + !t->spelling_script.empty())
             << ",\"spelling_supported\":" << (t->spelling_supported ? "true" : "false")
             << ",\"cef_browser_id\":" << (t->browser ? t->browser->GetIdentifier() : 0)
             << ",\"container\":" << t->container << ",\"workspace\":" << t->workspace
@@ -149,9 +152,10 @@ class ToolsClient final : public CefClient, public CefLifeSpanHandler {
     IMPLEMENT_REFCOUNTING(ToolsClient);
 };
 } // namespace
-BrowserState::BrowserState(const std::filesystem::path &path)
-    : profile(path), reading_list(path), profiles(path, profile.profiles_root), extensions(path),
-      updates(path), passwords(path / "passwords.aura") {
+BrowserState::BrowserState(const std::filesystem::path &path, bool diagnostic_safe)
+    : safe_mode(diagnostic_safe), profile(path), reading_list(path),
+      profiles(path, profile.profiles_root), extensions(path), updates(path),
+      passwords(path / "passwords.aura") {
     previous_windows = profile.windows;
     if (previous_windows.empty() && !profile.session.empty())
         previous_windows.push_back({profile.session, profile.active});
@@ -160,8 +164,9 @@ BrowserState::BrowserState(const std::filesystem::path &path)
 }
 BrowserController::BrowserController(std::filesystem::path path, std::filesystem::path font,
                                      double factor, bool accelerated,
-                                     std::shared_ptr<BrowserState> shared, bool private_mode)
-    : state_(shared ? std::move(shared) : std::make_shared<BrowserState>(path)),
+                                     std::shared_ptr<BrowserState> shared, bool private_mode,
+                                     bool diagnostic_safe)
+    : state_(shared ? std::move(shared) : std::make_shared<BrowserState>(path, diagnostic_safe)),
       profile(state_->profile), private_window(private_mode), downloads(state_->downloads),
       window_uid(++state_->next_window_uid), scale(factor), extensions(state_->extensions),
       updates(state_->updates), importer(state_->importer), passwords(state_->passwords),
@@ -234,7 +239,8 @@ void BrowserController::apply_settings(bool update_zoom, bool propagate) {
     const bool layout_changed = ui->sync_tab_layout();
     window->interface_zoom(profile.ui_zoom / 100.0);
     close_menu();
-    request_policy->protection->configure(profile.adblock, profile.cosmetic_filtering,
+    request_policy->protection->configure(profile.adblock && !safe_mode(),
+                                          profile.cosmetic_filtering && !safe_mode(),
                                           profile.adblock_exceptions);
     request_policy->do_not_track = profile.do_not_track;
     request_policy->send_referrer = profile.send_referrer;
@@ -420,7 +426,7 @@ void BrowserController::start(const std::string &initial, bool private_mode, boo
         };
         dialogs.push_back(std::move(dialog));
     }
-    if (!private_mode && profile.check_updates && updates.due())
+    if (!safe_mode() && !private_mode && profile.check_updates && updates.due())
         updates.check();
     if (profile.recovered_profile) {
         ui->toast(profile.language == "ru"
@@ -482,10 +488,10 @@ void BrowserController::tick() {
                     changed();
                 }
             }
-    if (background_updates_ && profile.check_updates && updates.due())
+    if (!safe_mode() && background_updates_ && profile.check_updates && updates.due())
         updates.check();
     auto &filters = filter_lists();
-    if (background_updates_ && profile.adblock && profile.filter_updates &&
+    if (!safe_mode() && background_updates_ && profile.adblock && profile.filter_updates &&
         std::chrono::steady_clock::now() >= state_->filters_after && filters.due())
         filters.check();
     const auto filter_revision = filters.revision;
@@ -1020,6 +1026,7 @@ void BrowserController::answer_dialog(bool accept) {
         if (state_->exiting) {
             state_->exiting = false;
             state_->session_frozen = false;
+            state_->restart_mode = -1;
             for (auto *other : state_->windows) {
                 other->restart_on_exit = false;
                 other->install_update_on_exit = false;
@@ -1047,20 +1054,24 @@ void BrowserController::answer_dialog(bool accept) {
         dialog.action(accept, dialog.input.value);
     changed();
 }
-void BrowserController::restart() {
+void BrowserController::restart() { restart_in_mode(safe_mode()); }
+void BrowserController::restart_in_mode(bool safe) {
     if (quitting || extensions.busy || passwords.busy || importer.busy || updates.busy() ||
         filter_lists().busy()) {
         ui->toast(tr("Finish the current operation before restarting."));
         return;
     }
-    confirm_action(tr("Restart Aura?"), tr("Regular tabs will reopen. Private tabs will close."),
-                   [this] {
+    confirm_action(tr(safe == safe_mode() ? "Restart Aura?"
+                      : safe              ? "Restart in safe mode?"
+                                          : "Restart in normal mode?"),
+                   tr("Regular tabs will reopen. Private tabs will close."), [this, safe] {
                        try {
                            save_session();
                        } catch (...) {
                            ui->toast(tr("Cannot save the session. Restart cancelled."));
                            return;
                        }
+                       state_->restart_mode = safe ? 1 : 0;
                        restart_on_exit = true;
                        request_exit(true);
                    });
@@ -1407,7 +1418,8 @@ void BrowserController::save_session() {
 }
 std::string BrowserController::report() const {
     std::ostringstream out;
-    out << "{\"product\":\"Aura\",\"pid\":" << process_id() << ",\"window\":" << window->native_id()
+    out << "{\"safe_mode\":" << (safe_mode() ? "true" : "false")
+        << ",\"product\":\"Aura\",\"pid\":" << process_id() << ",\"window\":" << window->native_id()
         << ",\"window_uid\":" << window_uid
         << ",\"spelling_resources_ready\":" << (state_->spelling_resources_ready ? "true" : "false")
         << ",\"tab_drop_target\":" << state_->tab_drop.target << ",\"cef_created\":" << created_
@@ -1438,6 +1450,7 @@ std::string BrowserController::report() const {
         << ",\"groups_ui\":" << ui->groups_report() << ",\"sidebar\":" << ui->sidebar_report()
         << ",\"tab_strip\":" << ui->tab_strip_report()
         << ",\"filter_lists\":" << state_->filters->report()
+        << ",\"diagnostics_ui\":" << ui->diagnostics_report()
         << ",\"extensions_ui\":" << ui->extensions_report()
         << ",\"extension_popup\":" << ui->extension_popup_report()
         << ",\"extension_toolbar\":" << ui->extension_toolbar_report()
@@ -1535,7 +1548,7 @@ void BrowserController::browser_created(int id, CefRefPtr<CefBrowser> browser) {
             configure_permissions(browser->GetHost()->GetRequestContext(), "", "", 0, true);
             state_->private_permissions_initialized = true;
         }
-        t->devtools = new DevToolsSession(browser);
+        t->devtools = new DevToolsSession(browser, safe_mode());
         t->devtools->attach();
         setup_site_tools(id, [this, id] {
             if (auto t = tab(id); t && t->browser && !t->closing) {
@@ -1980,7 +1993,8 @@ std::string BrowserController::profile_name() const {
 }
 void BrowserController::update_window_title() {
     if (auto t = current())
-        window->title(t->page.title + " — Aura · " + profile_name());
+        window->title((safe_mode() ? tr("Safe mode") + " — " : "") + t->page.title + " — Aura · " +
+                      profile_name());
 }
 void BrowserController::open_profile(int id) {
     try {
@@ -2029,5 +2043,26 @@ void BrowserController::open_profile(int id) {
     } catch (const std::exception &e) {
         ui->toast(tr(e.what()));
     }
+}
+} // namespace aura
+
+namespace aura {
+std::string BrowserController::diagnostics_report() const {
+    DiagnosticSummary summary;
+    summary.safe_mode = safe_mode();
+    summary.verbose = state_->verbose_logging;
+    summary.created = state_->retired_created + state_->extension_access.created_count();
+    summary.closed = state_->retired_closed + state_->extension_access.closed_count();
+    for (const auto *w : state_->windows) {
+        summary.windows += !w->quitting;
+        summary.created += w->created_count();
+        summary.closed += w->closed_count();
+        for (const auto &t : w->tabs) {
+            summary.tabs += !t->page.closed;
+            summary.renderer_crashes += t->page.renderer_crashes;
+            summary.gpu |= t->page.accelerated_frames > 0;
+        }
+    }
+    return diagnostic_report(summary);
 }
 } // namespace aura

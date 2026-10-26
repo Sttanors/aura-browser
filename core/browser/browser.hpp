@@ -159,7 +159,11 @@ struct TabDrop {
     Rect marker;
 };
 struct BrowserState {
-    explicit BrowserState(const std::filesystem::path &path);
+    explicit BrowserState(const std::filesystem::path &path, bool diagnostic_safe = false);
+    const bool safe_mode;
+    bool verbose_logging = false;
+    int restart_mode = -1;
+    int retired_created = 0, retired_closed = 0;
     Profile profile;
     DuplicateMerge duplicate_merge;
     TabDrop tab_drop;
@@ -199,7 +203,7 @@ class BrowserController {
   public:
     BrowserController(std::filesystem::path profile_path, std::filesystem::path font, double scale,
                       bool accelerated = false, std::shared_ptr<BrowserState> shared = {},
-                      bool private_window = false);
+                      bool private_window = false, bool diagnostic_safe = false);
     ~BrowserController();
     std::shared_ptr<void> callback_lifetime = std::make_shared<int>(0);
     Profile &profile;
@@ -280,6 +284,9 @@ class BrowserController {
     void page_login(bool fill, size_t index = 0);
     bool install_update_on_exit = false, restart_on_exit = false;
     void restart();
+    void restart_in_mode(bool safe);
+    bool safe_mode() const { return state_->safe_mode; }
+    std::string diagnostics_report() const;
     void refresh_extension_state();
     std::shared_ptr<ExtensionPopup> extension_popup;
     std::filesystem::path resources;

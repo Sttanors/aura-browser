@@ -166,6 +166,10 @@ void BrowserController::setup_site_tools(int id, std::function<void()> ready) {
     t->devtools->call("WebAudio.enable");
     t->devtools->call("Runtime.enable");
     t->devtools->call("Page.enable");
+    if (safe_mode()) {
+        defer(std::move(ready));
+        return;
+    }
     setup_spelling(*t);
     t->devtools->call(
         "Runtime.addBinding",
@@ -184,6 +188,8 @@ void BrowserController::setup_site_tools(int id, std::function<void()> ready) {
         });
 }
 void BrowserController::update_site_tools(Tab &t) {
+    if (safe_mode())
+        return;
     if (!t.devtools)
         return;
     for (const auto &[context, origin] : t.protection_contexts)
@@ -207,6 +213,10 @@ void BrowserController::update_site_tools(Tab &t) {
                      });
 }
 void BrowserController::protection_menu() {
+    if (safe_mode()) {
+        ui->open_diagnostics();
+        return;
+    }
     auto t = current();
     bool web =
         t && !t->ntp && (t->page.url.starts_with("http://") || t->page.url.starts_with("https://"));
@@ -251,6 +261,10 @@ void BrowserController::protection_menu() {
     changed();
 }
 void BrowserController::extension_page(size_t index, bool options) {
+    if (safe_mode()) {
+        ui->toast(tr("Extensions are paused in safe mode."));
+        return;
+    }
     if (index >= extensions.items.size())
         return;
     auto &e = extensions.items[index];
@@ -282,6 +296,10 @@ std::string password_origin(const std::string &url) {
     return "https://" + host + (port.empty() || port == "443" ? "" : ":" + port);
 }
 void BrowserController::page_login(bool fill, size_t index) {
+    if (safe_mode()) {
+        ui->toast(tr("This tool is paused in safe mode."));
+        return;
+    }
     auto t = current();
     if (passwords.busy || !passwords.vault.unlocked()) {
         ui->toast(tr("Unlock the password vault first."));

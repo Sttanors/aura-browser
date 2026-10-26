@@ -1504,6 +1504,31 @@ constexpr Translation catalog[] = {
      "Разрешения действуют для сайта в выбранном контейнере."},
     {"Could not save this site rule.", "Не удалось сохранить правило для сайта."},
 
+    {"Diagnostics", "Диагностика"},
+    {"Restart without add-ons or save a report without website addresses.",
+     "Запуск без расширений и отчёт без адресов сайтов."},
+    {"Safe mode", "Безопасный режим"},
+    {"Safe mode is active", "Безопасный режим включён"},
+    {"Normal mode is active", "Обычный режим"},
+    {"Temporary mode. Your saved preferences stay unchanged.",
+     "Временный режим. Сохранённые настройки не меняются."},
+    {"Extensions and page injections", "Расширения и внедрения в страницы"},
+    {"Network ad filtering", "Блокировка рекламы"},
+    {"Hardware acceleration", "Аппаратное ускорение"},
+    {"Normal settings", "По настройкам"},
+    {"Report: technical counts and event codes.", "В отчёте — счётчики и коды событий."},
+    {"No addresses, page text, logins or old logs.",
+     "Без адресов, текста страниц, логинов и старых журналов."},
+    {"Restart in normal mode", "Перезапустить в обычном режиме"},
+    {"Restart in safe mode", "Перезапустить в безопасном режиме"},
+    {"Restart in safe mode?", "Перезапустить в безопасном режиме?"},
+    {"Restart in normal mode?", "Перезапустить в обычном режиме?"},
+    {"Save diagnostics report", "Сохранить отчёт диагностики"},
+    {"Nothing is uploaded automatically.", "Ничего не отправляется автоматически."},
+    {"This tool is paused in safe mode.", "Этот инструмент отключён в безопасном режиме."},
+    {"Extensions are paused in safe mode.", "Расширения отключены в безопасном режиме."},
+    {"Paused in safe mode.", "Отключено в безопасном режиме."},
+
 };
 } // namespace
 std::span<const Translation> translations() {

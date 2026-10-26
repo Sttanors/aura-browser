@@ -37,7 +37,8 @@ class BrowserUi {
         SearchProviders,
         DuplicateTabs,
         SpellingDictionary,
-        ExtensionAccess
+        ExtensionAccess,
+        Diagnostics
     };
     BrowserUi(BrowserController &owner, const std::filesystem::path &font);
     ~BrowserUi();
@@ -100,6 +101,8 @@ class BrowserUi {
     std::string spelling_report() const;
     void open_extension_access(const std::string &id);
     std::string extension_access_report() const;
+    void open_diagnostics();
+    std::string diagnostics_report() const;
     void open_search_providers();
     std::string search_providers_report() const;
     void open_reading_list();
@@ -131,6 +134,8 @@ class BrowserUi {
     TextEditor address, find;
 
   private:
+    void draw_diagnostics(SkCanvas &, Rect);
+    void diagnostics_pointer(Rect, int, int);
     BrowserController &app_;
     Rect screenshot_area_, screenshot_region_;
     bool screenshot_drag_ = false, screenshot_cancel_focus_ = false;

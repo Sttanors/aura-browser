@@ -16,6 +16,10 @@ AI assistance does not imply that the software is error-free. Aura is currently 
 [feature progress journal](docs/features-progress.md) (Russian): workspaces, groups, containers, profiles,
 reader/translation tools, site controls, bookmark/session managers, screenshots and configurable hotkeys.
 
+Development branch: [safe diagnostic mode](docs/safe-mode.md) temporarily pauses add-ons,
+page injections, ad filtering and GPU, with a sanitized local report. This addition
+is not included in the published installers yet.
+
 ## Download and install
 
 Get the files from [GitHub Releases](https://github.com/Sttanors/aura-browser/releases/tag/v0.4.0-preview.2).

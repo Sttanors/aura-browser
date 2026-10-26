@@ -82,6 +82,8 @@ std::string words_json(const std::vector<std::string> &words) {
 }
 } // namespace
 void BrowserController::setup_spelling(Tab &t) {
+    if (safe_mode())
+        return;
     const auto words = words_json(spelling_words(t.private_tab));
     const int id = t.id;
     const auto generation = ++t.spelling_generation;
@@ -112,6 +114,8 @@ void BrowserController::setup_spelling(Tab &t) {
         });
 }
 void BrowserController::update_spelling(Tab &t, bool future) {
+    if (safe_mode())
+        return;
     if (!t.devtools)
         return;
     const auto words = words_json(spelling_words(t.private_tab));
@@ -143,6 +147,8 @@ void BrowserController::update_spelling(Tab &t, bool future) {
     }
 }
 bool BrowserController::change_spelling_word(const std::string &word, bool add, bool private_mode) {
+    if (safe_mode())
+        return false;
     if (!valid_spelling_word(word))
         return false;
     if (private_mode) {

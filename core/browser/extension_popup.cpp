@@ -9,6 +9,10 @@
 namespace aura {
 void BrowserController::edit_extension_access(const std::string &id, const std::string &operation,
                                               const std::string &value) {
+    if (safe_mode()) {
+        ui->toast(tr("Extensions are paused in safe mode."));
+        return;
+    }
     if (quitting || private_window ||
         (current() && (current()->private_tab || current()->container))) {
         ui->toast(tr("Site access is managed from a regular tab in the default container."));
@@ -160,6 +164,10 @@ class ExtensionPopupClient final : public DiagnosticClient,
 };
 } // namespace
 void BrowserController::open_extension_popup(size_t index) {
+    if (safe_mode()) {
+        ui->toast(tr("Extensions are paused in safe mode."));
+        return;
+    }
     if (index >= extensions.items.size() || quitting)
         return;
     const auto e = extensions.items[index];

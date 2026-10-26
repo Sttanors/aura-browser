@@ -1,7 +1,9 @@
 #include "core/browser/devtools.hpp"
+#include "common/diagnostics.hpp"
 #include "include/cef_parser.h"
 namespace aura {
-DevToolsSession::DevToolsSession(CefRefPtr<CefBrowser> browser) : browser_(browser) {}
+DevToolsSession::DevToolsSession(CefRefPtr<CefBrowser> browser, bool safe_mode)
+    : browser_(browser), safe_mode_(safe_mode) {}
 void DevToolsSession::attach() {
     registration_ = browser_->GetHost()->AddDevToolsMessageObserver(this);
 }
@@ -13,6 +15,11 @@ void DevToolsSession::close() {
 }
 void DevToolsSession::call(const std::string &method, const std::string &params,
                            Callback callback) {
+    if (!diagnostic_method_allowed(method, safe_mode_)) {
+        if (callback)
+            callback(false, "{\"message\":\"Disabled in safe mode\"}");
+        return;
+    }
     if (!browser_)
         return;
     auto value = CefParseJSON(params, JSON_PARSER_RFC);

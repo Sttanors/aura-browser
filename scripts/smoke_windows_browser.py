@@ -44,7 +44,7 @@ def main():
     binary = Path(os.environ.get('AURA_TEST_BINARY', str(ROOT/'build/windows-x64-release/aura_browser.exe')))
     process = None
     try:
-        for launch in range(2):
+        for launch in range(3):
             report_path = output/f'report-{launch}.json'
             report_path.unlink(missing_ok=True)
             last_report = {}
@@ -63,6 +63,32 @@ def main():
                     if process.poll() is not None: raise RuntimeError(f'Browser exited ({process.returncode}): {message}')
                     time.sleep(.1)
                 raise RuntimeError(message)
+            if launch == 2:
+                # A separate safe launch uses the same real extension/profile as normal runs.
+                clean = output/'safe-diagnostics.json'
+                safe_url = f'http://127.0.0.1:{server.server_port}/browser/diagnostics.html?token=PRIVATE_URL_SENTINEL'
+                with (output/'safe-process.log').open('w') as safe_log:
+                    process = subprocess.Popen([str(binary), f'--data-dir={profile}', f'--report={report_path}', f'--diagnostic-report={clean}', '--safe-mode', '--gpu', f'--load-extension={profile/"extensions"/(access_extension_id+"-123")}', f'--url={safe_url}'], stdout=safe_log, stderr=subprocess.STDOUT)
+                    def safe_doc(s):
+                        try: return json.loads(s['tabs'][s['active_tab']]['title'])
+                        except (KeyError, IndexError, ValueError): return {}
+                    safe = wait(lambda s: bool(safe_doc(s).get('token')), 'Safe mode page JavaScript must work')
+                    assert safe['safe_mode'] and 'DIB' in safe['renderer']
+                    assert not safe_doc(safe)['extension'] and not safe_doc(safe)['dark']
+                    assert all(t['injection_scripts'] == 0 for t in safe['tabs'])
+                    assert all(e['enabled'] and not e['load_requested'] and not e['loaded'] for e in safe['extensions']['items'])
+                    assert not safe['extension_toolbar']
+                    wait(lambda s: clean.exists(), 'Sanitized diagnostics must be saved')
+                    text = clean.read_text(encoding='utf-8');sanitized = json.loads(text)
+                    assert sanitized['safe_mode'] and sanitized['renderer'] == 'raster'
+                    for marker in ('PRIVATE_', 'http:', str(profile), 'diagnostics.html'):
+                        assert marker not in text, 'Diagnostics leaked '+marker
+                    assert not (profile/'diagnostics/verbose.log').exists() and not (profile/'diagnostics/cef-verbose.log').exists()
+                    user.SendMessageW(safe['window'], 0x10, 0, 0)
+                    process.wait(timeout=30);assert process.returncode == 0
+                    final = read();assert final['cef_created_total'] == final['cef_closed_total']
+                    process = None
+                continue
             with (output/f'process-{launch}.log').open('w') as log:
                 process = subprocess.Popen([str(binary), f'--data-dir={profile}', f'--report={report_path}', '--software-rendering', f'--url={url}'], stdout=log, stderr=subprocess.STDOUT)
                 state = wait(lambda s: any(t.get('title') == 'Alpha' and t.get('loaded') and t.get('frames', 0) > 0 for t in s.get('tabs', [])), 'Alpha must load and paint')
