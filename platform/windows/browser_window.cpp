@@ -538,4 +538,26 @@ std::string BrowserWindow::renderer() const {
 std::uint64_t BrowserWindow::frames() const {
     return impl_->frame_count;
 }
+
+void BrowserWindow::clear_callbacks() { impl_->callbacks = {}; }
+std::pair<int, int> BrowserWindow::screen_point(int x, int y) const {
+    POINT p{LONG(std::lround(x * impl_->scale)), LONG(std::lround(y * impl_->scale))};
+    ClientToScreen(handle(), &p);
+    return {p.x, p.y};
+}
+std::optional<std::pair<int, int>> BrowserWindow::point_from(const BrowserWindow &source, int x,
+                                                             int y) const {
+    if (!IsWindowVisible(handle()) || IsIconic(handle()))
+        return {};
+    const auto screen = source.screen_point(x, y);
+    POINT p{screen.first, screen.second};
+    const auto front = WindowFromPoint(p);
+    if (!front || GetAncestor(front, GA_ROOT) != handle() || !ScreenToClient(handle(), &p))
+        return {};
+    RECT r{};
+    GetClientRect(handle(), &r);
+    if (p.x < 0 || p.y < 0 || p.x >= r.right || p.y >= r.bottom)
+        return {};
+    return std::pair<int, int>{int(p.x / impl_->scale), int(p.y / impl_->scale)};
+}
 } // namespace aura

@@ -530,6 +530,8 @@ void BrowserUi::draw_editor(SkCanvas &c, const TextEditor &e, Rect r, float size
     c.restore();
 }
 bool BrowserUi::draw_web_frame(SkCanvas &c) {
+    if (app_.state()->tab_drop.target == app_.window_uid)
+        return false;
     const auto current = app_.current();
     // A CEF repaint changes only the page. Preserve native chrome and its focus
     // targets; overlays use the complete painter so they remain above the page.
@@ -595,7 +597,9 @@ void BrowserUi::draw(SkCanvas &c) {
         label(c, medium_, app_.tr("New tab"), 59, 113, 13, ink);
         if (shortcut_hint("new_tab").size() <= 6)
             label(c, regular_, shortcut_hint("new_tab"), 170, 112, 10, muted, 50);
-        label(c, regular_, app_.tr("Tabs"), 24, 161, 12, muted);
+        const bool receiving = app_.state()->tab_drop.target == app_.window_uid;
+        label(c, receiving ? medium_ : regular_, app_.tr(receiving ? "Move tab here" : "Tabs"), 24,
+              161, 12, receiving ? ink : muted, 180);
         const auto visible = sidebar_rows();
         int visible_active =
             int(std::find(visible.begin(), visible.end(), app_.active) - visible.begin());
@@ -615,7 +619,8 @@ void BrowserUi::draw(SkCanvas &c) {
         if (visible_active == int(visible.size()) && current && current->group)
             visible_active =
                 int(std::find(visible.begin(), visible.end(), -current->group) - visible.begin());
-        label(c, regular_, std::to_string(app_.visible_tabs().size()), 207, 161, 9, muted);
+        if (!receiving)
+            label(c, regular_, std::to_string(app_.visible_tabs().size()), 207, 161, 9, muted);
         const int list_bottom = height_ - 220;
         int tab_capacity = std::max(1, (list_bottom - 178) / 52);
         if (current && (current->id != visible_active_id_ || app_.active != visible_active_index_ ||
@@ -862,6 +867,7 @@ void BrowserUi::draw(SkCanvas &c) {
     else
         draw_start_page(c);
     draw_tab_hint(c);
+    draw_tab_drop(c);
     if (app_.profile.show_status && !status.empty() && !editing && panel_ == None) {
         const auto area = current ? page_bounds(*current) : web;
         Rect r{area.x + 9, area.y + area.height - 31,
@@ -2977,6 +2983,10 @@ bool BrowserUi::editor_key(TextEditor &e, const CefKeyEvent &key) {
 }
 bool BrowserUi::key(const CefKeyEvent &incoming) {
     const bool down = incoming.type != KEYEVENT_KEYUP;
+    if (down && incoming.windows_key_code == 0x1B && drag_source_) {
+        cancel_tab_gesture();
+        return true;
+    }
     const int code = incoming.windows_key_code;
     const int mods = ((incoming.modifiers & EVENTFLAG_CONTROL_DOWN) ? 1 : 0) |
                      ((incoming.modifiers & EVENTFLAG_SHIFT_DOWN) ? 2 : 0) |
@@ -4419,15 +4429,25 @@ void BrowserUi::pointer(const PointerInput &input) {
     if (down) {
         drag_tab_ = -1;
         drag_source_ = 0;
+        drag_moved_ = drag_cancelled_ = false;
+        app_.cancel_tab_drag();
     }
     if (input.kind == PointerInput::Up) {
         const bool tab_gesture = drag_source_ != 0;
+        if (tab_gesture && drag_moved_ && !drag_cancelled_)
+            app_.tab_drag(drag_source_, x, y, true);
+        app_.cancel_tab_drag();
         drag_tab_ = -1;
         drag_source_ = 0;
         if (tab_gesture)
             return; // A page never received the matching mouse-down.
     }
     if (input.kind == PointerInput::Move && drag_source_) {
+        if (drag_cancelled_)
+            return;
+        drag_moved_ = drag_moved_ || std::abs(x - drag_x_) > 8 || std::abs(y - drag_y_) > 8;
+        if (drag_moved_)
+            app_.tab_drag(drag_source_, x, y);
         drag_tab_ = -1;
         for (int i = 0; i < int(app_.tabs.size()); ++i)
             if (app_.tabs[i]->id == drag_source_ && !app_.tabs[i]->closing &&
@@ -4904,6 +4924,7 @@ void BrowserUi::pointer(const PointerInput &input) {
                     if (input.button == 1) {
                         drag_tab_ = index;
                         drag_source_ = app_.tabs[index]->id;
+                        drag_x_ = x;
                         drag_y_ = y;
                     }
                     if (input.button == 3) {
@@ -6956,6 +6977,7 @@ std::string BrowserUi::profiles_report() const {
 }
 
 void BrowserUi::open_commands() {
+    move_window_tab_ = 0;
     app_.close_menu();
     panel(Commands);
     command_query_.set("");
@@ -6991,6 +7013,25 @@ std::vector<BrowserUi::CommandResult> BrowserUi::command_results() const {
                 : 3;
         results.push_back(std::move(result));
     };
+    if (move_window_tab_) {
+        const auto source = app_.tab(move_window_tab_);
+        if (!source)
+            return results;
+        for (auto *target : app_.state()->windows) {
+            if (target == &app_ || target->quitting ||
+                target->private_window != source->private_tab)
+                continue;
+            const auto problem = app_.tab_transfer_problem(move_window_tab_, *target);
+            const auto title =
+                app_.tr("Window") + " " + std::to_string(target->window_uid) + ": " +
+                (target->current() ? target->current()->page.title : app_.tr("New tab"));
+            add({"window_move", std::to_string(target->window_uid), title,
+                 problem.empty() ? app_.tr("Move this tab without reloading") : app_.tr(problem),
+                 "", move_window_tab_, 0, problem.empty()},
+                "Move to window");
+        }
+        return results;
+    }
     const auto current = app_.current();
     const bool private_mode = current && current->private_tab;
     for (const auto &tab : app_.tabs) {
@@ -7014,6 +7055,7 @@ std::vector<BrowserUi::CommandResult> BrowserUi::command_results() const {
         {"private_tab", "Private tab", "Ctrl+Alt+N", true},
         {"new_window", "New window", "Ctrl+N", true},
         {"private_window", "New private window", "Ctrl+Shift+N", true},
+        {"move_window", "Move to window", "", current != nullptr},
         {"back", "Back", "Alt+Left", current && current->back},
         {"forward", "Forward", "Alt+Right", current && current->forward},
         {"reload", "Reload", "Ctrl+R", page},
@@ -7083,8 +7125,10 @@ void BrowserUi::move_command(int delta) {
 }
 void BrowserUi::draw_commands(SkCanvas &c, Rect r) {
     const auto &t = interface_theme(app_.profile);
-    label(c, regular_, app_.tr("Search tabs in this window, settings and actions"), r.x + 28,
-          r.y + 74, 11, t.muted, r.width - 56);
+    label(c, regular_,
+          app_.tr(move_window_tab_ ? "Choose a window for this tab"
+                                   : "Search tabs in this window, settings and actions"),
+          r.x + 28, r.y + 74, 11, t.muted, r.width - 56);
     const Rect input{r.x + 28, r.y + 86, r.width - 56, 38};
     fill(c, input, 8, t.background);
     border(c, input, 8, t.accent);
@@ -7095,8 +7139,10 @@ void BrowserUi::draw_commands(SkCanvas &c, Rect r) {
     command_scroll_ = std::clamp(command_scroll_, std::max(0, command_selected_ - capacity + 1),
                                  command_selected_);
     if (results.empty())
-        label(c, regular_, app_.tr("No matches. Try a tab title, setting or action."), r.x + 28,
-              r.y + 165, 13, t.muted, r.width - 56);
+        label(c, regular_,
+              app_.tr(move_window_tab_ ? "Open another window with the same browsing mode."
+                                       : "No matches. Try a tab title, setting or action."),
+              r.x + 28, r.y + 165, 13, t.muted, r.width - 56);
     for (int i = command_scroll_; i < int(results.size()) && i < command_scroll_ + capacity; i++) {
         const auto &result = results[i];
         Rect row{r.x + 20, r.y + 136 + (i - command_scroll_) * 52, r.width - 40, 48};
@@ -7138,6 +7184,14 @@ void BrowserUi::run_command(int index) {
     const auto result = results[index];
     dismiss();
     command_query_.set("");
+    if (result.kind == "window_move") {
+        for (auto *target : app_.state()->windows)
+            if (std::to_string(target->window_uid) == result.id) {
+                app_.move_tab_to_window(result.tab, *target);
+                break;
+            }
+        return;
+    }
     if (result.kind == "tab") {
         for (int i = 0; i < int(app_.tabs.size()); i++)
             if (app_.tabs[i]->id == result.tab) {
@@ -7162,6 +7216,8 @@ void BrowserUi::run_command(int index) {
         app_.new_window();
     else if (id == "private_window")
         app_.new_window(true);
+    else if (id == "move_window" && app_.current())
+        open_tab_windows(app_.current()->id);
     else if (id == "back")
         app_.back();
     else if (id == "forward")
@@ -10148,6 +10204,7 @@ void BrowserUi::open_tab_menu(int index, int x, int y) {
         {8, app_.tr("Sleep tab"),
          !app_.tabs[index]->pinned && !app_.tabs[index]->private_tab && !app_.tabs[index]->ntp},
         {9, app_.tr("Open in container"), !app_.tabs[index]->private_tab}};
+    app_.menu.push_back({13, app_.tr("Move to window")});
     if (app_.profile.tree_tabs) {
         const auto rows = app_.tree_rows(false);
         const auto row =
@@ -10189,6 +10246,8 @@ void BrowserUi::open_tab_menu(int index, int x, int y) {
             app_.toggle_tree(id);
         else if (command == 11)
             app_.detach_tree_tab(id);
+        else if (command == 13)
+            open_tab_windows(id);
         else if (command == 12)
             app_.new_tab("aura://newtab", tab->private_tab, true, false, tab->workspace, tab->group,
                          tab->container, id);
@@ -10318,6 +10377,7 @@ bool BrowserUi::sync_tab_layout() {
     if (strip_mode_ == horizontal_tabs())
         return false;
     strip_mode_ = horizontal_tabs();
+    app_.cancel_tab_drag();
     drag_tab_ = -1;
     drag_source_ = 0;
     strip_hint_id_ = 0;
@@ -10518,6 +10578,7 @@ bool BrowserUi::tab_strip_pointer(const PointerInput &input) {
                     drag_tab_ = index;
                     drag_source_ = app_.tabs[index]->id;
                     drag_x_ = x;
+                    drag_y_ = y;
                 }
             }
             return true;
@@ -10632,5 +10693,83 @@ void BrowserUi::draw_tab_hint(SkCanvas &c) {
             strip_hint_visible_ = id;
             return;
         }
+}
+} // namespace aura
+
+namespace aura {
+void BrowserUi::open_tab_windows(int id) {
+    open_commands();
+    move_window_tab_ = id;
+}
+void BrowserUi::cancel_tab_gesture() {
+    drag_cancelled_ = true;
+    app_.cancel_tab_drag();
+}
+bool BrowserUi::tab_drop_at(int x, int y, int &before, Rect &marker) const {
+    if (panel_ != None || editing || find_open || app_.menu_action || app_.menu_callback ||
+        !app_.dialogs.empty() || app_.extension_popup)
+        return false;
+    const auto rows = sidebar_rows();
+    before = 0;
+    auto root_id = [&](int index) {
+        auto t = app_.tabs[index].get();
+        int remaining = int(app_.tabs.size());
+        while (app_.profile.tree_tabs && t->parent && remaining-- > 0) {
+            auto parent = app_.tab(t->parent);
+            if (!parent)
+                break;
+            t = parent;
+        }
+        return t->id;
+    };
+    if (horizontal_tabs()) {
+        const auto layout = horizontal_layout();
+        if (x < 12 || x >= width_ - 144 || y < 0 || y >= 32 || inside(layout.add, x, y) ||
+            (layout.overflow && (inside(layout.previous, x, y) || inside(layout.next, x, y))))
+            return false;
+        for (const auto &slot : layout.slots)
+            if (x < slot.bounds.x + slot.bounds.width / 2 && rows[slot.position] >= 0) {
+                before = root_id(rows[slot.position]);
+                int left = layout.slots.front().bounds.x;
+                for (const auto &root_slot : layout.slots)
+                    if (rows[root_slot.position] >= 0 &&
+                        app_.tabs[rows[root_slot.position]]->id == before)
+                        left = root_slot.bounds.x;
+                marker = {left, 2, 3, 28};
+                return true;
+            }
+        marker = {std::max(12, layout.add.x - 5), 2, 3, 28};
+    } else {
+        if (x < 12 || x >= 228 || y < 178 || y >= height_ - 220)
+            return false;
+        int position = tab_scroll_ + (y - 178 + 26) / 52;
+        for (int i = position; i < int(rows.size()); ++i)
+            if (rows[i] >= 0) {
+                before = root_id(rows[i]);
+                for (int root = 0; root < int(rows.size()); ++root)
+                    if (rows[root] >= 0 && app_.tabs[rows[root]]->id == before)
+                        position = root;
+                break;
+            }
+        marker = {
+            16,
+            std::min(height_ - 223,
+                     178 + std::max(0, std::min(position, int(rows.size())) - tab_scroll_) * 52),
+            208, 3};
+    }
+    return true;
+}
+void BrowserUi::draw_tab_drop(SkCanvas &c) {
+    const auto &drop = app_.state()->tab_drop;
+    if (drop.target != app_.window_uid)
+        return;
+    const auto theme = interface_theme(app_.profile);
+    fill(c, drop.marker, 1, theme.accent);
+    if (horizontal_tabs()) {
+        const Rect hint{12, 82, 208, 32};
+        fill(c, hint, 6, theme.surface);
+        label(c, medium_, app_.tr("Move tab here"), hint.x + 10, hint.y + 21, 12, theme.text,
+              hint.width - 20);
+    }
 }
 } // namespace aura

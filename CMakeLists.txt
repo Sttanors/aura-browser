@@ -143,7 +143,7 @@ if(AURA_BUILD_DIAGNOSTIC AND NOT APPLE)
   add_library(aura_adblock STATIC IMPORTED)
   set_target_properties(aura_adblock PROPERTIES IMPORTED_LOCATION "${AURA_RUST_TARGET}/release/${AURA_RUST_LIBRARY}")
   add_dependencies(aura_adblock aura_adblock_build)
-  set(AURA_BROWSER_SOURCES app/browser_main.cpp core/browser/browser.cpp core/browser/client.cpp core/browser/devtools.cpp core/browser/tab_lifecycle.cpp core/browser/tree_tabs.cpp core/browser/split_view.cpp core/browser/containers.cpp core/browser/downloads.cpp core/browser/task_manager.cpp core/browser/merge_duplicates.cpp core/browser/protection.cpp core/browser/filter_lists.cpp core/browser/extensions.cpp core/browser/site_tools.cpp core/browser/extension_popup.cpp core/browser/updates.cpp core/browser/imports.cpp
+  set(AURA_BROWSER_SOURCES app/browser_main.cpp core/browser/browser.cpp core/browser/client.cpp core/browser/devtools.cpp core/browser/tab_lifecycle.cpp core/browser/tab_transfer.cpp core/browser/tree_tabs.cpp core/browser/split_view.cpp core/browser/containers.cpp core/browser/downloads.cpp core/browser/task_manager.cpp core/browser/merge_duplicates.cpp core/browser/protection.cpp core/browser/filter_lists.cpp core/browser/extensions.cpp core/browser/site_tools.cpp core/browser/extension_popup.cpp core/browser/updates.cpp core/browser/imports.cpp
     core/cef/diagnostic_client.cpp core/browser/capture_screenshot.cpp core/browser/site_data.cpp core/browser/site_permissions.cpp core/browser/reader.cpp ui/browser_ui.cpp ui/wallpaper.cpp)
   if(WIN32)
     add_library(aura_browser SHARED ${AURA_BROWSER_SOURCES} platform/windows/browser_window.cpp render/cef_bridge/shared_texture_probe.cpp)

@@ -181,6 +181,26 @@ def main():
                 assert user.IsWindow(child['window']) and not child['private_window']
                 assert child['pid'] == group['pid'] and child['settings']['language'] == 'en'
                 assert child['settings']['ui_zoom'] == 125
+                if launch == 0:
+                    moved_browser = read()['tabs'][read()['active_tab']]['cef_browser_id']
+                    assert moved_browser
+                    created_total = read()['cef_created_total']
+                    active_id = read()['tabs'][read()['active_tab']]['id']
+                    row = next(r['bounds'] for r in read()['sidebar'] if r['tab_index'] >= 0 and read()['tabs'][r['tab_index']]['id'] == active_id)
+                    scale = read()['interface']['device_scale']*read()['interface']['applied']/100
+                    point = round((row[0]+row[2]/2)*scale) | (round((row[1]+row[3]/2)*scale)<<16)
+                    user.SendMessageW(window, 0x204, 2, point)
+                    user.SendMessageW(window, 0x205, 0, point)
+                    menu = wait(lambda s: any(i['id'] == 13 for i in (s.get('menu_ui') or [])), 'Tab menu must expose Move to window')
+                    rect = next(i['bounds'] for i in menu['menu_ui'] if i['id'] == 13)
+                    click(rect[0]+rect[2]//2, rect[1]+rect[3]//2)
+                    chooser = wait(lambda s: any(i['kind'] == 'window_move' for i in (s.get('commands_ui') or {}).get('items', [])), 'Window chooser must open')
+                    item = next(i for i in chooser['commands_ui']['items'] if i['id'] == str(child['window_uid']))
+                    assert item['enabled']
+                    rect=item['bounds'];click(rect[0]+rect[2]//2, rect[1]+rect[3]//2)
+                    group = wait(lambda s: any(w['window'] == child['window'] and any(t['cef_browser_id'] == moved_browser for t in w['tabs']) for w in s.get('windows', [])), 'Win32 transfer must retain the CEF browser')
+                    assert all(t['cef_browser_id'] != moved_browser for t in group['tabs'])
+                    assert group['cef_created_total'] == created_total, 'Transfer must not recreate a page'
                 user.SendMessageW(child['window'], 0x10, 0, 0)
                 wait(lambda s: len(s.get('windows', [])) == 1, 'Closing a child must keep the root open')
                 forwarded = subprocess.run([str(binary), f'--data-dir={profile}', f'--url={url}', '--software-rendering'], capture_output=True, timeout=45)
@@ -240,7 +260,7 @@ def main():
                 assert final['cef_created_total'] == final['cef_closed_total'], final
                 assert (profile/'profile.toml').is_file(), 'Profile must persist'
                 process = None
-        (output/'PASS.txt').write_text('PASS: full Win32 browser, Chromium page, Unicode path/input, pointer navigation, native dialog, English, interface scaling, adblock, real API/media/CSP/CORS/origin and IndexedDB persistence, profile replacement, horizontal/vertical reflow, Win32 HTCLIENT/HTCAPTION separation and balanced CEF shutdown.\n')
+        (output/'PASS.txt').write_text('PASS: full Win32 browser, Chromium page, Unicode path/input, pointer navigation, native dialog, English, interface scaling, adblock, real API/media/CSP/CORS/origin and IndexedDB persistence, profile replacement, horizontal/vertical reflow, Win32 HTCLIENT/HTCAPTION separation, live cross-window transfer and balanced CEF shutdown.\n')
     finally:
         if process and process.poll() is None:
             subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'], check=False)

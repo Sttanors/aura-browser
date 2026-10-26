@@ -956,4 +956,48 @@ std::string BrowserWindow::renderer() const {
 std::uint64_t BrowserWindow::frames() const {
     return impl_->frame_count;
 }
+
+void BrowserWindow::clear_callbacks() { impl_->callbacks = {}; }
+std::pair<int, int> BrowserWindow::screen_point(int x, int y) const {
+    auto &p = *impl_;
+    int sx = 0, sy = 0;
+    ::Window child = 0;
+    XTranslateCoordinates(p.display, p.window, DefaultRootWindow(p.display),
+                          int(std::lround(x * p.scale)), int(std::lround(y * p.scale)), &sx, &sy,
+                          &child);
+    return {sx, sy};
+}
+std::optional<std::pair<int, int>> BrowserWindow::point_from(const BrowserWindow &source, int x,
+                                                             int y) const {
+    auto &p = *impl_;
+    if (!p.mapped)
+        return {};
+    const auto screen = source.screen_point(x, y);
+    const auto root = DefaultRootWindow(p.display);
+    int dx = 0, dy = 0;
+    ::Window front = 0;
+    if (!XTranslateCoordinates(p.display, root, root, screen.first, screen.second, &dx, &dy,
+                               &front) ||
+        !front)
+        return {};
+    // A window manager may wrap the client in a native frame. Match its ancestor, too.
+    auto ancestor = p.window;
+    bool match = ancestor == front;
+    for (int depth = 0; !match && depth < 16 && ancestor && ancestor != root; ++depth) {
+        ::Window r = 0, parent = 0, *children = nullptr;
+        unsigned count = 0;
+        if (!XQueryTree(p.display, ancestor, &r, &parent, &children, &count))
+            break;
+        if (children)
+            XFree(children);
+        ancestor = parent;
+        match = ancestor == front;
+    }
+    if (!match || !XTranslateCoordinates(p.display, root, p.window, screen.first, screen.second,
+                                         &dx, &dy, &front))
+        return {};
+    if (dx < 0 || dy < 0 || dx >= p.pixel_width || dy >= p.pixel_height)
+        return {};
+    return std::pair<int, int>{int(dx / p.scale), int(dy / p.scale)};
+}
 } // namespace aura

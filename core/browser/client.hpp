@@ -11,7 +11,12 @@ class BrowserClient final : public DiagnosticClient,
                             public CefPermissionHandler {
   public:
     BrowserClient(BrowserController &owner, Tab &tab)
-        : DiagnosticClient(tab.page), owner_(owner), id_(tab.id), policy_(owner.request_policy) {}
+        : DiagnosticClient(tab.page), owner_(&owner), id_(tab.id), policy_(owner.request_policy) {}
+    void rebind(BrowserController &owner, int id) {
+        owner_ = &owner;
+        id_ = id;
+    }
+    bool GetScreenPoint(CefRefPtr<CefBrowser>, int x, int y, int &screen_x, int &screen_y) override;
     CefRefPtr<CefDownloadHandler> GetDownloadHandler() override {
         return this;
     }
@@ -91,7 +96,8 @@ class BrowserClient final : public DiagnosticClient,
     void OnResetDialogState(CefRefPtr<CefBrowser>) override;
 
   private:
-    BrowserController &owner_;
+    BrowserController *owner_;
+    BrowserController &controller() const { return *owner_; }
     int id_;
     std::shared_ptr<RequestPolicy> policy_;
     IMPLEMENT_REFCOUNTING(BrowserClient);

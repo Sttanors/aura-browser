@@ -62,7 +62,7 @@ void BrowserController::configure_font_preferences(CefRefPtr<CefRequestContext> 
     if (!context->SetPreference("webkit.webprefs.fonts.standard.Zyyy", value, error))
         ++audit["font_preference_errors"];
 }
-void BrowserController::setup_site_tools(int id, std::function<void()> ready) {
+void BrowserController::bind_site_tool_events(int id) {
     auto t = tab(id);
     if (!t || !t->devtools)
         return;
@@ -149,6 +149,12 @@ void BrowserController::setup_site_tools(int id, std::function<void()> ready) {
             });
         }
     };
+}
+void BrowserController::setup_site_tools(int id, std::function<void()> ready) {
+    auto t = tab(id);
+    if (!t || !t->devtools)
+        return;
+    bind_site_tool_events(id);
     t->devtools->call("WebAudio.enable");
     t->devtools->call("Runtime.enable");
     t->devtools->call("Page.enable");

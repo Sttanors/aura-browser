@@ -12,6 +12,8 @@ class DevToolsSession final : public CefDevToolsMessageObserver {
     void OnDevToolsEvent(CefRefPtr<CefBrowser>, const CefString &, const void *, size_t) override;
     void attach();
     void close();
+    bool busy() const { return !callbacks_.empty(); }
+    void discard_callbacks() { callbacks_.clear(); }
     void call(const std::string &method, const std::string &params = "{}", Callback callback = {});
     void OnDevToolsMethodResult(CefRefPtr<CefBrowser>, int, bool, const void *, size_t) override;
 

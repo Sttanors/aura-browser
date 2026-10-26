@@ -105,6 +105,9 @@ class BrowserUi {
     std::string sidebar_report() const;
     std::string tab_strip_report() const;
     bool caption_hit(int x, int y) const;
+    bool tab_drop_at(int x, int y, int &before, Rect &marker) const;
+    void cancel_tab_gesture();
+    void open_tab_windows(int id);
     bool sync_tab_layout();
     void passwords_locked() {
         clear_password_fields();
@@ -234,7 +237,7 @@ class BrowserUi {
         bool enabled = true;
     };
     TextEditor command_query_;
-    int command_selected_ = 0, command_scroll_ = 0;
+    int command_selected_ = 0, command_scroll_ = 0, move_window_tab_ = 0;
     std::vector<CommandResult> command_results() const;
     void draw_commands(SkCanvas &, Rect);
     void commands_pointer(Rect, int, int);
@@ -340,6 +343,7 @@ class BrowserUi {
     TabStripLayout horizontal_layout() const;
     void draw_tab_strip(SkCanvas &);
     void draw_tab_hint(SkCanvas &);
+    void draw_tab_drop(SkCanvas &);
     int strip_hint_id_ = 0, strip_hint_visible_ = 0;
     bool strip_hint_ready_ = false;
     std::chrono::steady_clock::time_point strip_hint_at_{};
@@ -347,7 +351,7 @@ class BrowserUi {
     void open_aura_menu(bool tools = false);
     void open_tab_menu(int index, int x, int y);
     int strip_scroll_ = 0, strip_active_id_ = -1, strip_active_row_ = -1, drag_x_ = 0;
-    bool strip_mode_ = false;
+    bool strip_mode_ = false, drag_moved_ = false, drag_cancelled_ = false;
     Rect address_bounds() const;
     Rect panel_bounds() const;
     Rect dialog_bounds() const;

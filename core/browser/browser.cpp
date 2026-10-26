@@ -57,6 +57,7 @@ std::string tabs_json(const std::vector<std::unique_ptr<Tab>> &tabs) {
             << ",\"reader_ui\":" << t->reader_ui
             << ",\"selection_bytes\":" << t->selected_text.size()
             << ",\"buffer_bytes\":" << t->page.view.bytes().size() + t->page.popup.bytes().size()
+            << ",\"cef_browser_id\":" << (t->browser ? t->browser->GetIdentifier() : 0)
             << ",\"container\":" << t->container << ",\"workspace\":" << t->workspace
             << ",\"parent\":" << t->parent
             << ",\"tree_collapsed\":" << (t->tree_collapsed ? "true" : "false")
@@ -201,19 +202,23 @@ BrowserController::BrowserController(std::filesystem::path path, std::filesystem
                 // Keep the current profile usable if another process damaged the catalog.
             }
         }
-        if (!focus)
+        if (!focus) {
+            ui->cancel_tab_gesture();
             close_extension_popup(false);
+        }
         if (auto p = extension_popup; p && p->browser)
             p->browser->GetHost()->SetFocus(focus);
         else if (auto t = current(); t && t->browser)
             t->browser->GetHost()->SetFocus(focus && !ui->editing);
     };
     hooks.close = [this] { request_quit(); };
-    window = std::make_unique<BrowserWindow>(width, height, scale, std::move(hooks), accelerated,
+    window = std::make_shared<BrowserWindow>(width, height, scale, std::move(hooks), accelerated,
                                              profile.ui_zoom / 100.0);
     state_->windows.push_back(this);
 }
 BrowserController::~BrowserController() {
+    cancel_tab_drag();
+    window->clear_callbacks();
     callback_lifetime.reset();
     std::erase(state_->windows, this);
 }
@@ -591,6 +596,23 @@ void BrowserController::tick() {
         needs_save_ = false;
     }
 }
+void BrowserController::bind_tab_callbacks(Tab &t) {
+    t.page.invalidate = [this, id = t.id] {
+        if (tab_visible(id))
+            changed();
+    };
+    t.page.repaint = [this, id = t.id] {
+        if (auto t = tab(id); t && tab_visible(id) && !t->ntp)
+            window->invalidate(ui->web_bounds());
+    };
+    t.page.ime_caret = [this, id = t.id](const CefRect &caret) {
+        if (current() && current()->id == id) {
+            auto r = ui->page_bounds(*current());
+            window->caret(r.x + int(caret.x / ui_scale),
+                          r.y + int((caret.y + caret.height) / ui_scale));
+        }
+    };
+}
 void BrowserController::ensure_browser(Tab &t, const std::string &url) {
     auto r = ui->page_bounds(t);
     t.page.view_width = std::max(1, int(std::lround(r.width * ui_scale)));
@@ -618,21 +640,8 @@ void BrowserController::ensure_browser(Tab &t, const std::string &url) {
         t.pending_url = url;
         return;
     }
-    t.page.invalidate = [this, id = t.id] {
-        if (tab_visible(id))
-            changed();
-    };
-    t.page.repaint = [this, id = t.id] {
-        if (auto t = tab(id); t && tab_visible(id) && !t->ntp)
-            window->invalidate(ui->web_bounds());
-    };
-    t.page.ime_caret = [this, id = t.id](const CefRect &caret) {
-        if (current() && current()->id == id) {
-            auto r = ui->page_bounds(*current());
-            window->caret(r.x + int(caret.x / ui_scale),
-                          r.y + int((caret.y + caret.height) / ui_scale));
-        }
-    };
+    bind_tab_callbacks(t);
+    t.cef_parent = window;
     t.pending_url = url;
     t.client = new BrowserClient(*this, t);
     CefWindowInfo info;
@@ -1390,6 +1399,7 @@ void BrowserController::save_session() {
 std::string BrowserController::report() const {
     std::ostringstream out;
     out << "{\"product\":\"Aura\",\"pid\":" << process_id() << ",\"window\":" << window->native_id()
+        << ",\"window_uid\":" << window_uid << ",\"tab_drop_target\":" << state_->tab_drop.target
         << ",\"cef_created\":" << created_ << ",\"cef_closed\":" << closed_ << ",\"compositor\":\""
         << json_escape(window->compositor()) << "\",\"renderer\":\""
         << json_escape(window->renderer())
@@ -1582,11 +1592,8 @@ Tab *BrowserController::prepare_popup(int source, int popup_id, const std::strin
     const auto bounds = ui->page_bounds(*target);
     target->page.view_width = std::max(1, int(std::lround(bounds.width * ui_scale)));
     target->page.view_height = std::max(1, int(std::lround(bounds.height * ui_scale)));
-    target->page.invalidate = [this] { changed(); };
-    target->page.repaint = [this, id] {
-        if (tab_visible(id))
-            window->invalidate(ui->web_bounds());
-    };
+    bind_tab_callbacks(*target);
+    target->cef_parent = window;
     pending_popups_[{source, popup_id}] = id;
     return target;
 }

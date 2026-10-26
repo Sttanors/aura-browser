@@ -70,6 +70,7 @@ struct Tab {
     std::chrono::steady_clock::time_point inactive_since = std::chrono::steady_clock::now();
     std::chrono::steady_clock::time_point sleep_retry_after{};
     DiagnosticState page;
+    std::shared_ptr<BrowserWindow> cef_parent; // Keep the immutable OSR native parent alive.
     CefRefPtr<DiagnosticClient> client;
     CefRefPtr<CefBrowser> browser;
     PaintBuffer favicon;
@@ -147,10 +148,16 @@ struct DuplicateMerge {
     std::string status;
     std::chrono::steady_clock::time_point started{};
 };
+struct TabDrop {
+    uint64_t source = 0, target = 0;
+    int tab = 0, before = 0;
+    Rect marker;
+};
 struct BrowserState {
     explicit BrowserState(const std::filesystem::path &path);
     Profile profile;
     DuplicateMerge duplicate_merge;
+    TabDrop tab_drop;
     ReadingList reading_list;
     std::vector<Download> downloads;
     std::vector<std::filesystem::path> download_paths;
@@ -203,7 +210,7 @@ class BrowserController {
     void restore_window(const SavedWindow &saved);
     void restore_previous_session();
     void request_exit(bool force = false);
-    std::unique_ptr<BrowserWindow> window;
+    std::shared_ptr<BrowserWindow> window;
     std::unique_ptr<BrowserUi> ui;
     std::vector<std::unique_ptr<Tab>> tabs;
     std::vector<Download> &downloads;
@@ -287,6 +294,12 @@ class BrowserController {
     void show_duplicate_tab(DuplicateRef);
     void reopen();
     void move_tab(int from, int to);
+    std::string tab_transfer_problem(int id, const BrowserController &target) const;
+    bool move_tab_to_window(int id, BrowserController &target, int before = 0);
+    void tab_drag(int id, int x, int y, bool release = false);
+    void cancel_tab_drag();
+    void bind_tab_callbacks(Tab &);
+    void bind_site_tool_events(int id);
     std::vector<TreeTab> tree_nodes() const;
     std::vector<TreeRow> tree_rows(bool hide_collapsed = true) const;
     void normalize_tree();

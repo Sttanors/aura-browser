@@ -4,7 +4,9 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
+#include <utility>
 class SkCanvas;
 namespace aura {
 struct PointerInput {
@@ -31,6 +33,9 @@ class BrowserWindow {
     CefWindowHandle handle() const;
     std::uintptr_t native_id() const;
     void show();
+    void clear_callbacks();
+    std::optional<std::pair<int, int>> point_from(const BrowserWindow &source, int x, int y) const;
+    std::pair<int, int> screen_point(int x, int y) const;
     void activate();
     void hide();
     void dispatch();

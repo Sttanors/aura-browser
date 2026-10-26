@@ -97,7 +97,7 @@ class NetworkPolicy final : public CefResourceRequestHandler {
 };
 } // namespace
 void BrowserClient::GetViewRect(CefRefPtr<CefBrowser> browser, CefRect &rect) {
-    const auto &shot = owner_.screenshot;
+    const auto &shot = controller().screenshot;
     if (shot.native_running && shot.job_tab == id_ && shot.surface_width > 0 &&
         shot.surface_height > 0)
         rect = {0, 0, shot.surface_width, shot.surface_height};
@@ -106,16 +106,16 @@ void BrowserClient::GetViewRect(CefRefPtr<CefBrowser> browser, CefRect &rect) {
 }
 void BrowserClient::OnPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
                             const RectList &dirty, const void *data, int width, int height) {
-    auto t = owner_.tab(id_);
+    auto t = controller().tab(id_);
     if (t && !t->sleeping &&
-        !(owner_.screenshot.native_running && owner_.screenshot.job_tab == id_ &&
-          owner_.screenshot.surface_width > 0))
+        !(controller().screenshot.native_running && controller().screenshot.job_tab == id_ &&
+          controller().screenshot.surface_width > 0))
         DiagnosticClient::OnPaint(browser, type, dirty, data, width, height);
 }
 #ifdef _WIN32
 void BrowserClient::OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
                                        const RectList &dirty, const CefAcceleratedPaintInfo &info) {
-    auto t = owner_.tab(id_);
+    auto t = controller().tab(id_);
     if (t && !t->sleeping)
         DiagnosticClient::OnAcceleratedPaint(browser, type, dirty, info);
 }
@@ -129,27 +129,27 @@ BrowserClient::GetResourceRequestHandler(CefRefPtr<CefBrowser>, CefRefPtr<CefFra
 bool BrowserClient::OnBeforeBrowse(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
                                    CefRefPtr<CefRequest> request, bool, bool) {
     const auto url = request->GetURL().ToString();
-    if (frame->IsMain() && owner_.route_container(id_, url, request->GetMethod().ToString()))
+    if (frame->IsMain() && controller().route_container(id_, url, request->GetMethod().ToString()))
         return true;
     if (url.starts_with("http://") || url.starts_with("https://"))
-        owner_.configure_permissions(browser->GetHost()->GetRequestContext(), url,
-                                     frame->IsMain() ? url
-                                                     : browser->GetMainFrame()->GetURL().ToString(),
-                                     owner_.tab(id_) ? owner_.tab(id_)->container : 0,
-                                     owner_.tab(id_) && owner_.tab(id_)->private_tab);
+        controller().configure_permissions(
+            browser->GetHost()->GetRequestContext(), url,
+            frame->IsMain() ? url : browser->GetMainFrame()->GetURL().ToString(),
+            controller().tab(id_) ? controller().tab(id_)->container : 0,
+            controller().tab(id_) && controller().tab(id_)->private_tab);
     // A document that navigates cannot retain a pending permission prompt.
-    owner_.cancel_permissions(id_);
+    controller().cancel_permissions(id_);
     if (frame->IsMain()) {
-        if (auto t = owner_.tab(id_)) {
+        if (auto t = controller().tab(id_)) {
             ++t->navigation_serial;
             t->reader_active = t->reader_pending = t->reading_pending = false;
             t->reader_context = 0;
             t->reader_ui = "null";
             t->selected_text.clear();
-            owner_.wake_tab(id_);
+            controller().wake_tab(id_);
         }
-        if (owner_.current() && owner_.current()->id == id_)
-            owner_.close_extension_popup();
+        if (controller().current() && controller().current()->id == id_)
+            controller().close_extension_popup();
     }
     return false;
 }
@@ -157,16 +157,16 @@ bool BrowserClient::OnRequestMediaAccessPermission(CefRefPtr<CefBrowser> browser
                                                    CefRefPtr<CefFrame>, const CefString &origin,
                                                    uint32_t permissions,
                                                    CefRefPtr<CefMediaAccessCallback> callback) {
-    auto tab = owner_.tab(id_);
+    auto tab = controller().tab(id_);
     const uint32_t devices =
         CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE | CEF_MEDIA_PERMISSION_DEVICE_VIDEO_CAPTURE;
     const bool audio = permissions & CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE,
                video = permissions & CEF_MEDIA_PERMISSION_DEVICE_VIDEO_CAPTURE;
     if (!tab || (permissions & ~devices) || (!audio && !video) ||
-        (audio && owner_.permission_value(*tab, origin, "microphone") == "block") ||
-        (video && owner_.permission_value(*tab, origin, "camera") == "block")) {
+        (audio && controller().permission_value(*tab, origin, "microphone") == "block") ||
+        (video && controller().permission_value(*tab, origin, "camera") == "block")) {
         callback->Cancel();
-        ++owner_.audit["permissions_denied"];
+        ++controller().audit["permissions_denied"];
         return true;
     }
     auto top = permission_origin(browser->GetMainFrame()->GetURL());
@@ -174,8 +174,8 @@ bool BrowserClient::OnRequestMediaAccessPermission(CefRefPtr<CefBrowser> browser
         top = permission_origin(origin);
     if (!top.empty() && tab->permission_origins.size() < 128)
         tab->permission_origins.insert(top);
-    owner_.configure_permissions(browser->GetHost()->GetRequestContext(), origin, top,
-                                 tab->container, tab->private_tab);
+    controller().configure_permissions(browser->GetHost()->GetRequestContext(), origin, top,
+                                       tab->container, tab->private_tab);
     // Windowless CEF uses Alloy: default media handling denies every request.
     // Keep the native MediaStream registrar, but supply Aura's scoped decision.
     std::vector<SitePermission> choices, scope;
@@ -183,13 +183,13 @@ bool BrowserClient::OnRequestMediaAccessPermission(CefRefPtr<CefBrowser> browser
     for (const char *id : {"camera", "microphone"}) {
         if ((std::string(id) == "camera" && !video) || (std::string(id) == "microphone" && !audio))
             continue;
-        const auto site = owner_.permission_site(*tab, origin, id);
+        const auto site = controller().permission_site(*tab, origin, id);
         scope.push_back({site, id, "", tab->container});
-        if (owner_.permission_value(*tab, origin, id) == "ask") {
+        if (controller().permission_value(*tab, origin, id) == "ask") {
             choices.push_back(scope.back());
             if (!names.empty())
                 names += ", ";
-            names += owner_.tr(find_permission(id)->title);
+            names += controller().tr(find_permission(id)->title);
         }
     }
     if (choices.empty()) {
@@ -202,12 +202,12 @@ bool BrowserClient::OnRequestMediaAccessPermission(CefRefPtr<CefBrowser> browser
     dialog.permission = true;
     dialog.permission_private = tab->private_tab;
     dialog.permission_rules = std::move(scope);
-    dialog.message = owner_.tr("Allow access to: ") + names;
+    dialog.message = controller().tr("Allow access to: ") + names;
     const int id = id_, container = tab->container;
     const bool private_mode = tab->private_tab;
     const auto serial = tab->navigation_serial;
-    const auto weak = std::weak_ptr<void>(owner_.callback_lifetime);
-    auto *owner = &owner_;
+    const auto weak = std::weak_ptr<void>(controller().callback_lifetime);
+    auto *owner = &this->controller();
     dialog.user_decision = [owner, id, container, private_mode, serial, weak,
                             choices](bool accept) {
         if (weak.expired())
@@ -225,15 +225,15 @@ bool BrowserClient::OnRequestMediaAccessPermission(CefRefPtr<CefBrowser> browser
         else
             callback->Cancel();
     };
-    owner_.dialogs.push_back(std::move(dialog));
-    ++owner_.audit["permission_prompts"];
-    owner_.changed();
+    controller().dialogs.push_back(std::move(dialog));
+    ++controller().audit["permission_prompts"];
+    controller().changed();
     return true;
 }
 bool BrowserClient::OnShowPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t prompt,
                                            const CefString &origin, uint32_t permissions,
                                            CefRefPtr<CefPermissionPromptCallback> callback) {
-    auto tab = owner_.tab(id_);
+    auto tab = controller().tab(id_);
     const struct {
         uint32_t bit;
         const char *id;
@@ -255,8 +255,8 @@ bool BrowserClient::OnShowPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t promp
         known |= policy.bit;
         if (!(permissions & policy.bit) || !tab)
             continue;
-        const auto site = owner_.permission_site(*tab, origin, policy.id);
-        const auto value = owner_.permission_value(*tab, origin, policy.id);
+        const auto site = controller().permission_site(*tab, origin, policy.id);
+        const auto value = controller().permission_value(*tab, origin, policy.id);
         blocked |= value == "block";
         scope.push_back({site, policy.id, "", tab->container});
         if (!site.empty() && tab->permission_origins.size() < 128)
@@ -264,18 +264,18 @@ bool BrowserClient::OnShowPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t promp
         if (value == "ask") {
             if (!names.empty())
                 names += ", ";
-            names += owner_.tr(find_permission(policy.id)->title);
+            names += controller().tr(find_permission(policy.id)->title);
             choices.push_back(scope.back());
         }
     }
     if (!permissions || (permissions & ~known) || blocked) {
         callback->Continue(CEF_PERMISSION_RESULT_DENY);
-        ++owner_.audit["permissions_denied"];
+        ++controller().audit["permissions_denied"];
         return true;
     }
     if (choices.empty()) {
         callback->Continue(CEF_PERMISSION_RESULT_ACCEPT);
-        ++owner_.audit["permissions_allowed"];
+        ++controller().audit["permissions_allowed"];
         return true;
     }
     BrowserDialog dialog;
@@ -285,12 +285,12 @@ bool BrowserClient::OnShowPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t promp
     dialog.permission_id = prompt;
     dialog.permission_private = tab->private_tab;
     dialog.permission_rules = std::move(scope);
-    dialog.message = owner_.tr("Allow access to: ") + names;
+    dialog.message = controller().tr("Allow access to: ") + names;
     const int id = id_, container = tab->container;
     const bool private_mode = tab->private_tab;
     const auto serial = tab->navigation_serial;
-    const auto weak = std::weak_ptr<void>(owner_.callback_lifetime);
-    auto *owner = &owner_;
+    const auto weak = std::weak_ptr<void>(controller().callback_lifetime);
+    auto *owner = &this->controller();
     dialog.user_decision = [owner, id, container, private_mode, serial, weak,
                             choices](bool accept) {
         if (weak.expired())
@@ -305,168 +305,169 @@ bool BrowserClient::OnShowPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t promp
     dialog.action = [callback](bool allow, const std::string &) {
         callback->Continue(allow ? CEF_PERMISSION_RESULT_ACCEPT : CEF_PERMISSION_RESULT_DENY);
     };
-    owner_.dialogs.push_back(std::move(dialog));
-    ++owner_.audit["permission_prompts"];
-    owner_.changed();
+    controller().dialogs.push_back(std::move(dialog));
+    ++controller().audit["permission_prompts"];
+    controller().changed();
     return true;
 }
 void BrowserClient::OnMediaAccessChange(CefRefPtr<CefBrowser>, bool video, bool audio) {
-    if (auto tab = owner_.tab(id_)) {
+    if (auto tab = controller().tab(id_)) {
         tab->media_video = video;
         tab->media_audio = audio;
         tab->media_capture = video || audio;
-        ++owner_.audit["media_access_changes"];
-        owner_.changed();
+        ++controller().audit["media_access_changes"];
+        controller().changed();
     }
 }
 void BrowserClient::OnDismissPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t prompt,
                                               cef_permission_request_result_t) {
-    std::erase_if(owner_.dialogs, [&](const auto &d) {
+    std::erase_if(controller().dialogs, [&](const auto &d) {
         return d.permission && d.tab == id_ && d.permission_id == prompt;
     });
-    owner_.changed();
+    controller().changed();
 }
 void BrowserClient::OnAfterCreated(CefRefPtr<CefBrowser> b) {
     DiagnosticClient::OnAfterCreated(b);
-    owner_.browser_created(id_, b);
+    controller().browser_created(id_, b);
 }
 void BrowserClient::OnRenderProcessTerminated(CefRefPtr<CefBrowser> b, TerminationStatus status,
                                               int code, const CefString &text) {
     DiagnosticClient::OnRenderProcessTerminated(b, status, code, text);
-    if (auto t = owner_.tab(id_); t && !t->closing) {
+    if (auto t = controller().tab(id_); t && !t->closing) {
         t->loading = false;
         t->progress = 0;
-        ++owner_.audit["renderer_crashes"];
-        owner_.changed();
+        ++controller().audit["renderer_crashes"];
+        controller().changed();
     }
 }
 void BrowserClient::OnBeforeClose(CefRefPtr<CefBrowser> b) {
-    owner_.cancel_permissions(id_);
+    controller().cancel_permissions(id_);
     DiagnosticClient::OnBeforeClose(b);
-    owner_.browser_closed(id_);
+    controller().browser_closed(id_);
 }
 bool BrowserClient::OnBeforePopup(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, int popup_id,
                                   const CefString &url, const CefString &,
                                   WindowOpenDisposition disposition, bool user_gesture,
                                   const CefPopupFeatures &, CefWindowInfo &info, CefRefPtr<CefClient> &client,
                                   CefBrowserSettings &, CefRefPtr<CefDictionaryValue> &, bool *) {
-    if (owner_.profile.block_popups && !user_gesture) {
-        ++owner_.audit["popups_blocked"];
+    if (controller().profile.block_popups && !user_gesture) {
+        ++controller().audit["popups_blocked"];
         return true;
     }
-    auto target = owner_.prepare_popup(id_, popup_id, url,
-                                       disposition != CEF_WOD_NEW_BACKGROUND_TAB);
+    auto target =
+        controller().prepare_popup(id_, popup_id, url, disposition != CEF_WOD_NEW_BACKGROUND_TAB);
     if (!target)
         return true;
-    info.SetAsWindowless(owner_.window->handle());
-    client = new BrowserClient(owner_, *target);
+    info.SetAsWindowless(controller().window->handle());
+    client = new BrowserClient(controller(), *target);
     target->client = static_cast<BrowserClient *>(client.get());
     // Let Chromium create the actual browsing context and retain opener/name/
     // WindowProxy semantics. Do not replace this with a second LoadURL.
     return false;
 }
 void BrowserClient::OnBeforePopupAborted(CefRefPtr<CefBrowser>, int popup_id) {
-    owner_.abort_popup(id_, popup_id);
+    controller().abort_popup(id_, popup_id);
 }
 bool BrowserClient::OnOpenURLFromTab(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
                                      const CefString &url, WindowOpenDisposition disposition,
                                      bool user_gesture) {
     if (disposition == CEF_WOD_CURRENT_TAB)
         return false;
-    if (owner_.profile.block_popups && !user_gesture) {
-        ++owner_.audit["popups_blocked"];
+    if (controller().profile.block_popups && !user_gesture) {
+        ++controller().audit["popups_blocked"];
         return true;
     }
-    owner_.open_from_page(id_, url, disposition != CEF_WOD_NEW_BACKGROUND_TAB);
+    controller().open_from_page(id_, url, disposition != CEF_WOD_NEW_BACKGROUND_TAB);
     return true;
 }
 void BrowserClient::OnLoadStart(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, TransitionType) {
     if (!frame->IsMain())
         return;
-    if (auto t = owner_.tab(id_)) {
-        owner_.apply_site_zoom(*t, frame->GetURL().ToString());
+    if (auto t = controller().tab(id_)) {
+        controller().apply_site_zoom(*t, frame->GetURL().ToString());
         t->page.failed = false;
         t->process_ended = false;
         t->page.error.clear();
         t->page.loaded = false;
         t->progress = 0.08;
-        owner_.changed();
+        controller().changed();
     }
 }
 void BrowserClient::OnLoadingStateChange(CefRefPtr<CefBrowser>, bool loading, bool back,
                                          bool forward) {
-    if (auto t = owner_.tab(id_)) {
+    if (auto t = controller().tab(id_)) {
         t->loading = loading;
         t->back = back;
         t->forward = forward;
         if (!loading)
             t->progress = 1;
-        owner_.changed();
+        controller().changed();
     }
 }
 void BrowserClient::OnLoadingProgressChange(CefRefPtr<CefBrowser>, double progress) {
-    if (auto t = owner_.tab(id_)) {
+    if (auto t = controller().tab(id_)) {
         t->progress = progress;
-        owner_.changed();
+        controller().changed();
     }
 }
 void BrowserClient::OnLoadEnd(CefRefPtr<CefBrowser> b, CefRefPtr<CefFrame> f, int status) {
     DiagnosticClient::OnLoadEnd(b, f, status);
     if (f->IsMain()) {
-        if (auto t = owner_.tab(id_); t && t->browser && !t->ntp)
-            owner_.apply_site_zoom(*t, f->GetURL().ToString());
-        owner_.page_changed(id_, true);
-        owner_.begin_pending_download(id_);
+        if (auto t = controller().tab(id_); t && t->browser && !t->ntp)
+            controller().apply_site_zoom(*t, f->GetURL().ToString());
+        controller().page_changed(id_, true);
+        controller().begin_pending_download(id_);
     }
 }
 void BrowserClient::OnLoadError(CefRefPtr<CefBrowser> b, CefRefPtr<CefFrame> f, ErrorCode code,
                                 const CefString &text, const CefString &url) {
     DiagnosticClient::OnLoadError(b, f, code, text, url);
     if (f->IsMain() && code != ERR_ABORTED) {
-        if (auto tab = owner_.tab(id_); tab && !url.empty())
+        if (auto tab = controller().tab(id_); tab && !url.empty())
             tab->page.url = url.ToString();
-        ++owner_.audit["load_errors"];
-        owner_.page_changed(id_);
+        ++controller().audit["load_errors"];
+        controller().page_changed(id_);
     }
 }
 void BrowserClient::OnTitleChange(CefRefPtr<CefBrowser> b, const CefString &title) {
-    if (auto t = owner_.tab(id_); t && t->ntp)
+    if (auto t = controller().tab(id_); t && t->ntp)
         return;
     DiagnosticClient::OnTitleChange(b, title);
-    owner_.page_changed(id_);
+    controller().page_changed(id_);
 }
 void BrowserClient::OnAddressChange(CefRefPtr<CefBrowser> b, CefRefPtr<CefFrame> f,
                                     const CefString &url) {
     if (f->IsMain()) {
-        if (auto t = owner_.tab(id_)) {
+        if (auto t = controller().tab(id_)) {
             t->ntp = url == "about:blank#aura-newtab";
-            b->GetHost()->WasHidden(!owner_.tab_visible(t->id) || t->ntp);
+            b->GetHost()->WasHidden(!controller().tab_visible(t->id) || t->ntp);
             b->GetHost()->SetAudioMuted(t->muted);
             if (t->ntp) {
                 t->page.url = "aura://newtab";
-                t->page.title = owner_.tr(t->private_tab ? "Private tab" : "New tab");
-                owner_.page_changed(id_);
+                t->page.title = controller().tr(t->private_tab ? "Private tab" : "New tab");
+                controller().page_changed(id_);
                 return;
             }
         }
     }
     DiagnosticClient::OnAddressChange(b, f, url);
-    owner_.page_changed(id_);
+    controller().page_changed(id_);
 }
 void BrowserClient::OnFaviconURLChange(CefRefPtr<CefBrowser>, const std::vector<CefString> &urls) {
     if (!urls.empty())
-        owner_.update_favicon(id_, urls.front());
+        controller().update_favicon(id_, urls.front());
 }
 void BrowserClient::OnStatusMessage(CefRefPtr<CefBrowser>, const CefString &value) {
-    if (owner_.current() == owner_.tab(id_) && owner_.ui->status != value.ToString()) {
-        owner_.ui->status = value;
-        owner_.changed();
+    if (controller().current() == controller().tab(id_) &&
+        controller().ui->status != value.ToString()) {
+        controller().ui->status = value;
+        controller().changed();
     }
 }
 bool BrowserClient::OnCursorChange(CefRefPtr<CefBrowser>, CefCursorHandle, cef_cursor_type_t type,
                                    const CefCursorInfo &) {
-    if (owner_.current() == owner_.tab(id_))
-        owner_.window->cursor(type == CT_IBEAM ? 1 : type == CT_HAND ? 2 : 0);
+    if (controller().current() == controller().tab(id_))
+        controller().window->cursor(type == CT_IBEAM ? 1 : type == CT_HAND ? 2 : 0);
     return true;
 }
 bool BrowserClient::CanDownload(CefRefPtr<CefBrowser>, const CefString &, const CefString &) {
@@ -476,20 +477,20 @@ bool BrowserClient::CanDownload(CefRefPtr<CefBrowser>, const CefString &, const 
 bool BrowserClient::OnBeforeDownload(CefRefPtr<CefBrowser>, CefRefPtr<CefDownloadItem> item,
                                      const CefString &suggested,
                                      CefRefPtr<CefBeforeDownloadCallback> callback) {
-    owner_.start_download(item, callback, suggested, id_);
+    controller().start_download(item, callback, suggested, id_);
     return true;
 }
 void BrowserClient::OnDownloadUpdated(CefRefPtr<CefBrowser>, CefRefPtr<CefDownloadItem> item,
                                       CefRefPtr<CefDownloadItemCallback> callback) {
-    owner_.download_updated(item, callback, id_);
+    controller().download_updated(item, callback, id_);
 }
 void BrowserClient::OnFindResult(CefRefPtr<CefBrowser>, int, int count, const CefRect &, int active,
                                  bool) {
-    if (owner_.current() == owner_.tab(id_)) {
-        owner_.find_matches = count;
-        owner_.find_active = active;
-        owner_.audit["find_matches"] = std::max(owner_.audit["find_matches"], count);
-        owner_.changed();
+    if (controller().current() == controller().tab(id_)) {
+        controller().find_matches = count;
+        controller().find_active = active;
+        controller().audit["find_matches"] = std::max(controller().audit["find_matches"], count);
+        controller().changed();
     }
 }
 void BrowserClient::OnBeforeContextMenu(CefRefPtr<CefBrowser> b, CefRefPtr<CefFrame>,
@@ -497,79 +498,79 @@ void BrowserClient::OnBeforeContextMenu(CefRefPtr<CefBrowser> b, CefRefPtr<CefFr
                                         CefRefPtr<CefMenuModel> model) {
     model->Clear();
     if (!p->GetLinkUrl().empty()) {
-        model->AddItem(MENU_ID_USER_FIRST, owner_.tr("Open link in new tab"));
-        model->AddItem(MENU_ID_USER_FIRST + 1, owner_.tr("Copy link address"));
+        model->AddItem(MENU_ID_USER_FIRST, controller().tr("Open link in new tab"));
+        model->AddItem(MENU_ID_USER_FIRST + 1, controller().tr("Copy link address"));
         model->AddSeparator();
     }
-    model->AddItem(MENU_ID_BACK, owner_.tr("Back"));
+    model->AddItem(MENU_ID_BACK, controller().tr("Back"));
     model->SetEnabled(MENU_ID_BACK, b->CanGoBack());
-    model->AddItem(MENU_ID_FORWARD, owner_.tr("Forward"));
+    model->AddItem(MENU_ID_FORWARD, controller().tr("Forward"));
     model->SetEnabled(MENU_ID_FORWARD, b->CanGoForward());
-    model->AddItem(MENU_ID_RELOAD, owner_.tr("Reload"));
+    model->AddItem(MENU_ID_RELOAD, controller().tr("Reload"));
     model->AddSeparator();
     if (p->IsEditable()) {
-        model->AddItem(MENU_ID_UNDO, owner_.tr("Undo"));
-        model->AddItem(MENU_ID_CUT, owner_.tr("Cut"));
-        model->AddItem(MENU_ID_PASTE, owner_.tr("Paste"));
+        model->AddItem(MENU_ID_UNDO, controller().tr("Undo"));
+        model->AddItem(MENU_ID_CUT, controller().tr("Cut"));
+        model->AddItem(MENU_ID_PASTE, controller().tr("Paste"));
     }
-    model->AddItem(MENU_ID_COPY, owner_.tr("Copy"));
-    model->AddItem(MENU_ID_SELECT_ALL, owner_.tr("Select all"));
-    model->AddItem(MENU_ID_USER_FIRST + 3, owner_.tr("Translate selection"));
+    model->AddItem(MENU_ID_COPY, controller().tr("Copy"));
+    model->AddItem(MENU_ID_SELECT_ALL, controller().tr("Select all"));
+    model->AddItem(MENU_ID_USER_FIRST + 3, controller().tr("Translate selection"));
     model->SetEnabled(MENU_ID_USER_FIRST + 3, !p->GetSelectionText().empty());
-    model->AddItem(MENU_ID_USER_FIRST + 4, owner_.tr("Translate page"));
+    model->AddItem(MENU_ID_USER_FIRST + 4, controller().tr("Translate page"));
     model->AddSeparator();
-    model->AddItem(MENU_ID_USER_FIRST + 2, owner_.tr("Developer tools"));
+    model->AddItem(MENU_ID_USER_FIRST + 2, controller().tr("Developer tools"));
 }
 bool BrowserClient::RunContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
                                    CefRefPtr<CefContextMenuParams> p, CefRefPtr<CefMenuModel> model,
                                    CefRefPtr<CefRunContextMenuCallback> callback) {
-    owner_.close_menu();
-    owner_.menu_callback = callback;
-    owner_.menu.clear();
+    controller().close_menu();
+    controller().menu_callback = callback;
+    controller().menu.clear();
     for (std::size_t i = 0; i < model->GetCount(); ++i)
-        owner_.menu.push_back(
+        controller().menu.push_back(
             {model->GetCommandIdAt(i),
              model->GetTypeAt(i) == MENUITEMTYPE_SEPARATOR ? "" : model->GetLabelAt(i).ToString(),
              model->IsEnabledAt(i)});
-    auto target = owner_.tab(id_);
-    auto bounds = target ? owner_.ui->page_bounds(*target) : owner_.ui->web_bounds();
-    owner_.menu_x =
-        std::clamp(bounds.x + int(p->GetXCoord() / owner_.ui_scale), 8, owner_.width - 250);
-    owner_.menu_y =
-        std::clamp(bounds.y + int(p->GetYCoord() / owner_.ui_scale), 32,
-                   std::max(32, owner_.height - static_cast<int>(owner_.menu.size()) * 32 - 12));
-    owner_.changed();
+    auto target = controller().tab(id_);
+    auto bounds = target ? controller().ui->page_bounds(*target) : controller().ui->web_bounds();
+    controller().menu_x = std::clamp(bounds.x + int(p->GetXCoord() / controller().ui_scale), 8,
+                                     controller().width - 250);
+    controller().menu_y = std::clamp(
+        bounds.y + int(p->GetYCoord() / controller().ui_scale), 32,
+        std::max(32, controller().height - static_cast<int>(controller().menu.size()) * 32 - 12));
+    controller().changed();
     return true;
 }
 bool BrowserClient::OnContextMenuCommand(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
                                          CefRefPtr<CefContextMenuParams> p, int command,
                                          EventFlags) {
     if (command == MENU_ID_COPY) {
-        if (auto tab = owner_.tab(id_); tab && tab->reader_active) {
+        if (auto tab = controller().tab(id_); tab && tab->reader_active) {
             const auto text = p->GetSelectionText().ToString();
             if (!text.empty()) {
-                owner_.window->copy(text);
-                ++owner_.audit["reader_context_copies"];
+                controller().window->copy(text);
+                ++controller().audit["reader_context_copies"];
             }
             return true;
         }
     }
     if (command == MENU_ID_USER_FIRST) {
-        owner_.open_from_page(id_, p->GetLinkUrl(), true);
+        controller().open_from_page(id_, p->GetLinkUrl(), true);
         return true;
     }
     if (command == MENU_ID_USER_FIRST + 1) {
-        owner_.window->copy(p->GetLinkUrl());
+        controller().window->copy(p->GetLinkUrl());
         return true;
     }
     if (command == MENU_ID_USER_FIRST + 2) {
-        owner_.devtools();
+        controller().devtools();
         return true;
     }
     if (command == MENU_ID_USER_FIRST + 3 || command == MENU_ID_USER_FIRST + 4) {
-        if (auto tab = owner_.tab(id_)) {
+        if (auto tab = controller().tab(id_)) {
             tab->selected_text = p->GetSelectionText().ToString();
-            owner_.ui->open_translation(command == MENU_ID_USER_FIRST + 3, id_);
+            controller().ui->open_translation(command == MENU_ID_USER_FIRST + 3, id_);
         }
         return true;
     }
@@ -578,12 +579,12 @@ bool BrowserClient::OnContextMenuCommand(CefRefPtr<CefBrowser>, CefRefPtr<CefFra
 bool BrowserClient::OnJSDialog(CefRefPtr<CefBrowser>, const CefString &origin, JSDialogType kind,
                                const CefString &message, const CefString &text,
                                CefRefPtr<CefJSDialogCallback> callback, bool &suppress) {
-    if (!owner_.profile.allow_dialogs) {
+    if (!controller().profile.allow_dialogs) {
         suppress = true;
-        ++owner_.audit["dialogs_blocked"];
+        ++controller().audit["dialogs_blocked"];
         return false;
     }
-    ++owner_.audit["javascript_dialogs"];
+    ++controller().audit["javascript_dialogs"];
     BrowserDialog dialog;
     dialog.tab = id_;
     dialog.origin = url_host(origin);
@@ -591,20 +592,20 @@ bool BrowserClient::OnJSDialog(CefRefPtr<CefBrowser>, const CefString &origin, J
     dialog.prompt = kind == JSDIALOGTYPE_PROMPT;
     dialog.input.set(text);
     dialog.callback = callback;
-    owner_.dialogs.push_back(std::move(dialog));
-    owner_.changed();
+    controller().dialogs.push_back(std::move(dialog));
+    controller().changed();
     return true;
 }
 bool BrowserClient::OnBeforeUnloadDialog(CefRefPtr<CefBrowser>, const CefString &message, bool,
                                          CefRefPtr<CefJSDialogCallback> callback) {
     BrowserDialog dialog;
     dialog.tab = id_;
-    dialog.origin = owner_.tr("Leave this page?");
+    dialog.origin = controller().tr("Leave this page?");
     dialog.message = message;
-    const auto &merge = owner_.state()->duplicate_merge;
+    const auto &merge = controller().state()->duplicate_merge;
     if (merge.active && merge.waiting &&
-        merge.waiting->ref == DuplicateRef{owner_.window_uid, id_}) {
-        if (auto t = owner_.tab(id_)) {
+        merge.waiting->ref == DuplicateRef{controller().window_uid, id_}) {
+        if (auto t = controller().tab(id_)) {
             auto title = t->page.title;
             for (auto &c : title)
                 if (static_cast<unsigned char>(c) < 32 || c == 127)
@@ -616,34 +617,49 @@ bool BrowserClient::OnBeforeUnloadDialog(CefRefPtr<CefBrowser>, const CefString 
             title.resize(end);
             dialog.context = title;
         }
-        if (owner_.window)
-            owner_.window->activate();
+        if (controller().window)
+            controller().window->activate();
     }
     dialog.before_unload = true;
     dialog.callback = callback;
-    owner_.dialogs.push_back(std::move(dialog));
-    owner_.changed();
+    controller().dialogs.push_back(std::move(dialog));
+    controller().changed();
     return true;
 }
 void BrowserClient::OnResetDialogState(CefRefPtr<CefBrowser>) {
-    for (auto it = owner_.dialogs.begin(); it != owner_.dialogs.end();) {
+    for (auto it = controller().dialogs.begin(); it != controller().dialogs.end();) {
         if (it->tab == id_ && !it->permission)
-            it = owner_.dialogs.erase(it);
+            it = controller().dialogs.erase(it);
         else
             ++it;
     }
-    owner_.changed();
+    controller().changed();
 }
 } // namespace aura
 
 namespace aura {
 void BrowserClient::OnTextSelectionChanged(CefRefPtr<CefBrowser>, const CefString &text,
                                            const CefRange &) {
-    if (auto t = owner_.tab(id_)) {
+    if (auto t = controller().tab(id_)) {
         t->selected_text = text.ToString();
         if (t->selected_text.size() > 16 * 1024 * 1024)
             t->selected_text.clear();
-        owner_.changed();
+        controller().changed();
     }
+}
+} // namespace aura
+
+namespace aura {
+bool BrowserClient::GetScreenPoint(CefRefPtr<CefBrowser>, int x, int y, int &screen_x,
+                                   int &screen_y) {
+    const auto t = controller().tab(id_);
+    if (!t)
+        return false;
+    const auto r = controller().ui->page_bounds(*t);
+    const auto p = controller().window->screen_point(r.x + int(x / controller().ui_scale),
+                                                     r.y + int(y / controller().ui_scale));
+    screen_x = p.first;
+    screen_y = p.second;
+    return true;
 }
 } // namespace aura
