@@ -59,6 +59,9 @@ struct Tab {
     bool tree_collapsed = false;
     uint64_t navigation_serial = 0;
     bool sleeping = false, sleep_pending = false, media_capture = false;
+    bool discarded = false, discard_pending = false, discard_closing = false;
+    bool discard_manual = false, last_navigation_get = false;
+    std::chrono::steady_clock::time_point discard_started{};
     bool media_video = false, media_audio = false;
     std::set<std::string> permission_origins;
     bool reader_active = false, reader_pending = false, reading_pending = false;
@@ -314,6 +317,7 @@ class BrowserController {
     bool move_tab_to_window(int id, BrowserController &target, int before = 0);
     void tab_drag(int id, int x, int y, bool release = false);
     void cancel_tab_drag();
+    bool native_tab_drag(int stage, int x, int y);
     void bind_tab_callbacks(Tab &);
     void bind_site_tool_events(int id);
     std::vector<TreeTab> tree_nodes() const;
@@ -333,6 +337,8 @@ class BrowserController {
     void mute();
     bool can_sleep(const Tab &tab, bool allow_visible = false) const;
     void sleep_tab(int id, bool manual = true);
+    void discard_tab(int id, bool manual = true);
+    void discard_inactive_tabs();
     void save_reading_article();
     void open_reading_article(int id);
     void toggle_reader();

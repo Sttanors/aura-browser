@@ -18,7 +18,7 @@ HTML используется только для посещаемых стра�
 
 Windows-порт использует то же приложение и интерфейс, что и Linux: **Win32 + Skia raster + CEF OSR**.
 Статус его сборки и проверок виден в [GitHub Actions](https://github.com/Sttanors/aura-browser/actions).
-Готовые portable-сборки Windows и Linux доступны в [GitHub Releases](https://github.com/Sttanors/aura-browser/releases/tag/v0.4.0-preview.2).
+Готовые portable-сборки Windows и Linux доступны в [GitHub Releases](https://github.com/Sttanors/aura-browser/releases/tag/v0.5.0-preview.1).
 Для Windows скачайте `aura2-windows64.zip`, для Linux — `aura2-linux64.zip`.
 Распакуйте архив целиком и запустите **Aura2/aura_browser.exe**. Windows 10/11 x64.
 Доверенной подписи издателя Windows пока нет. Канал обновлений проверяется
@@ -32,16 +32,17 @@ Linux 0.4.0 Preview 1: 122 CTest и 33 GUI-набора; подробные ре
 [журнале работ](docs/browser-roadmap-progress.md). Установщики 0.4.0-preview.1 содержат эти изменения.
 
 
-В ветке разработки добавлен [безопасный режим диагностики](docs/safe-mode.md):
-временный запуск без расширений, внедрений, блокировщика и GPU, с локальным
-обезличенным отчётом. В опубликованные установщики эта функция пока не входит.
-
-Экспериментальный [нативный Wayland backend](docs/wayland.md) доступен в dev-ветке
-через `--window-system=wayland`. X11/XWayland пока остаётся вариантом по умолчанию.
+Версия **0.5.0 Preview 1** добавляет масштаб по сайту, правила контейнеров,
+менеджер загрузок и процессов, «Прочитать позже», поисковики, очистку дубликатов,
+дерево и горизонтальные вкладки, живой перенос между окнами, орфографию RU/EN,
+доступ расширений к сайтам, [безопасный режим](docs/safe-mode.md),
+[экспериментальный Wayland](docs/wayland.md) и [выгрузку документов](docs/tab-memory.md).
+X11/XWayland остаётся по умолчанию. Результаты записаны в
+[журнале улучшений](docs/improvements-progress.md).
 
 ## Установка в систему
 
-Все варианты доступны в [релизе](https://github.com/Sttanors/aura-browser/releases/tag/v0.4.0-preview.2).
+Все варианты доступны в [релизе](https://github.com/Sttanors/aura-browser/releases/tag/v0.5.0-preview.1).
 Установщики содержат браузер. Пакетный менеджер Linux может скачать системные зависимости.
 
 | Платформа | Файл | Запуск |
@@ -58,9 +59,9 @@ Linux 0.4.0 Preview 1: 122 CTest и 33 GUI-набора; подробные ре
 
 | Дистрибутив (x86_64) | Установка скачанного пакета | Удаление |
 |---|---|---|
-| Arch Linux / CachyOS (актуальный rolling) | `sudo pacman -U ./aura-browser-0.4.0rc2-1-x86_64.pkg.tar.gz` | `sudo pacman -R aura-browser` |
-| Debian 13+ | `sudo apt install './aura-browser_0.4.0-preview.2-1_amd64.deb'` | `sudo apt remove aura-browser` |
-| Fedora 44 | `sudo dnf install './aura-browser-0.4.0-preview.2-1.x86_64.rpm'` | `sudo dnf remove aura-browser` |
+| Arch Linux / CachyOS (актуальный rolling) | `sudo pacman -U ./aura-browser-0.5.0rc1-1-x86_64.pkg.tar.gz` | `sudo pacman -R aura-browser` |
+| Debian 13+ | `sudo apt install './aura-browser_0.5.0-preview.1-1_amd64.deb'` | `sudo apt remove aura-browser` |
+| Fedora 44 | `sudo dnf install './aura-browser-0.5.0-preview.1-1.x86_64.rpm'` | `sudo dnf remove aura-browser` |
 
 Пакетный менеджер установит необходимые системные библиотеки. Сборка использует ABI Debian 13,
 а не более новые библиотеки компьютера разработчика. Debian 12 не поддерживается.

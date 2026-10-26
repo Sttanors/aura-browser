@@ -31,9 +31,9 @@
 | 10 | Перенос вкладок между окнами | Готово: 163 CTest + Linux GUI + Windows CI PASS |
 | 11 | Орфография RU/EN | Готово: 166 CTest + Linux GUI + упаковка + Windows CI PASS |
 | 12 | Доступ расширений к сайтам | Готово в рамках CEF: 167 CTest + Linux GUI PASS; Windows CI отдельно |
-| 13 | Безопасный режим | Ожидает |
-| 14 | Нативный Wayland | Ожидает |
-| 15 | Выгрузка страниц из памяти | Ожидает |
+| 13 | Безопасный режим | Готово: 170 CTest + isolated GUI; Windows CI PASS 915b748 |
+| 14 | Нативный Wayland | Готово как opt-in preview: Weston 100/200%, Cage, IME/chooser/DND PASS |
+| 15 | Выгрузка страниц из памяти | Реализовано, manual GUI PASS; timer и финальный релиз проверяются |
 
 ### B1 — реализация
 
@@ -836,3 +836,114 @@ portable PASS; GUI установленной версии FAIL на отсут�
 Логи: artifacts/wayland-validation/popup-*. Снимки: artifacts/wayland-smoke/popup-*.
 Пункт 14 открыт: native DND, полный IME/preedit, chooser, другие compositor и
 fractional/multi-monitor остаются. Пункт 15 не начинался; релиз не публиковался.
+
+
+### 14.2. Native Wayland DND — реализация и проверка
+
+Добавлен стандартный wl_data_device DND между окнами одного процесса. Для каждого
+жеста создаётся случайная 128-bit MIME capability; чужие payload/URI не становятся
+командами переноса. На hover/drop повторно применяются существующие границы
+профиля, приватности, контейнеров и незавершённых операций. Wayland не получает
+выдуманных глобальных координат; источник/получатель определяет compositor.
+Внутри полосы вкладок сохраняется прежняя перестановка; отпускание обратно в
+источнике отменяет внешний перенос. Protocol finish/cancel освобождает source.
+SDL synthetic mouse-up и временная потеря keyboard focus во время native grab
+больше не отменяют живую операцию раньше compositor callback.
+
+Native GUI PASS при DPI 100/200%: перенос настоящей CEF страницы без нового
+экземпляра браузера и без потери формы, отказ обычной вкладки в приватном окне,
+отмена отвергнутого drop и сбалансированное закрытие. Все 170 CTest PASS (10,35 с).
+Повторно пройден предыдущий clipboard/overlay сценарий. Логи:
+artifacts/release-next-validation/wayland-dnd-*. Полный IME и chooser проверяются
+следом; пункт 14 ещё не закрыт.
+
+Windows CI [40369712358](https://github.com/Sttanors/aura-browser/actions/runs/40369712358)
+PASS на 915b74829bbec28b9e59ee930f5b1b4169655efd, включая основной и установленный
+native GUI, unit, portable и installer lifecycle. Предыдущий сбой проверки
+орфографии на 53cec99 не повторился после ожидания фактического открытия меню.
+
+
+### 14.3. IME, chooser и второй compositor — реализация и проверка
+
+Ввод text-input-v3 теперь проверяется настоящими protocol preedit/commit/cancel
+событиями через SDL: Unicode/emoji/CJK в CEF, русский текст в адресе и prompt,
+редактирование поиска настроек, отмена при смене вкладки. Preedit показывается
+во всех активных нативных редакторах без изменения сохранённого текста; секретные
+редакторы скрывают его. Курсор/выделение учитывают UTF-8/UTF-16. Переключение
+получателя сбрасывает композицию в CEF и SDL. Исправлено подавление IME commit
+оставшимся состоянием обработанного Ctrl+L; candidate anchor задаётся по каретке
+видимого редактора, включая развёрнутый omnibox.
+
+GTK Save/Cancel на Wayland PASS; проверка Open с русским именем файла завершается.
+Сессия использует временные HOME/XDG и приватный compositor, не личные данные.
+Cage/wlroots PASS: headless Pixman, два outputs, client scale 1.25, реальные CEF/SHM
+кадры и сбалансированное закрытие по SIGTERM. SIGINT/SIGTERM теперь обрабатываются
+в обычном message loop с сохранением сессии и соблюдением beforeunload.
+Физический GPU/мониторы и внешнее окно кандидатов конкретного input method не
+проверялись. X11 остаётся по умолчанию; Wayland публикуется как opt-in preview.
+
+### 15. Реальная выгрузка документов — план следующего этапа
+
+Задача владельца Aura: освобождать документ неактивной страницы, зная, что выбор
+вкладки загрузит её снова. План GUI по прежнему SKILL.md: сохранить нативную
+компоновку Aura, Inter 14/13/12, шаг 8, цвета #0D111B/#182033/#EDF3FF/#99A7C1/#A7B6FF.
+В настройках вкладок — выбор Freeze/Unload рядом с таймером; в Ctrl+K — выгрузка
+неактивных вкладок с явным предупреждением о reload и сбросе back/forward history.
+В боковой/верхней панели — состояние Unloaded. Одна основная кнопка подтверждения.
+Приватные/закреплённые/видимые страницы, формы, воспроизведение, звонки, загрузки,
+POST и непроверяемые frame остаются загруженными. Freeze по умолчанию сохраняется.
+Проверить фактический CEF close, остановку JS, восстановление новым CEF instance,
+сохранение контейнера/масштаба/дерева, beforeunload refusal, настройки RU/EN и timer.
+
+### 14.4. Завершение opt-in Wayland preview
+
+Пункт 14 выполнен в границах экспериментального backend. Финальный сценарий
+Weston DPI 200% PASS, включая GTK Open с русским именем файла, предварительный
+просмотр HTML-закладок без применения импорта, Save/Cancel, text-input-v3 и DND.
+GTK location entry требует подтверждения пути перед выбором файла; тест теперь
+делает это через Return. Поле picker_pid добавлено в технический отчёт импорта.
+Лог: artifacts/release-next-validation/wayland-final-2.log.
+
+Проверки Weston 100/200% и Cage/wlroots с двумя виртуальными outputs/client scale
+1.25 описаны в docs/wayland.md. Аппаратные мониторы/GPU, внешние candidate windows
+IME и все возможные compositor не проверены. X11 остаётся по умолчанию. Пункт 15
+реализуется следующим; релиз будет собран после его проверок.
+
+### 15.1. Выгрузка документа — реализация
+
+Добавлен выбор Freeze/Unload и общий таймер. Freeze остаётся по умолчанию.
+Выгрузка закрывает реальный CEF browser и освобождает native paint buffers,
+DevTools/context/script состояния, оставляя вкладку, URL, контейнер, дерево и zoom.
+Выбор вкладки создаёт новый CEF browser; предыдущий DOM и per-tab back/forward
+history не восстанавливаются. Это явно указано в настройке и подтверждении
+Ctrl+K → Unload inactive tabs, а также меню неактивной вкладки. Состояние Unloaded
+показано отдельной иконкой/надписью. Правый клик больше не активирует фоновую
+вкладку до выбора действия и не закрывает её при попадании в область крестика.
+
+Закрытие никогда не force: beforeunload сохраняется. Фоновая автоматическая
+операция при таком запросе отменяется без навязчивого диалога. Проверка страницы
+в isolated world возвращает только boolean busy, не значения полей. Защищены
+изменённые формы, contenteditable/canvas, media/WebAudio/capture, private/pinned/
+visible tabs, downloads, POST, reader, child frames и непроверяемые страницы.
+Асинхронные ответы привязаны к lifetime, navigation serial и конкретному запросу;
+смена вкладки отменяет probe, выбор во время CEF close восстанавливает страницу
+после callback. Незавершённый probe имеет timeout. Общий Chromium cache/process
+может оставаться в памяти; полного обнуления RSS не обещается.
+
+Проверки начинаются: реальный close/recreate, dirty form, beforeunload refusal,
+POST/iframe/audio/private, настройки и фактический пятиминутный timer.
+
+### 15.2. Ручная выгрузка — проверка
+
+PASS: фактический CEF close (browser ID 0, buffers 0), остановка JS, восстановление
+новым CEF ID/DOM token; изменённая форма соседней вкладки сохранена. Зарегистрированный
+window.beforeunload защищён через DOMDebugger.getEventListeners(pierce=true), включая
+addEventListener. Форма теста исправлена: unqualified inline addEventListener
+регистрировал событие на кнопке, а не Window. Проверка main/isolated listeners
+сверена с [CDP](https://chromedevtools.github.io/devtools-protocol/tot/DOMDebugger/#method-getEventListeners).
+Close вынесен из DevTools observer в следующий loop, устраняя reentrancy предупреждения.
+POST, iframe, WebAudio и private guards PASS, preference сохранена. Визуально
+проверены состояние выгруженной вкладки и английская настройка. 170 CTest PASS.
+Логи: artifacts/release-next-validation/discard-manual.log, ctest-discard.log.
+Запущена проверка фактического пятиминутного timer. Версия следующей сборки:
+0.5.0-preview.1, update sequence 8; опубликованных пакетов этой версии пока нет.

@@ -141,8 +141,11 @@ bool BrowserClient::OnBeforeBrowse(CefRefPtr<CefBrowser> browser, CefRefPtr<CefF
     // A document that navigates cannot retain a pending permission prompt.
     controller().cancel_permissions(id_);
     if (frame->IsMain()) {
+        if (auto t = controller().tab(id_); t && t == controller().current())
+            controller().ui->cancel_ime();
         if (auto t = controller().tab(id_)) {
             ++t->navigation_serial;
+            t->last_navigation_get = request->GetMethod() == "GET";
             t->reader_active = t->reader_pending = t->reading_pending = false;
             t->reader_context = 0;
             t->reader_ui = "null";
@@ -693,6 +696,13 @@ bool BrowserClient::OnJSDialog(CefRefPtr<CefBrowser>, const CefString &origin, J
 }
 bool BrowserClient::OnBeforeUnloadDialog(CefRefPtr<CefBrowser>, const CefString &message, bool,
                                          CefRefPtr<CefJSDialogCallback> callback) {
+    if (auto t = controller().tab(id_);
+        t && t->discard_pending && !t->discard_manual && !t->closing && !controller().quitting) {
+        t->discard_pending = t->discard_closing = false;
+        callback->Continue(false, "");
+        controller().changed();
+        return true;
+    }
     BrowserDialog dialog;
     dialog.tab = id_;
     dialog.origin = controller().tr("Leave this page?");

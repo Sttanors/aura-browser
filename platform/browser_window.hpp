@@ -22,6 +22,8 @@ struct WindowCallbacks {
     std::function<bool(const CefKeyEvent &)> key;
     std::function<void(const std::string &)> text;
     std::function<void(const std::string &, int, int)> preedit;
+    // 0 motion/enter, 1 drop, 2 leave, 3 source finished; true accepts a target.
+    std::function<bool(int, int, int)> tab_drag;
     std::function<void(bool)> focus;
     std::function<void()> close;
     std::function<bool(int, int)> caption;
@@ -33,6 +35,8 @@ class BrowserWindow {
     ~BrowserWindow();
     CefWindowHandle handle() const;
     std::uintptr_t native_id() const;
+    bool begin_tab_drag();
+    void cancel_composition();
     void show();
     void clear_callbacks();
     std::optional<std::pair<int, int>> point_from(const BrowserWindow &source, int x, int y) const;

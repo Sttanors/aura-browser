@@ -21,6 +21,19 @@
 #include <windows.h>
 #endif
 namespace {
+#ifndef _WIN32
+volatile std::sig_atomic_t quit_signal = 0;
+void request_signal_quit(int) { quit_signal = 1; }
+struct QuitSignals {
+    using Handler = void (*)(int);
+    Handler term = std::signal(SIGTERM, request_signal_quit);
+    Handler interrupt = std::signal(SIGINT, request_signal_quit);
+    ~QuitSignals() {
+        std::signal(SIGTERM, term);
+        std::signal(SIGINT, interrupt);
+    }
+};
+#endif
 int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbox_info) {
     const auto binary = aura::executable_directory();
     if (command->HasSwitch("version")) {
@@ -195,6 +208,9 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
         }
         aura::replace_file(temporary, target);
     };
+#ifndef _WIN32
+    QuitSignals quit_signals;
+#endif
     try {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
         while (!app->context_ready()) {
@@ -212,6 +228,12 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
         auto last_pump = std::chrono::steady_clock::now();
         schedule.schedule(0);
         while (!finished()) {
+#ifndef _WIN32
+            if (quit_signal) {
+                quit_signal = 0;
+                browser.request_exit();
+            }
+#endif
             auto shared = browser.state();
             while (!shared->pending_windows.empty() && !shared->exiting) {
                 auto request = std::move(shared->pending_windows.front());

@@ -370,6 +370,7 @@ void BrowserController::close_extension_popup(bool restore_focus) {
     if (!extension_popup)
         return;
     close_menu();
+    ui->cancel_ime();
     auto popup = std::move(extension_popup);
     closing_popups_.push_back(popup);
     popup->page.closing = true;

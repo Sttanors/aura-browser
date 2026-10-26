@@ -499,7 +499,46 @@ void BrowserUi::resize(int width, int height) {
     width_ = width;
     height_ = height;
 }
-void BrowserUi::draw_editor(SkCanvas &c, const TextEditor &e, Rect r, float size, bool active) {
+void BrowserUi::draw_editor(SkCanvas &c, const TextEditor &e, Rect r, float size, bool active,
+                            bool secret) {
+    if (active && !preedit_.empty()) {
+        auto draft = e;
+        const auto insertion = e.begin();
+        auto offset = [&](int count) {
+            size_t byte = 0;
+            for (int n = 0; byte < preedit_.size() && n < count; ++n) {
+                ++byte;
+                while (byte < preedit_.size() &&
+                       (static_cast<unsigned char>(preedit_[byte]) & 0xc0) == 0x80)
+                    ++byte;
+            }
+            return byte;
+        };
+        const auto start = offset(preedit_start_), end = offset(preedit_start_ + preedit_length_);
+        draft.insert(secret ? std::string(preedit_.size(), '*') : preedit_);
+        const auto underline_end = draft.caret;
+        draft.anchor = insertion + start;
+        draft.caret = insertion + end;
+        auto composing = std::move(preedit_);
+        draw_editor(c, draft, r, size, active, secret);
+        preedit_ = std::move(composing);
+        if (draft.value.size() <= 8192) {
+            auto f = font(regular_, size);
+            const float offset =
+                std::max(0.f, measure(f, draft.value.substr(0, draft.caret)) - r.width + 18);
+            SkPaint ink;
+            ink.setColor(interface_theme(app_.profile).accent);
+            ink.setStrokeWidth(1);
+            c.save();
+            c.clipRect(box(r));
+            c.drawLine(r.x + measure(f, draft.value.substr(0, insertion)) - offset,
+                       r.y + r.height - 4,
+                       r.x + measure(f, draft.value.substr(0, underline_end)) - offset,
+                       r.y + r.height - 4, ink);
+            c.restore();
+        }
+        return;
+    }
     // Clipboard input can be megabytes. Keep the full editor value, but shape
     // only a bounded UTF-8 window around the caret for a responsive native UI.
     if (e.value.size() > 8192) {
@@ -514,14 +553,6 @@ void BrowserUi::draw_editor(SkCanvas &c, const TextEditor &e, Rect r, float size
         visible.caret = std::clamp(e.caret, begin, end) - begin;
         visible.anchor = std::clamp(e.anchor, begin, end) - begin;
         draw_editor(c, visible, r, size, active);
-        return;
-    }
-    if (active && !preedit_.empty() && (&e == &address || &e == &find)) {
-        auto draft = e;
-        draft.insert(preedit_);
-        auto composing = std::move(preedit_);
-        draw_editor(c, draft, r, size, active);
-        preedit_ = std::move(composing);
         return;
     }
     const auto &t = interface_theme(app_.profile);
@@ -540,6 +571,8 @@ void BrowserUi::draw_editor(SkCanvas &c, const TextEditor &e, Rect r, float size
     }
     label(c, regular_, e.value, r.x - offset, r.y + r.height / 2 + size * .35f, size, t.text);
     if (active) {
+        if (app_.window && app_.window->backend() == "wayland")
+            app_.window->caret(int(r.x + caret - offset), r.y + r.height - 5);
         SkPaint p;
         p.setColor(t.accent);
         p.setStrokeWidth(1.4f);
@@ -727,7 +760,9 @@ void BrowserUi::draw(SkCanvas &c) {
                          t.accent,
                          static_cast<U8CPU>(
                              130 + 100 * (app_.profile.reduce_motion ? 0.0 : std::sin(time * 4)))));
-            } else if (tab.sleeping)
+            } else if (tab.discarded)
+                icon(c, "download", icon_x, y + 14, 19, muted);
+            else if (tab.sleeping)
                 label(c, medium_, "z", icon_x + 4, y + 29, 17, muted);
             else if (tab.media_capture)
                 icon(c, tab.media_video ? "camera" : "microphone", icon_x, y + 14, 19, t.accent);
@@ -748,6 +783,7 @@ void BrowserUi::draw(SkCanvas &c) {
                       : depth > 3       ? app_.tr("Level ") + std::to_string(depth + 1)
                       : tab.media_video ? app_.tr("Camera in use")
                       : tab.media_audio ? app_.tr("Microphone in use")
+                      : tab.discarded   ? app_.tr("Unloaded")
                       : tab.sleeping    ? app_.tr("Sleeping")
                       : tab.private_tab ? app_.tr("Private browsing")
                       : tab.ntp
@@ -2267,7 +2303,8 @@ std::string BrowserUi::import_report() const {
     };
     auto &importer = app_.importer;
     std::string out =
-        "{\"input\":" + rect({r.x + 28, r.y + 108, r.width - 172, 36}) +
+        "{\"picker_pid\":" + std::to_string(picker_pid_) +
+        ",\"input\":" + rect({r.x + 28, r.y + 108, r.width - 172, 36}) +
         ",\"browse\":" + rect({r.x + r.width - 132, r.y + 108, 104, 36}) +
         ",\"preview\":" + rect({r.x + 28, r.y + 162, 200, 36}) +
         ",\"profiles\":" + rect({r.x + 244, r.y + 162, 220, 36}) +
@@ -2755,6 +2792,7 @@ std::vector<Visit> BrowserUi::suggestions() const {
         address.value, std::min(app_.profile.suggestion_limit, std::max(1, (height_ - 205) / 54)));
 }
 void BrowserUi::focus_address(bool select) {
+    cancel_ime();
     if (panel_ == TaskManager)
         panel(None);
     if (panel_ == Screenshot || app_.screenshot.pending || app_.screenshot.selecting)
@@ -2787,6 +2825,7 @@ void BrowserUi::toast(std::string message) {
     app_.changed();
 }
 void BrowserUi::panel(Panel value) {
+    cancel_ime();
     if (app_.safe_mode() && (value == Filters || value == SpellingDictionary ||
                              value == Screenshot || value == DuplicateTabs)) {
         toast(app_.tr("This tool is paused in safe mode."));
@@ -2876,6 +2915,7 @@ void BrowserUi::commit_address() {
     app_.navigate(value);
 }
 void BrowserUi::dismiss() {
+    cancel_ime();
     extension_site_input_.set("");
     extension_site_error_.clear();
     spelling_input_.set("");
@@ -4604,8 +4644,8 @@ void BrowserUi::pointer(const PointerInput &input) {
     if (!web_only || (input.kind != PointerInput::Wheel && input.kind != PointerInput::Move))
         app_.changed();
     const bool down = input.kind == PointerInput::Down;
-    if (down && (preedit_browser_ || !preedit_.empty()))
-        composition("", 0, 0);
+    if (down && composing())
+        cancel_ime();
     if (down || input.kind == PointerInput::Wheel)
         keyboard_focus_ = -1;
     if (down) {
@@ -4615,6 +4655,8 @@ void BrowserUi::pointer(const PointerInput &input) {
         app_.cancel_tab_drag();
     }
     if (input.kind == PointerInput::Up) {
+        if (app_.window->backend() == "wayland" && app_.state()->tab_drop.source)
+            return; // SDL may synthesize an up when Wayland takes the native DND grab.
         const bool tab_gesture = drag_source_ != 0;
         if (tab_gesture && drag_moved_ && !drag_cancelled_)
             app_.tab_drag(drag_source_, x, y, true);
@@ -5120,10 +5162,12 @@ void BrowserUi::pointer(const PointerInput &input) {
                 }
                 if (input.button == 2 && !app_.profile.middle_close)
                     return;
-                if (input.button == 2 || (x > 195 && !app_.tabs[index]->pinned))
+                if (input.button == 2 ||
+                    (input.button == 1 && x > 195 && !app_.tabs[index]->pinned))
                     app_.close_tab(index);
                 else {
-                    app_.activate(index);
+                    if (input.button == 1)
+                        app_.activate(index);
                     if (input.button == 1) {
                         drag_tab_ = index;
                         drag_source_ = app_.tabs[index]->id;
@@ -5809,7 +5853,7 @@ void BrowserUi::draw_passwords(SkCanvas &c, Rect r) {
                 masked.caret = password_fields_[i].caret;
                 masked.anchor = password_fields_[i].anchor;
                 draw_editor(c, masked, {b.x + 10, b.y + 2, b.width - 20, 32}, 13,
-                            password_focus_ == i);
+                            password_focus_ == i, true);
             } else
                 draw_editor(c, password_fields_[i], {b.x + 10, b.y + 2, b.width - 20, 32}, 12,
                             password_focus_ == i);
@@ -7297,6 +7341,7 @@ std::vector<BrowserUi::CommandResult> BrowserUi::command_results() const {
         {"quick_links", "Manage quick links", "", current && current->ntp},
         {"split", app_.split_enabled() ? "Exit split view" : "Two pages side by side", "Ctrl+Alt+V",
          page},
+        {"unload", "Unload inactive tabs", "", !app_.private_window},
         {"sleep", "Sleep tab", "Ctrl+Alt+S", page && !private_mode && !current->pinned},
         {"reader", current && current->reader_active ? "Exit reader" : "Reader mode", "Ctrl+Alt+R",
          page},
@@ -7490,6 +7535,8 @@ void BrowserUi::run_command(int index) {
         panel(Shortcuts);
     else if (id == "split")
         app_.toggle_split();
+    else if (id == "unload")
+        app_.discard_inactive_tabs();
     else if (id == "sleep") {
         if (auto tab = app_.current())
             app_.sleep_tab(tab->id);
@@ -10445,6 +10492,8 @@ void BrowserUi::open_tab_menu(int index, int x, int y) {
         {8, app_.tr("Sleep tab"),
          !app_.tabs[index]->pinned && !app_.tabs[index]->private_tab && !app_.tabs[index]->ntp},
         {9, app_.tr("Open in container"), !app_.tabs[index]->private_tab}};
+    app_.menu.push_back({14, app_.tr("Unload tab"),
+                         app_.can_sleep(*app_.tabs[index]) && !app_.tabs[index]->discard_pending});
     app_.menu.push_back({13, app_.tr("Move to window")});
     if (app_.profile.tree_tabs) {
         const auto rows = app_.tree_rows(false);
@@ -10462,6 +10511,14 @@ void BrowserUi::open_tab_menu(int index, int x, int y) {
         auto tab = app_.tab(id);
         if (!tab)
             return;
+        if (command == 14) {
+            app_.confirm_action(
+                app_.tr("Unload tab?"),
+                app_.tr("The page will reload when selected. This tab's back and forward history "
+                        "will be reset. Forms, media and downloads are protected."),
+                [this, id] { app_.discard_tab(id); });
+            return;
+        }
         int index = 0;
         while (index < static_cast<int>(app_.tabs.size()) && app_.tabs[index]->id != id)
             ++index;
@@ -10706,6 +10763,8 @@ void BrowserUi::draw_tab_strip(SkCanvas &c) {
             focus_target({r.x + r.width - 24, r.y, 24, r.height});
         if (tab.loading)
             fill(c, {left + 2, r.y + 9, 10, 10}, 5, theme.accent);
+        else if (tab.discarded)
+            icon(c, "download", left, r.y + 6, 16, theme.muted);
         else if (tab.sleeping)
             label(c, medium_, "z", left + 2, r.y + 20, 14, theme.muted);
         else if (tab.media_capture)
@@ -10812,7 +10871,8 @@ bool BrowserUi::tab_strip_pointer(const PointerInput &input) {
                  !app_.tabs[index]->pinned))
                 app_.close_tab(index);
             else if (input.button == 1 || input.button == 3) {
-                app_.activate(index);
+                if (input.button == 1)
+                    app_.activate(index);
                 if (input.button == 3)
                     open_tab_menu(index, x, y + 30);
                 else {
@@ -10943,6 +11003,8 @@ void BrowserUi::open_tab_windows(int id) {
     move_window_tab_ = id;
 }
 void BrowserUi::cancel_tab_gesture() {
+    drag_tab_ = -1;
+    drag_source_ = 0;
     drag_cancelled_ = true;
     app_.cancel_tab_drag();
 }
@@ -11414,6 +11476,8 @@ CefRefPtr<CefBrowser> composition_target(BrowserController &app) {
 void BrowserUi::composition(const std::string &value, int start, int length) {
     if (value.size() > 65536)
         return;
+    preedit_start_ = std::clamp(start, 0, int(value.size()));
+    preedit_length_ = std::clamp(length, 0, int(value.size()) - preedit_start_);
     auto target = composition_target(app_);
     if (preedit_browser_ && (!target || target->GetIdentifier() != preedit_browser_ || editing ||
                              find_open || panel_ != None || !app_.dialogs.empty())) {
@@ -11439,8 +11503,7 @@ void BrowserUi::composition(const std::string &value, int start, int length) {
                 }
                 return int(CefString(value.substr(0, byte)).ToString16().size());
             };
-            const int a = offset(std::max(0, start)),
-                      b = offset(std::max(0, start) + std::max(0, length));
+            const int a = offset(preedit_start_), b = offset(preedit_start_ + preedit_length_);
             CefCompositionUnderline u;
             u.range = CefRange(0, int(utf16.size()));
             u.color = SK_ColorBLACK;
@@ -11453,6 +11516,13 @@ void BrowserUi::composition(const std::string &value, int start, int length) {
     } else
         preedit_ = value;
     app_.changed();
+}
+void BrowserUi::cancel_ime() {
+    if (!composing())
+        return;
+    composition("", 0, 0);
+    if (app_.window && app_.window->backend() == "wayland")
+        app_.window->cancel_composition();
 }
 void BrowserUi::commit_composition(const std::string &value) {
     preedit_.clear();

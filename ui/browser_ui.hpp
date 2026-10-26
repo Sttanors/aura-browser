@@ -51,6 +51,8 @@ class BrowserUi {
     void open_hotkeys();
     std::string hotkeys_report() const;
     void composition(const std::string &, int, int);
+    void cancel_ime();
+    bool composing() const { return preedit_browser_ || !preedit_.empty(); }
     void commit_composition(const std::string &);
     void text(const std::string &value);
     bool tick();
@@ -139,7 +141,7 @@ class BrowserUi {
     void draw_diagnostics(SkCanvas &, Rect);
     void diagnostics_pointer(Rect, int, int);
     std::string preedit_;
-    int preedit_browser_ = 0;
+    int preedit_browser_ = 0, preedit_start_ = 0, preedit_length_ = 0;
     BrowserController &app_;
     Rect screenshot_area_, screenshot_region_;
     bool screenshot_drag_ = false, screenshot_cancel_focus_ = false;
@@ -363,8 +365,8 @@ class BrowserUi {
     std::chrono::steady_clock::time_point toast_until_{},
         last_tick_ = std::chrono::steady_clock::now();
     float focus_animation_ = 0, progress_ = 0;
-    void draw_editor(SkCanvas &canvas, const TextEditor &editor, Rect rect, float size,
-                     bool active);
+    void draw_editor(SkCanvas &canvas, const TextEditor &editor, Rect rect, float size, bool active,
+                     bool secret = false);
     bool editor_key(TextEditor &editor, const CefKeyEvent &event);
     std::vector<Visit> suggestions() const;
     void commit_address();

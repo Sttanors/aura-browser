@@ -3,6 +3,33 @@
 namespace aura {
 namespace {
 constexpr Translation catalog[] = {
+    {"Inactive tab action", "Действие для неактивных вкладок"},
+    {"Freeze keeps the document. Unload releases it and reloads it when selected; tab navigation "
+     "history is reset.",
+     "Заморозка сохраняет документ. Выгрузка освобождает его и загружает заново при выборе; "
+     "история переходов вкладки сбрасывается."},
+    {"Freeze", "Заморозка"},
+    {"Unload", "Выгрузка"},
+    {"Inactive tab timer", "Таймер неактивных вкладок"},
+    {"Apply the selected action to eligible background tabs. Protected pages stay loaded.",
+     "Применять выбранное действие к подходящим фоновым вкладкам. Защищённые страницы остаются "
+     "загруженными."},
+    {"Keep these sites loaded", "Оставлять эти сайты загруженными"},
+    {"Unload tab", "Выгрузить вкладку"},
+    {"Unload tab?", "Выгрузить вкладку?"},
+    {"Unload inactive tabs", "Выгрузить неактивные вкладки"},
+    {"Unload inactive tabs?", "Выгрузить неактивные вкладки?"},
+    {"Unloaded", "Выгружена"},
+    {"This tab is protected from unloading.", "Эта вкладка защищена от выгрузки."},
+    {"The page will reload when selected. This tab's back and forward history will be reset. "
+     "Forms, media and downloads are protected.",
+     "Страница загрузится заново при выборе. История переходов назад и вперёд сбросится. Формы, "
+     "медиа и загрузки защищены."},
+    {"Pages will reload when selected. Their back and forward history will be reset. Forms, media "
+     "and downloads are protected.",
+     "Страницы загрузятся заново при выборе. Их история переходов назад и вперёд сбросится. Формы, "
+     "медиа и загрузки защищены."},
+
     {"Show the website address under each sidebar title.",
      "Показывать адрес сайта под заголовком вкладки в боковой панели."},
     {"Show favicons in the tab bar.", "Показывать значки сайтов на панели вкладок."},

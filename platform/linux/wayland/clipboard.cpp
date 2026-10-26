@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
+#include <sys/random.h>
 #include <unistd.h>
 #include <unordered_map>
 #include <vector>
@@ -41,20 +42,29 @@ struct WaylandClipboard::Impl {
     wl_pointer *pointer = nullptr;
     uint32_t serial = 0;
     bool focused = false;
+    uint32_t pointer_serial = 0, drag_serial = 0;
+    wl_surface *pointer_surface = nullptr, *drag_origin = nullptr, *drag_surface = nullptr;
+    std::string drag_mime;
+    bool drag_accepted = false;
+    std::unordered_map<wl_surface *, std::function<bool(int, double, double)>> surfaces;
     struct Offer {
         wl_data_offer *proxy;
         std::string mime;
+        bool own_drag = false;
     };
     std::unordered_map<wl_data_offer *, std::unique_ptr<Offer>> offers;
     Offer *selected = nullptr;
+    Offer *drag_offer = nullptr;
     int selection_events = 0, cancellations = 0, reads = 0, failures = 0;
     size_t last_read_bytes = 0;
     struct Source {
         Impl *owner;
         wl_data_source *proxy;
         std::shared_ptr<const std::string> data;
+        bool drag = false;
     };
     std::unique_ptr<Source> source;
+    std::unique_ptr<Source> drag_source;
     struct Send {
         int fd;
         size_t offset = 0;
@@ -76,6 +86,8 @@ struct WaylandClipboard::Impl {
             close(s.fd);
         if (source)
             wl_data_source_destroy(source->proxy);
+        if (drag_source)
+            wl_data_source_destroy(drag_source->proxy);
         for (auto &[p, o] : offers)
             wl_data_offer_destroy(p);
         if (pointer) {
@@ -136,11 +148,20 @@ struct WaylandClipboard::Impl {
     }
     static void mods(void *, wl_keyboard *, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t) {}
     static void repeat(void *, wl_keyboard *, int32_t, int32_t) {}
-    static void enter(void *, wl_pointer *, uint32_t, wl_surface *, wl_fixed_t, wl_fixed_t) {}
-    static void leave(void *, wl_pointer *, uint32_t, wl_surface *) {}
+    static void enter(void *d, wl_pointer *, uint32_t, wl_surface *surface, wl_fixed_t,
+                      wl_fixed_t) {
+        static_cast<Impl *>(d)->pointer_surface = surface;
+    }
+    static void leave(void *d, wl_pointer *, uint32_t, wl_surface *) {
+        static_cast<Impl *>(d)->pointer_surface = nullptr;
+    }
     static void motion(void *, wl_pointer *, uint32_t, wl_fixed_t, wl_fixed_t) {}
-    static void button(void *d, wl_pointer *, uint32_t serial, uint32_t, uint32_t, uint32_t) {
-        static_cast<Impl *>(d)->serial = serial;
+    static void button(void *d, wl_pointer *, uint32_t serial, uint32_t, uint32_t button,
+                       uint32_t state) {
+        auto &p = *static_cast<Impl *>(d);
+        p.serial = serial;
+        if (button == 0x110)
+            p.pointer_serial = state == WL_POINTER_BUTTON_STATE_PRESSED ? serial : 0;
     }
     static void axis(void *, wl_pointer *, uint32_t, uint32_t, wl_fixed_t) {}
     static void frame(void *, wl_pointer *) {}
@@ -167,6 +188,12 @@ struct WaylandClipboard::Impl {
         if (!strcmp(m, "text/plain;charset=utf-8") ||
             (!o.mime.size() && (!strcmp(m, "text/plain") || !strcmp(m, "UTF8_STRING"))))
             o.mime = m;
+        if (std::string_view(m).starts_with("application/x-aura-tab-")) {
+            // Only a live source on this connection can make a tab-transfer offer valid.
+            o.own_drag = true;
+            if (o.mime.empty())
+                o.mime = m;
+        }
     }
     static void offer_actions(void *, wl_data_offer *, uint32_t) {}
     static void offer(void *d, wl_data_device *, wl_data_offer *o) {
@@ -181,18 +208,64 @@ struct WaylandClipboard::Impl {
         wl_data_offer_add_listener(o, &l, value.get());
         p.offers[o] = std::move(value);
     }
-    static void drag_enter(void *, wl_data_device *, uint32_t, wl_surface *, wl_fixed_t, wl_fixed_t,
-                           wl_data_offer *) {}
-    static void drag_leave(void *, wl_data_device *) {}
-    static void drag_motion(void *, wl_data_device *, uint32_t, wl_fixed_t, wl_fixed_t) {}
-    static void drag_drop(void *, wl_data_device *) {}
+    double drag_x = 0, drag_y = 0;
+    bool notify_drag(int stage) {
+        const auto it = surfaces.find(drag_surface);
+        return it != surfaces.end() && it->second(stage, drag_x, drag_y);
+    }
+    void drag_position(wl_fixed_t x, wl_fixed_t y) {
+        drag_x = wl_fixed_to_double(x);
+        drag_y = wl_fixed_to_double(y);
+        drag_accepted = drag_source && drag_offer && drag_offer->own_drag &&
+                        drag_offer->mime == drag_mime && notify_drag(0);
+        if (drag_offer) {
+            wl_data_offer_accept(drag_offer->proxy, drag_serial,
+                                 drag_accepted ? drag_mime.c_str() : nullptr);
+            if (wl_data_offer_get_version(drag_offer->proxy) >= 3)
+                wl_data_offer_set_actions(
+                    drag_offer->proxy, drag_accepted ? WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE : 0,
+                    drag_accepted ? WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE : 0);
+        }
+    }
+    static void drag_enter(void *d, wl_data_device *, uint32_t serial, wl_surface *surface,
+                           wl_fixed_t x, wl_fixed_t y, wl_data_offer *offer) {
+        auto &p = *static_cast<Impl *>(d);
+        p.drag_surface = surface;
+        p.drag_serial = serial;
+        auto it = p.offers.find(offer);
+        p.drag_offer = it == p.offers.end() ? nullptr : it->second.get();
+        p.drag_position(x, y);
+    }
+    static void drag_leave(void *d, wl_data_device *) {
+        auto &p = *static_cast<Impl *>(d);
+        p.notify_drag(2);
+        if (p.drag_offer && p.drag_offer != p.selected) {
+            auto *proxy = p.drag_offer->proxy;
+            wl_data_offer_destroy(proxy);
+            p.offers.erase(proxy);
+        }
+        p.drag_offer = nullptr;
+        p.drag_surface = nullptr;
+        p.drag_accepted = false;
+    }
+    static void drag_motion(void *d, wl_data_device *, uint32_t, wl_fixed_t x, wl_fixed_t y) {
+        static_cast<Impl *>(d)->drag_position(x, y);
+    }
+    static void drag_drop(void *d, wl_data_device *) {
+        auto &p = *static_cast<Impl *>(d);
+        if (p.drag_accepted && p.drag_source && p.drag_offer &&
+            wl_data_offer_get_version(p.drag_offer->proxy) >= 3) {
+            p.notify_drag(1); // Revalidate at drop; a refusal leaves the original tab intact.
+            wl_data_offer_finish(p.drag_offer->proxy);
+        }
+    }
     static void selection(void *d, wl_data_device *, wl_data_offer *o) {
         auto &p = *static_cast<Impl *>(d);
         ++p.selection_events;
         auto it = p.offers.find(o);
         p.selected = it == p.offers.end() ? nullptr : it->second.get();
         for (auto i = p.offers.begin(); i != p.offers.end();)
-            if (i->first != o) {
+            if (i->first != o && i->second.get() != p.drag_offer) {
                 wl_data_offer_destroy(i->first);
                 i = p.offers.erase(i);
             } else
@@ -201,6 +274,10 @@ struct WaylandClipboard::Impl {
     static void target(void *, wl_data_source *, const char *) {}
     static void send(void *d, wl_data_source *, const char *m, int32_t fd) {
         auto &s = *static_cast<Source *>(d);
+        if (s.drag) {
+            close(fd); // Same-process tab capabilities travel in the offered random MIME.
+            return;
+        }
         if (strcmp(m, "text/plain;charset=utf-8") && strcmp(m, "text/plain")) {
             close(fd);
             return;
@@ -218,7 +295,14 @@ struct WaylandClipboard::Impl {
         auto *p = s.owner;
         ++p->cancellations;
         wl_data_source_destroy(proxy);
-        if (p->source.get() == &s)
+        if (p->drag_source.get() == &s) {
+            auto it = p->surfaces.find(p->drag_origin);
+            if (it != p->surfaces.end())
+                it->second(3, 0, 0);
+            p->drag_source.reset();
+            p->drag_origin = nullptr;
+            p->drag_mime.clear();
+        } else if (p->source.get() == &s)
             p->source.reset();
     }
     static void source_event(void *, wl_data_source *) {}
@@ -254,6 +338,47 @@ WaylandClipboard::WaylandClipboard(wl_display *d) : impl_(std::make_unique<Impl>
     }
 }
 WaylandClipboard::~WaylandClipboard() = default;
+void WaylandClipboard::register_surface(wl_surface *surface,
+                                        std::function<bool(int, double, double)> callback) {
+    impl_->surfaces[surface] = std::move(callback);
+}
+void WaylandClipboard::unregister_surface(wl_surface *surface) {
+    impl_->surfaces.erase(surface);
+    if (impl_->drag_surface == surface)
+        impl_->drag_surface = nullptr;
+    if (impl_->drag_origin == surface)
+        impl_->drag_origin = nullptr;
+}
+bool WaylandClipboard::begin_drag(wl_surface *surface) {
+    auto &p = *impl_;
+    if (!p.manager || !p.device || p.drag_source || p.pointer_surface != surface ||
+        !p.pointer_serial || wl_data_device_manager_get_version(p.manager) < 3)
+        return false;
+    unsigned char random[16];
+    if (getrandom(random, sizeof(random), 0) != sizeof(random))
+        return false;
+    p.drag_mime = "application/x-aura-tab-";
+    constexpr char hex[] = "0123456789abcdef";
+    for (auto c : random) {
+        p.drag_mime += hex[c >> 4];
+        p.drag_mime += hex[c & 15];
+    }
+    p.drag_source = std::make_unique<Impl::Source>();
+    auto &s = *p.drag_source;
+    s.owner = &p;
+    s.drag = true;
+    s.proxy = wl_data_device_manager_create_data_source(p.manager);
+    static const wl_data_source_listener listener{Impl::target,    Impl::send,
+                                                  Impl::cancelled, Impl::source_event,
+                                                  Impl::cancelled, Impl::source_action};
+    wl_data_source_add_listener(s.proxy, &listener, &s);
+    wl_data_source_offer(s.proxy, p.drag_mime.c_str());
+    wl_data_source_set_actions(s.proxy, WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE);
+    p.drag_origin = surface;
+    wl_data_device_start_drag(p.device, s.proxy, surface, nullptr, p.pointer_serial);
+    wl_display_flush(p.display);
+    return true;
+}
 void WaylandClipboard::copy(const std::string &text) {
     auto &p = *impl_;
     if (!p.device || !p.serial || !p.focused || text.size() > limit)
@@ -361,6 +486,8 @@ namespace aura {
 std::string WaylandClipboard::report() const {
     const auto &p = *impl_;
     return "{\"focused\":" + std::string(p.focused ? "true" : "false") +
+           ",\"drag_active\":" + (p.drag_source ? "true" : "false") +
+           ",\"drag_accepted\":" + (p.drag_accepted ? "true" : "false") +
            ",\"read_pending\":" + (p.read_fd >= 0 ? "true" : "false") +
            ",\"selection_events\":" + std::to_string(p.selection_events) +
            ",\"cancellations\":" + std::to_string(p.cancellations) +

@@ -8,6 +8,8 @@ class LinuxWindow {
     virtual ~LinuxWindow() = default;
     virtual CefWindowHandle handle() const = 0;
     virtual std::uintptr_t native_id() const = 0;
+    virtual void cancel_composition() {}
+    virtual bool begin_tab_drag() { return false; }
     virtual void show() = 0;
     virtual void clear_callbacks() = 0;
     virtual std::optional<std::pair<int, int>> point_from(const LinuxWindow &source, int x,

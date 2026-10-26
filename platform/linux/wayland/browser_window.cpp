@@ -225,6 +225,8 @@ struct WaylandWindow::Impl {
         if (registry)
             wl_registry_destroy(registry);
         if (window) {
+            if (clipboard() && surface)
+                clipboard()->unregister_surface(surface);
             windows().erase(SDL_GetWindowID(window));
             SDL_DestroyWindow(window);
         }
@@ -379,11 +381,11 @@ struct WaylandWindow::Impl {
             k.native_key_code = e.key.raw + 8;
             k.modifiers = modifiers(e.key.mod);
             const bool consumed = callbacks.key && callbacks.key(k);
-            if (e.key.down)
-                suppress_text = consumed;
+            suppress_text = e.key.down && consumed;
             break;
         }
         case SDL_EVENT_TEXT_EDITING:
+            suppress_text = false; // IME commits are independent of the last shell shortcut.
             if (callbacks.preedit)
                 callbacks.preedit(e.edit.text, e.edit.start, e.edit.length);
             break;
@@ -453,11 +455,25 @@ WaylandWindow::WaylandWindow(int w, int h, double requested, WindowCallbacks hoo
     check(p.shm != nullptr);
     if (native_clipboard && !Impl::clipboard())
         Impl::clipboard() = std::make_unique<WaylandClipboard>(p.display);
+    if (native_clipboard) {
+        Impl::clipboard()->register_surface(p.surface, [&p](int stage, double x, double y) {
+            if (!p.callbacks.tab_drag)
+                return false;
+            auto point = p.point(x, y);
+            return p.callbacks.tab_drag(stage, point.x, point.y);
+        });
+    }
     p.resize();
 }
 WaylandWindow::~WaylandWindow() = default;
 CefWindowHandle WaylandWindow::handle() const { return 0; }
-std::uintptr_t WaylandWindow::native_id() const { return SDL_GetWindowID(impl_->window); }
+std::uintptr_t WaylandWindow::native_id() const {
+    return wl_proxy_get_id(reinterpret_cast<wl_proxy *>(impl_->surface));
+}
+void WaylandWindow::cancel_composition() { SDL_ClearComposition(impl_->window); }
+bool WaylandWindow::begin_tab_drag() {
+    return Impl::clipboard() && Impl::clipboard()->begin_drag(impl_->surface);
+}
 void WaylandWindow::show() {
     check(SDL_ShowWindow(impl_->window));
     impl_->visible = true;
@@ -486,6 +502,14 @@ void WaylandWindow::dispatch() {
     SDL_Event e;
     while (SDL_PollEvent(&e))
         Impl::deliver(e);
+    if (const int error = wl_display_get_error(impl_->display)) {
+        const wl_interface *type = nullptr;
+        uint32_t object = 0;
+        const auto code = wl_display_get_protocol_error(impl_->display, &type, &object);
+        throw std::runtime_error("Wayland connection failed: " + std::to_string(error) + " " +
+                                 (type ? type->name : "transport") + "#" + std::to_string(object) +
+                                 " code " + std::to_string(code));
+    }
     if (Impl::clipboard())
         Impl::clipboard()->poll();
 }

@@ -14,7 +14,11 @@ def main():
     parser=argparse.ArgumentParser();parser.add_argument('--scale',type=int,choices=(1,2),default=1);args=parser.parse_args()
     out=ROOT/'artifacts/wayland-smoke';out.mkdir(parents=True,exist_ok=True)
     module=out/'input.so';flags=subprocess.check_output(['pkg-config','--cflags','--libs','libweston-15'],text=True).split()
-    subprocess.run(['cc','-shared','-fPIC','-Wno-attributes',str(ROOT/'tests/fixtures/wayland_input.c'),'-o',str(module),*flags],check=True)
+    protocol=ROOT/'third_party/src/sdl3/wayland-protocols/text-input-unstable-v3.xml'
+    header=out/'text-input-v3-server.h';code=out/'text-input-v3-protocol.c'
+    subprocess.run(['wayland-scanner','server-header',str(protocol),str(header)],check=True)
+    subprocess.run(['wayland-scanner','private-code',str(protocol),str(code)],check=True)
+    subprocess.run(['cc','-shared','-fPIC','-Wno-attributes','-I'+str(out),str(ROOT/'tests/fixtures/wayland_input.c'),str(ROOT/'tests/fixtures/wayland_ime.c'),str(code),'-o',str(module),*flags],check=True)
     profile=out/f'profile-{args.scale}';shutil.rmtree(profile,ignore_errors=True);profile.mkdir();(profile/'profile.toml').write_text('language="en"\nfilter_updates=false\ncheck_updates=false\nrestore=false\nconfirm_quit=false\n')
     extension_id=seed_extension(profile)
     registry=profile/'extensions/registry.toml';registry.write_text(registry.read_text()+'pinned=true\n')
@@ -26,6 +30,10 @@ def main():
     with tempfile.TemporaryDirectory(prefix='aura-native-wayland-') as d,ThreadingHTTPServer(('127.0.0.1',0),partial(QuietHandler,directory=str(ROOT/'tests/fixtures/browser'))) as server:
         threading.Thread(target=server.serve_forever,daemon=True).start();runtime=Path(d)
         env={**os.environ,'XDG_RUNTIME_DIR':d,'WAYLAND_DISPLAY':'wayland-aura-native','XDG_SESSION_TYPE':'wayland','AURA_WINDOW_SYSTEM':'wayland','AURA_TEST_ISOLATED_DISPLAY':'1','AURA_BACKGROUND_TEST':'1','AURA_TEST_CONTROL_SOCKET':str(runtime/'control'),'LIBGL_ALWAYS_SOFTWARE':'1','DBUS_SESSION_BUS_ADDRESS':'unix:path=/nonexistent/aura-test-bus'};env.pop('DISPLAY',None);env.pop('WAYLAND_SOCKET',None)
+        for key_name in ('XDG_CONFIG_HOME','XDG_CACHE_HOME','XDG_DATA_HOME'):
+            env[key_name]=str(runtime/key_name.lower());Path(env[key_name]).mkdir()
+        env['LANG']='C.UTF-8'
+        env['HOME']=str(runtime/'home');Path(env['HOME']).mkdir()
         ctl=socket.socket(socket.AF_UNIX,socket.SOCK_DGRAM);ctl.bind(str(runtime/'client'));ctl.settimeout(3)
         def command(text):
             if weston and weston.poll() is not None:raise RuntimeError('Private Weston exited '+str(weston.returncode)+'; see Weston log')
@@ -168,14 +176,109 @@ def main():
                 popup_web(60,240);popup_web(60,160,273);menu_item('Paste')
                 wait_until(lambda:not state().get('extension_popup'),'Extension window.close did not close popup')
                 assert not state().get('menu_ui'),'Self-closed popup left a stale context menu'
+                # Actual text-input-v3 events pass through SDL and Chromium's native IME.
+                def ime(text,commit=False):
+                    wait_until(lambda:command('ime-status')!='not-enabled','Native text input was not enabled')
+                    assert command(('ime-commit ' if commit else 'ime-preedit ')+text)=='ok'
+                    time.sleep(.15)
+                web(60,120);key(107);ime('Привет 🌍')
+                wait_until(lambda:doc().get('text')=='NativeПривет 🌍','CEF IME preedit failed')
+                assert command('ime-cancel')=='ok';wait_until(lambda:doc().get('text')=='Native','CEF IME cancellation lost selected text')
+                key(30,(29,));ime('日本語');ime('日本語',True);wait_until(lambda:doc().get('text')=='日本語','CEF CJK IME commit failed')
+                key(38,(29,));wait_until(lambda:state()['address_input_bytes']>0,'Address did not receive focus');before=state()['address_input_bytes'];ime('Привет');rect=[int(v) for v in command('ime-status').split(',')];(out/f'ime-anchor-{args.scale}.json').write_text(json.dumps(rect));assert 96*factor<=rect[1]<=181*factor,('Native address candidate anchor is outside expanded editor',rect)
+                assert state()['address_input_bytes']==before,'Native preedit modified committed address'
+                ime('Привет',True);wait_until(lambda:state()['address_input_bytes']==len('Привет'.encode()),'Native address IME commit failed');key(1)
+                web(390,110);wait_until(lambda:state().get('dialog_count')==1,'IME native prompt did not open')
+                ime('Текст');ime('Текст',True);key(28);wait_until(lambda:doc().get('promptResult')=='Текст','Native prompt IME commit failed')
+                key(37,(29,));type_ascii('settings');key(28);wait_until(lambda:state().get('settings_ui'),'No IME settings panel')
+                sx,sy,sw,sh=state()['settings_ui']['search_bounds'];click((sx+sw/2)*factor,(sy+sh/2)*factor)
+                ime('language');assert state()['settings_ui']['search']=='','Native setting preedit changed saved input'
+                ime('language',True);wait_until(lambda:state()['settings_ui']['search']=='language','Native settings IME commit failed');key(38,(29,));key(1);wait_until(lambda:not state().get('settings_ui'),'Settings did not close')
+                # Restore the known page value; switching tabs cancels a live composition.
+                web(60,120);key(30,(29,));type_ascii('Native');wait_until(lambda:doc().get('text')=='Native','IME fixture reset failed')
+                key(107);ime('Draft');key(20,(29,));wait_until(lambda:len(state()['tabs'])==2,'IME tab switch failed');key(17,(29,));wait_until(lambda:len(state()['tabs'])==1,'IME test tab not closed')
+                assert doc().get('text')=='Native','Tab switch committed or erased preedit'
+                # The real GTK chooser runs as a separate native Wayland client.
+                key(37,(29,));type_ascii('diagnostics');key(28);wait_until(lambda:state().get('diagnostics_ui'),'No native diagnostics panel')
+                dx,dy,dw,dh=state()['diagnostics_ui']['save'];click((dx+dw/2)*factor,(dy+dh/2)*factor)
+                wait_until(lambda:state()['diagnostics_ui']['picker_pid']>0,'Native save chooser did not start')
+                picker=state()['diagnostics_ui']['picker_pid']
+                wait_until(lambda:command(f'focus-any {picker} 0')=='ok','No native Wayland GTK chooser surface')
+                time.sleep(.3);command('capture '+str(out/f'chooser-open-{args.scale}.ppm'));key(38,(29,));key(30,(29,));ime(str(runtime/'saved.json'),True);command('capture '+str(out/f'chooser-path-{args.scale}.ppm'));
+                from PIL import Image
+                chooser_width=Image.open(out/f'chooser-open-{args.scale}.ppm').width/args.scale
+                click(chooser_width-80,48)
+                wait_until(lambda:(runtime/'saved.json').exists(),'Native Wayland chooser did not save')
+                saved=json.loads((runtime/'saved.json').read_text());assert saved.get('product')=='Aura',saved
+                assert 'PRIVATE_PASSWORD' not in (runtime/'saved.json').read_text(),'Native chooser exported page data'
+                wait_until(lambda:state()['diagnostics_ui']['picker_pid']<=0,'Native chooser did not finish')
+                command(f'focus-surface {browser.pid} {state()["window"]}');time.sleep(.3)
+                click((dx+dw/2)*factor,(dy+dh/2)*factor);wait_until(lambda:state()['diagnostics_ui']['picker_pid']>0,'No second native chooser')
+                picker=state()['diagnostics_ui']['picker_pid'];wait_until(lambda:command(f'focus-any {picker} 0')=='ok','No second GTK surface');key(1)
+                wait_until(lambda:state()['diagnostics_ui']['picker_pid']<=0,'Native chooser cancellation did not finish')
+                command(f'focus-surface {browser.pid} {state()["window"]}');time.sleep(.3);key(1)
+                # Open a UTF-8 file through GTK without importing or touching real profiles.
+                bookmark_file=runtime/'данные.html'
+                bookmark_source='<!DOCTYPE NETSCAPE-Bookmark-file-1><DL><p><DT><A HREF="https://example.test/wayland">Wayland fixture</A></DL>'
+                bookmark_file.write_text(bookmark_source,encoding='utf-8');count=state()['bookmark_count']
+                key(37,(29,));type_ascii('import');key(28);wait_until(lambda:state().get('import_ui'),'No native import panel')
+                x,y,w,h=state()['import_ui']['browse'];click((x+w/2)*factor,(y+h/2)*factor)
+                wait_until(lambda:state()['import_ui']['picker_pid']>0,'Native open chooser did not start')
+                picker=state()['import_ui']['picker_pid'];wait_until(lambda:command(f'focus-any {picker} 0')=='ok','No native GTK open surface');time.sleep(.3)
+                command('capture '+str(out/f'chooser-import-{args.scale}.ppm'))
+                width=Image.open(out/f'chooser-import-{args.scale}.ppm').width/args.scale
+                key(38,(29,));key(30,(29,));ime(str(bookmark_file),True);command('capture '+str(out/f'chooser-import-path-{args.scale}.ppm'));key(28);time.sleep(.3);click(width-80,48)
+                wait_until(lambda:state()['import_ui']['ready'] and not state()['import_ui']['busy'],'Native UTF-8 open/preview failed')
+                assert state()['import_ui']['path']==str(bookmark_file) and state()['import_ui']['preview_bookmarks']==1,'Wrong native chosen file'
+                assert state()['bookmark_count']==count and bookmark_file.read_text()==bookmark_source,'Preview modified source/profile'
+                command(f'focus-surface {browser.pid} {state()["window"]}');time.sleep(.3);key(38,(29,));key(1)
+                # Native wl_data_device DND moves a live browser without global coordinates.
+                root_surface=state()['window'];cef_id=state()['tabs'][0]['cef_browser_id']
+                key(49,(29,));wait_until(lambda:len(state().get('windows',[]))==2,'No native drop target window')
+                child=next(w for w in state()['windows'] if w['window']!=root_surface)
+                assert command(f'focus-surface {browser.pid} {child["window"]}')=='ok';time.sleep(.3);key(1)
+                assert command('position 1400 0')=='ok'
+                assert command(f'focus-surface {browser.pid} {root_surface}')=='ok';time.sleep(.3)
+                assert command('position 0 0')=='ok';time.sleep(.3)
+                created=state()['cef_created_total']
+                assert command('move 90 200')=='ok';command('button 272 1');command('move 700 210')
+                wait_until(lambda:state()['presentation']['clipboard']['drag_active'],'No native drag source')
+                assert command(f'target-surface {browser.pid} {child["window"]}')=='ok';command('move 90 200');time.sleep(.4)
+                wait_until(lambda:state()['tab_drop_target']==child['window_uid'],'No native drop marker')
+                command('button 272 0')
+                def moved_window():
+                    return next((w for w in state()['windows'] if w['window']==child['window'] and any(t['cef_browser_id']==cef_id for t in w['tabs'])),None)
+                wait_until(moved_window,'Native tab DND did not transfer')
+                assert state()['cef_created_total']==created,'Native DND recreated the document'
+                assert any(json.loads(t['title']).get('area')=='Popup' for t in moved_window()['tabs'] if t['cef_browser_id']==cef_id),'Native DND lost the form'
+                wait_until(lambda:not state()['presentation']['clipboard']['drag_active'],'Native DND source did not finish')
+                # An incompatible private target must never receive a normal document.
+                command(f'focus-surface {browser.pid} {child["window"]}');time.sleep(.3);key(49,(29,42))
+                wait_until(lambda:len(state().get('windows',[]))==3,'No private DND target')
+                private=next(w for w in state()['windows'] if w['private_window'])
+                command(f'focus-surface {browser.pid} {private["window"]}');time.sleep(.3);key(1);command('position 1400 0')
+                command(f'focus-surface {browser.pid} {child["window"]}');time.sleep(.3);command('position 0 0');time.sleep(.3)
+                child=moved_window();index=next(i for i,t in enumerate(child['tabs']) if t['cef_browser_id']==cef_id)
+                row=next(r['bounds'] for r in child['sidebar'] if r['tab_index']==index)
+                command(f'move 90 {row[1]+20}');command('button 272 1');command(f'move 700 {row[1]+20}')
+                wait_until(lambda:state()['presentation']['clipboard']['drag_active'],'No second native drag')
+                command(f'target-surface {browser.pid} {private["window"]}');command('move 90 200');time.sleep(.4)
+                assert not state()['presentation']['clipboard']['drag_accepted'],'Private target accepted a normal tab'
+                command('button 272 0');wait_until(lambda:not state()['presentation']['clipboard']['drag_active'],'Refused DND did not cancel')
+                assert any(t['cef_browser_id']==cef_id for t in moved_window()['tabs']),'Refused DND removed the source'
+                command(f'focus-surface {browser.pid} {private["window"]}');command('close');wait_until(lambda:len(state()['windows'])==2,'Private target did not close')
+                command(f'focus-surface {browser.pid} {child["window"]}');command('close')
+                wait_until(lambda:len(state().get('windows',[]))==1,'Drop target did not close')
+                command(f'focus-surface {browser.pid} {root_surface}')
                 command('close');browser.wait(timeout=30);assert browser.returncode==0
                 final=json.loads(report.read_text());assert final['cef_created_total']==final['cef_closed_total'],final
         finally:
             for p in (peer,browser,weston):
                 if p and p.poll() is None:
-                    os.killpg(p.pid,signal.SIGTERM)
+                    if p is browser:os.kill(p.pid,signal.SIGTERM)
+                    else:os.killpg(p.pid,signal.SIGTERM)
                     try:p.wait(timeout=5)
                     except subprocess.TimeoutExpired:os.killpg(p.pid,signal.SIGKILL);p.wait()
             ctl.close();server.shutdown()
-    print('PASS native Wayland: actual CEF paint, protocol pointer/keys, password copy protection, independent SDL clipboard peer, Unicode/multiline round-trip, 17 MiB refusal without form loss, focus/tab preservation, page and extension popup clipboard keys/menus, protected password copy/cut, pending-paste popup/tab guards and balanced shutdown; no DISPLAY, XWayland or GPU')
+    print('PASS native Wayland: actual CEF paint, protocol pointer/keys, password copy protection, independent SDL clipboard peer, Unicode/multiline round-trip, 17 MiB refusal without form loss, focus/tab preservation, page and extension popup clipboard keys/menus, protected password copy/cut, pending-paste popup/tab guards, native tab DND without reload, private-target refusal, text-input-v3 IME, GTK save/cancel and balanced shutdown; no DISPLAY, XWayland or GPU')
 if __name__=='__main__':main()

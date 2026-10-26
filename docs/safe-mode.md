@@ -2,8 +2,7 @@
 
 ## English
 
-Available in the current development branch; the public preview installers have
-not been rebuilt for this feature.
+Available in Aura 0.5.0-preview.1.
 
 Open **Settings → General → Diagnostics**, or search `diagnostics` in **Ctrl+K**.
 Choose **Restart in safe mode**. The confirmation restores regular tabs and closes
@@ -55,8 +54,7 @@ not the shareable diagnostic report.
 
 ## Русский
 
-Функция доступна в текущей ветке разработки. Публичные установщики с ней пока
-не пересобраны.
+Функция доступна в Aura 0.5.0-preview.1.
 
 Откройте **Настройки → Основные → Диагностика** или найдите `diagnostics` через
 **Ctrl+K**. Нажмите **Перезапустить в безопасном режиме**. Обычные вкладки откроются

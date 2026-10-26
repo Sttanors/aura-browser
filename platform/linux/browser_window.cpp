@@ -28,6 +28,8 @@ BrowserWindow::BrowserWindow(int w, int h, double scale, WindowCallbacks hooks, 
         impl_->window = std::make_unique<X11Window>(w, h, scale, std::move(hooks), gpu, zoom);
 }
 BrowserWindow::~BrowserWindow() = default;
+void BrowserWindow::cancel_composition() { impl_->window->cancel_composition(); }
+bool BrowserWindow::begin_tab_drag() { return impl_->window->begin_tab_drag(); }
 CefWindowHandle BrowserWindow::handle() const { return impl_->window->handle(); }
 std::uintptr_t BrowserWindow::native_id() const { return impl_->window->native_id(); }
 std::optional<std::pair<int, int>> BrowserWindow::point_from(const BrowserWindow &s, int x,

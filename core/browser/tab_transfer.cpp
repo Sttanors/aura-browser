@@ -12,7 +12,7 @@ std::string BrowserController::tab_transfer_problem(int id, const BrowserControl
     const auto &t = **it;
     if (t.private_tab != target.private_window)
         return "Choose a window with the same browsing mode.";
-    if (t.closing || t.page.closed || t.creation_pending || t.popup_pending || t.sleep_pending ||
+    if (t.closing || t.page.closed || t.creation_pending || t.popup_pending || t.sleep_pending || t.discard_pending ||
         t.reader_pending || t.reading_pending || (t.browser && !t.site_tools_ready) ||
         (t.devtools && t.devtools->busy()) || !pending_popups_.empty() || !pending_.empty() ||
         tools_open || target.tools_open || !dialogs.empty() || !target.dialogs.empty() ||
@@ -127,6 +127,18 @@ void BrowserController::cancel_tab_drag() {
     }
 }
 void BrowserController::tab_drag(int id, int x, int y, bool release) {
+    if (window->backend() == "wayland") {
+        if (!release && !state_->tab_drop.source) {
+            int before = 0;
+            Rect marker;
+            if (ui->tab_drop_at(x, y, before, marker))
+                return; // Ordinary in-window reorder keeps using the existing gesture.
+            state_->tab_drop = {window_uid, 0, id, 0, {}};
+            if (!window->begin_tab_drag())
+                state_->tab_drop = {};
+        }
+        return;
+    }
     TabDrop next;
     for (auto *target : state_->windows) {
         if (target == this || target->quitting)
@@ -148,5 +160,52 @@ void BrowserController::tab_drag(int id, int x, int y, bool release) {
         next = {};
     state_->tab_drop = next;
     changed();
+}
+bool BrowserController::native_tab_drag(int stage, int x, int y) {
+    ++audit[stage == 0   ? "native_drag_motion"
+            : stage == 1 ? "native_drag_drop"
+            : stage == 2 ? "native_drag_leave"
+                         : "native_drag_end"];
+    auto &drop = state_->tab_drop;
+    auto source = std::find_if(state_->windows.begin(), state_->windows.end(),
+                               [&](auto *w) { return w->window_uid == drop.source; });
+    if (stage == 3) {
+        ui->cancel_tab_gesture();
+        drop = {};
+        changed();
+        return false;
+    }
+    if (stage == 2) {
+        if (drop.target == window_uid) {
+            drop.target = 0;
+            changed();
+        }
+        return false;
+    }
+    int before = 0;
+    Rect marker;
+    const bool found = source != state_->windows.end();
+    const bool hit = ui->tab_drop_at(x, y, before, marker);
+    const bool valid =
+        found && hit &&
+        (*source == this || (*source)->tab_transfer_problem(drop.tab, *this).empty());
+    if (!found)
+        ++audit["native_drag_missing_source"];
+    else if (!hit)
+        ++audit["native_drag_outside_tabs"];
+    else if (!valid)
+        ++audit["native_drag_guarded"];
+    drop.target = valid ? window_uid : 0;
+    drop.before = before;
+    drop.marker = marker;
+    changed();
+    if (stage == 1 && valid) {
+        auto *from = *source;
+        if (from == this)
+            return true; // Dropping back in the source window cancels the external move.
+        const int id = drop.tab;
+        return from->move_tab_to_window(id, *this, before);
+    }
+    return valid;
 }
 } // namespace aura

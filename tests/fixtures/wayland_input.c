@@ -22,12 +22,17 @@ extern void notify_button(struct weston_seat *, const struct timespec *, int32_t
 extern void notify_motion_absolute(struct weston_seat *, const struct timespec *,
                                    struct weston_coord_global);
 extern void notify_pointer_frame(struct weston_seat *);
+void aura_ime_init(struct weston_compositor *, struct weston_seat *);
+void aura_ime_finish(void);
+int aura_ime_command(const char *, char *, size_t);
 struct control {
     struct weston_compositor *c;
     struct weston_seat seat;
     int fd;
     pid_t pid;
     int index;
+    uint32_t resource;
+    int any_app;
     struct wl_event_source *source;
     struct wl_listener destroy;
 };
@@ -43,8 +48,11 @@ static struct weston_view *selected(struct control *p) {
         wl_client_get_credentials(wl_resource_get_client(v->surface->resource), &pid, &uid, &gid);
         const char *app =
             weston_desktop_surface_get_app_id(weston_surface_get_desktop_surface(v->surface));
-        if (pid == p->pid && app && !strcmp(app, "aura-browser") && i++ == p->index)
-            return v;
+        if (pid == p->pid && (p->any_app || (app && !strcmp(app, "aura-browser")))) {
+            if (p->resource ? wl_resource_get_id(v->surface->resource) == p->resource
+                            : i++ == p->index)
+                return v;
+        }
     }
     return NULL;
 }
@@ -60,11 +68,18 @@ static int command(int fd, uint32_t mask, void *data) {
     float x = 0, y = 0;
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
-    if (sscanf(b, "focus %d %d", &a, &c) == 2) {
+    const int any_app = sscanf(b, "focus-any %d %d", &a, &c) == 2;
+    const int by_surface = sscanf(b, "focus-surface %d %d", &a, &c) == 2;
+    const int target_only = !by_surface && sscanf(b, "target-surface %d %d", &a, &c) == 2;
+    if (aura_ime_command(b, reply, sizeof(reply))) {
+        /* Reply is produced by the isolated protocol test endpoint. */
+    } else if (by_surface || target_only || any_app || sscanf(b, "focus %d %d", &a, &c) == 2) {
         p->pid = a;
+        p->any_app = any_app;
         p->index = c;
+        p->resource = by_surface || target_only ? c : 0;
         struct weston_view *v = selected(p);
-        if (v) {
+        if (v && !target_only) {
             if (v->layer_link.layer) {
                 struct weston_layer *layer = v->layer_link.layer;
                 wl_list_remove(&v->layer_link.link);
@@ -74,6 +89,14 @@ static int command(int fd, uint32_t mask, void *data) {
             }
             weston_view_activate_input(v, &p->seat, WESTON_ACTIVATE_FLAG_CLICKED);
             weston_seat_set_keyboard_focus(&p->seat, v->surface);
+            weston_compositor_damage_all(p->c);
+        } else if (!v)
+            strcpy(reply, "missing");
+    } else if (sscanf(b, "position %f %f", &x, &y) == 2) {
+        struct weston_view *v = selected(p);
+        if (v) {
+            weston_view_set_position(v, (struct weston_coord_global){.c = weston_coord(x, y)});
+            weston_view_update_transform(v);
             weston_compositor_damage_all(p->c);
         } else
             strcpy(reply, "missing");
@@ -139,6 +162,7 @@ static void destroyed(struct wl_listener *l, void *data) {
     wl_event_source_remove(p->source);
     close(p->fd);
     wl_list_remove(&p->destroy.link);
+    aura_ime_finish();
     weston_seat_release(&p->seat);
     free(p);
 }
@@ -159,6 +183,7 @@ WL_EXPORT int wet_module_init(struct weston_compositor *c, int *argc, char *argv
     weston_seat_init(&p->seat, c, "aura-qa");
     weston_seat_init_keyboard(&p->seat, NULL);
     weston_seat_init_pointer(&p->seat);
+    aura_ime_init(c, &p->seat);
     p->source = wl_event_loop_add_fd(wl_display_get_event_loop(c->wl_display), p->fd,
                                      WL_EVENT_READABLE, command, p);
     p->destroy.notify = destroyed;

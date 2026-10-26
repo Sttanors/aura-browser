@@ -9,6 +9,8 @@ class WaylandWindow final : public LinuxWindow {
     ~WaylandWindow();
     CefWindowHandle handle() const;
     std::uintptr_t native_id() const;
+    bool begin_tab_drag();
+    void cancel_composition();
     void show();
     void clear_callbacks();
     std::optional<std::pair<int, int>> point_from(const LinuxWindow &source, int x, int y) const;

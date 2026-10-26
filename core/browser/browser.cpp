@@ -49,6 +49,8 @@ std::string tabs_json(const std::vector<std::unique_ptr<Tab>> &tabs) {
             << "\",\"private\":" << (t->private_tab ? "true" : "false")
             << ",\"pinned\":" << (t->pinned ? "true" : "false")
             << ",\"sleeping\":" << (t->sleeping ? "true" : "false")
+            << ",\"discarded\":" << (t->discarded ? "true" : "false")
+            << ",\"discard_pending\":" << (t->discard_pending ? "true" : "false")
             << ",\"creation_pending\":" << (t->creation_pending ? "true" : "false")
             << ",\"sleep_pending\":" << (t->sleep_pending ? "true" : "false")
             << ",\"media_video\":" << (t->media_video ? "true" : "false")
@@ -210,6 +212,7 @@ BrowserController::BrowserController(std::filesystem::path path, std::filesystem
     hooks.preedit = [this](const std::string &t, int start, int length) {
         ui->composition(t, start, length);
     };
+    hooks.tab_drag = [this](int stage, int x, int y) { return native_tab_drag(stage, x, y); };
     hooks.focus = [this](bool focus) {
         native_focus = focus;
         ++audit[focus ? "native_focus_gained" : "native_focus_lost"];
@@ -223,8 +226,10 @@ BrowserController::BrowserController(std::filesystem::path path, std::filesystem
             }
         }
         if (!focus) {
-            ui->composition("", 0, 0);
-            ui->cancel_tab_gesture();
+            ui->cancel_ime();
+            // Wayland DND temporarily removes keyboard focus while the compositor owns the grab.
+            if (window->backend() != "wayland" || !state_->tab_drop.source)
+                ui->cancel_tab_gesture();
             close_extension_popup(false);
         }
         if (auto p = extension_popup; p && p->browser)
@@ -482,11 +487,21 @@ void BrowserController::tick() {
                            : "Could not prepare reader view. Try again after the page loads."));
             changed();
         }
+    for (auto &t : tabs)
+        if (t->discard_pending && !t->discard_closing &&
+            now - t->discard_started > std::chrono::seconds(10)) {
+            t->discard_pending = false;
+            t->sleep_retry_after = now + std::chrono::seconds(30);
+        }
     if (profile.tab_sleep_minutes > 0 && !quitting)
         for (auto &t : tabs)
             if (can_sleep(*t) && now >= t->sleep_retry_after &&
-                now - t->inactive_since >= std::chrono::minutes(profile.tab_sleep_minutes))
-                sleep_tab(t->id, false);
+                now - t->inactive_since >= std::chrono::minutes(profile.tab_sleep_minutes)) {
+                if (profile.tab_sleep_mode == "unload")
+                    discard_tab(t->id, false);
+                else
+                    sleep_tab(t->id, false);
+            }
     if (!quitting)
         for (auto &t : tabs)
             if (t->creation_pending && !t->closing) {
@@ -777,6 +792,8 @@ void BrowserController::activate(int index, bool reveal_group) {
         if (index != active)
             old->inactive_since = std::chrono::steady_clock::now();
     }
+    if (index != active)
+        ui->cancel_ime();
     bool layout_changed = false;
     if (split_enabled()) {
         if (tabs[index]->workspace != workspace || tabs[index]->ntp)
@@ -813,6 +830,8 @@ void BrowserController::close_tab(int index, bool preserve_window) {
     if (index < 0 || index >= static_cast<int>(tabs.size()))
         return;
     auto &t = *tabs[index];
+    if (&t == current())
+        ui->cancel_ime();
     if (!preserve_window && (profile.quit_last_tab || private_window) && !quitting &&
         std::count_if(tabs.begin(), tabs.end(), [](auto &t) { return !t->closing; }) == 1) {
         request_quit();
@@ -1035,8 +1054,10 @@ void BrowserController::answer_dialog(bool accept) {
         if (merge.active && merge.waiting && merge.waiting->ref.window == window_uid &&
             merge.waiting->ref.tab == dialog.tab)
             stop_duplicate_merge("Closing was cancelled. Remaining duplicates were kept.");
-        if (auto t = tab(dialog.tab))
+        if (auto t = tab(dialog.tab)) {
             t->remember_on_close = false;
+            t->discard_pending = t->discard_closing = false;
+        }
         // Cancel the whole exit transaction, including restart/update intent.
         if (state_->exiting) {
             state_->exiting = false;
@@ -1438,6 +1459,7 @@ std::string BrowserController::report() const {
         << ",\"product\":\"Aura\",\"pid\":" << process_id() << ",\"window\":" << window->native_id()
         << ",\"window_uid\":" << window_uid
         << ",\"spelling_resources_ready\":" << (state_->spelling_resources_ready ? "true" : "false")
+        << ",\"tab_drop_source\":" << state_->tab_drop.source
         << ",\"tab_drop_target\":" << state_->tab_drop.target << ",\"cef_created\":" << created_
         << ",\"cef_closed\":" << closed_ << ",\"compositor\":\""
         << json_escape(window->compositor()) << "\",\"renderer\":\""
@@ -1583,12 +1605,39 @@ void BrowserController::browser_created(int id, CefRefPtr<CefBrowser> browser) {
 }
 void BrowserController::browser_closed(int id) {
     if (auto t = tab(id)) {
-        t->page.closed = true;
+        const bool unloaded = t->discard_pending && !t->closing && !quitting;
+        t->page.closed = !unloaded;
         if (t->devtools)
             t->devtools->close();
         t->devtools = nullptr;
         t->browser = nullptr;
         ++closed_;
+        if (unloaded) {
+            t->discarded = true;
+            t->discard_pending = t->discard_closing = false;
+            t->sleeping = t->sleep_pending = false;
+            t->site_tools_ready = false;
+            t->client = nullptr;
+            t->cef_parent.reset();
+            t->page.view = PaintBuffer{};
+            t->page.popup = PaintBuffer{};
+            t->page.popup_visible = false;
+            t->protection_contexts.clear();
+            t->spelling_contexts.clear();
+            t->audio_contexts.clear();
+            t->protection_script.clear();
+            t->spelling_script.clear();
+            t->permission_origins.clear();
+            t->selected_text.clear();
+            t->back = t->forward = false;
+            ++audit["tabs_unloaded"];
+            // Selection can race the asynchronous Chromium close callback.
+            if (tab_visible(id))
+                defer([this, id] {
+                    if (!quitting)
+                        wake_tab(id);
+                });
+        }
         changed();
     }
 }

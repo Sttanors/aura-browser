@@ -565,3 +565,11 @@ std::optional<std::pair<int, int>> BrowserWindow::point_from(const BrowserWindow
 namespace aura {
 std::string BrowserWindow::backend() const { return "win32"; }
 } // namespace aura
+
+namespace aura {
+bool BrowserWindow::begin_tab_drag() { return false; }
+} // namespace aura
+
+namespace aura {
+void BrowserWindow::cancel_composition() {}
+} // namespace aura

@@ -27,6 +27,7 @@ struct BrowserPreferences {
     std::string reader_font = "serif";
     std::string translation_provider = "google", translation_language = "interface";
     std::string tab_sleep_exceptions;
+    std::string tab_sleep_mode = "freeze";
     int theme = 0, default_zoom = 100, default_font_size = 16, minimum_font_size = 0,
         history_limit = 1000, history_days = 0, suggestion_limit = 6;
     bool restore = true, record_history = true, address_suggestions = true, quick_links = true,
