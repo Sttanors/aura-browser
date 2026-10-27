@@ -993,3 +993,19 @@ exceptions, commands и horizontal-tabs PASS. .run install/reinstall/remove PASS
 Linux-файлы загружены в draft, remote SHA-256 совпали. Канал версии 0.5.0-preview.1,
 sequence 8 подписан локально; передаётся только public metadata/signature.
 Публикация и независимая проверка всех публичных файлов выполняются далее.
+
+### 0.5.0 — публикация завершена
+
+Публичный prerelease [v0.5.0-preview.1](https://github.com/Sttanors/aura-browser/releases/tag/v0.5.0-preview.1)
+опубликован 27 октября 2026, 06:22:14 UTC. Тег указывает на 1735bf5; продуктовый
+исходник совпадает с проверенными 1687123/7a30983, позднее менялась только документация.
+Ровно 16 assets: семь установщиков/portable ZIP, семь sidecars, public metadata
+и Ed25519 signature. Все размеры и remote SHA-256 совпали с локальными файлами.
+Лишних иконок и исходного ZIP среди assets нет; Source Code создаёт GitHub.
+
+Независимый [public channel CI 40460745964](https://github.com/Sttanors/aura-browser/actions/runs/40460745964)
+**SUCCESS**: скачаны все семь публичных сборок, проверены подпись, identity/expiry,
+размеры и SHA-256. Закрытый ключ остался локальным. PR #1 слит; B1–B6 и все пункты
+1–15 включены в обновлённые установщики. Полный отчёт:
+docs/releases/0.5.0-preview.1-validation.md. Wayland остаётся opt-in preview,
+X11 по умолчанию; оговорённые ограничения CEF/платформ не скрываются.
