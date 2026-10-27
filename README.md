@@ -13,7 +13,7 @@ is available as an experimental preview. Windows uses Win32. Both versions share
 documentation and automated checks. The project owner directs the product and makes product decisions.
 AI assistance does not imply that the software is error-free. Aura is currently a preview.
 
-**Release 0.4.0 Preview 1** includes all 15 additions recorded in the
+Aura includes the original 15 additions recorded in the
 [feature progress journal](docs/features-progress.md) (Russian): workspaces, groups, containers, profiles,
 reader/translation tools, site controls, bookmark/session managers, screenshots and configurable hotkeys.
 
@@ -338,13 +338,11 @@ The optional legacy GPU harness requires bootstrap `--diagnostic-angle` and CMak
 
 ## Validation
 
-[Windows browser CI](https://github.com/Sttanors/aura-browser/actions/runs/39602429743)
-passed compilation, unit tests, native browser integration (Unicode input, settings,
-filter editing, multiple normal/private windows and relaunch), portable packaging and installer checks.
-The 0.5.0 release validation includes 170 CTest entries. Feature-specific GUI results
-and remaining limits are recorded in [the current progress journal](docs/improvements-progress.md);
-[the release journal](docs/browser-roadmap-progress.md) records earlier release checks.
-All Linux GUI checks use an isolated software display; physical GPU/monitor behavior is a separate check.
+Release checks are recorded in [the 0.5.0 validation report](docs/releases/0.5.0-preview.1-validation.md):
+Linux unit/integration tests, native Wayland, actual document unloading, installer lifecycle,
+and Windows build/native browser/portable/installer CI. The current suite has 170 CTest entries.
+[The progress journal](docs/improvements-progress.md) records checks for individual features.
+All Linux GUI checks use isolated software displays; physical GPU/monitor behavior is a separate check.
 
 ```bash
 python3 scripts/verify_browser.py --suite=all

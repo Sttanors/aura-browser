@@ -24,7 +24,7 @@ def main():
             env[key]=str(runtime/key.lower());Path(env[key]).mkdir()
         try:
             with (out/'process.log').open('w') as log:
-                process=subprocess.Popen(['cage','-m','extend','--',str(ROOT/'build/linux-x64-release/aura_browser'),f'--data-dir={profile}',f'--report={report}','--window-system=wayland','--software-rendering','--scale=1.25',f'--url=http://127.0.0.1:{server.server_port}/a.html'],env=env,stdout=log,stderr=log,start_new_session=True)
+                process=subprocess.Popen(['cage','-m','extend','--',os.environ.get('AURA_TEST_BINARY', str(ROOT/'build/linux-x64-release/aura_browser')),f'--data-dir={profile}',f'--report={report}','--window-system=wayland','--software-rendering','--scale=1.25',f'--url=http://127.0.0.1:{server.server_port}/a.html'],env=env,stdout=log,stderr=log,start_new_session=True)
                 def state():
                     if process.poll() is not None:raise RuntimeError('Cage/browser exited; see process.log')
                     try:return json.loads(report.read_text())

@@ -33,7 +33,7 @@
 | 12 | Доступ расширений к сайтам | Готово в рамках CEF: 167 CTest + Linux GUI PASS; Windows CI отдельно |
 | 13 | Безопасный режим | Готово: 170 CTest + isolated GUI; Windows CI PASS 915b748 |
 | 14 | Нативный Wayland | Готово как opt-in preview: Weston 100/200%, Cage, IME/chooser/DND PASS |
-| 15 | Выгрузка страниц из памяти | Реализовано, manual GUI PASS; timer и финальный релиз проверяются |
+| 15 | Выгрузка страниц из памяти | Готово: реальный CEF close/restore, защиты, фактический timer и RU UI 200% PASS |
 
 ### B1 — реализация
 
@@ -947,3 +947,33 @@ POST, iframe, WebAudio и private guards PASS, preference сохранена. В
 Логи: artifacts/release-next-validation/discard-manual.log, ctest-discard.log.
 Запущена проверка фактического пятиминутного timer. Версия следующей сборки:
 0.5.0-preview.1, update sequence 8; опубликованных пакетов этой версии пока нет.
+
+### 15.3. Автоматическая выгрузка — проверка
+
+PASS фактического таймера пять минут без подмены часов: до срока вкладка остаётся
+загруженной, после — CEF browser закрыт, JS остановлен, bitmap освобождён; выбор
+создаёт новый CEF/DOM. Повторно PASS весь ручной сценарий и balanced shutdown.
+Лог: artifacts/release-next-validation/discard-full.log. Проверка заняла реальное
+время ожидания. В tab transfer добавлен запрет переноса при pending unload.
+Для GUI проверки именно Debian release binary добавлен AURA_TEST_BINARY в
+Wayland/Cage и новый discard suite; отдельно проверяется RU choice при UI 200%.
+
+### 15.4. Настройка RU и заключительная сборка
+
+Русский выбор Freeze/Unload при **фактическом UI scale 200%** в окне 2000×1400
+PASS: опция включается мышью, сохраняется, текст переносится без наложения кнопок.
+Английский экран и Unloaded проверены ранее. Финальная host Release build и
+все 170 CTest PASS (8,65 с), Python tests PASS, git diff --check PASS.
+Пункты B1–B6 и 1–15 реализованы; далее проверяется распространение новой сборки.
+Начата сборка Debian 13 baseline и .deb/.rpm/Arch с установкой в контейнерах.
+
+### Подготовка 0.5.0 — пакетные проверки
+
+Debian 13 baseline Release build и 170 CTest PASS (11,23 с). Настоящая установка,
+переустановка и удаление .deb/.rpm/Arch в Debian/Arch/Fedora 44 PASS: зависимости,
+launcher/version, иконка, root ownership, миграция .run launcher и сохранность профиля.
+Версия runtime — 0.5.0-preview.1. Release executable прошёл discard manual/guards
+и RU UI 200%. Windows [40384331206](https://github.com/Sttanors/aura-browser/actions/runs/40384331206)
+на 7a30983 PASS полностью, включая GUI установленной версии. Заключительные
+изменения после 7a30983 касаются только тестовых инструментов и документации;
+продуктовый C++/JS не менялся. Пакетные Wayland/X11 GUI и публикация завершаются.

@@ -33,7 +33,7 @@ def main():
     with ThreadingHTTPServer(('127.0.0.1', 0), partial(Handler, directory=str(ROOT / 'tests/fixtures/browser'))) as server:
         threading.Thread(target=server.serve_forever, daemon=True).start()
         base = f'http://127.0.0.1:{server.server_port}'
-        for mode in (('manual',) if os.environ.get('AURA_DISCARD_MANUAL_ONLY') else ('manual', 'auto')):
+        for mode in (() if os.environ.get('AURA_DISCARD_UI_ONLY') else ('manual',) if os.environ.get('AURA_DISCARD_MANUAL_ONLY') else ('manual', 'auto')):
             profile = out / mode
             shutil.rmtree(profile, ignore_errors=True)
             profile.mkdir()
@@ -101,6 +101,26 @@ def main():
                     wait_until(lambda: not first()['discarded'] and first()['loaded'] and doc().get('token') != token, 'No fresh restored document', 30)
                     assert first()['cef_browser_id'] != cef_id
                     if mode == 'manual':
+                        def tab_menu(command_id):
+                            key_at(w, '3', 4)
+                            click_at(w, 90, 200, button=3)
+                            wait_until(lambda: bool(state().get('menu_ui')), 'No inactive tab menu')
+                            assert state()['active_tab'] == 2, 'Right click selected the background tab'
+                            item = next(x for x in state()['menu_ui'] if x['id'] == command_id)
+                            assert item['enabled']
+                            r = item['bounds']; click_at(w, r[0] + r[2] // 2, r[1] + r[3] // 2)
+                        tab_menu(1)
+                        wait_until(lambda: first()['pinned'], 'No pin')
+                        key_at(w, '3', 4); unload(); time.sleep(1)
+                        assert not first()['discarded'], 'Pinned document unloaded'
+                        tab_menu(1)
+                        wait_until(lambda: not first()['pinned'], 'No unpin')
+                        tab_menu(14)
+                        wait_until(lambda: state()['dialog_count'] == 1, 'No individual unload warning')
+                        key_at(w, 'Return')
+                        wait_until(lambda: first()['discarded'], 'Inactive tab menu did not unload')
+                        key_at(w, '1', 4)
+                        wait_until(lambda: first()['loaded'] and not first()['discarded'], 'No second restore', 30)
                         # addEventListener beforeunload isn't visible in an isolated world.
                         # Chromium's normal close path must refuse it without a background modal.
                         click_at(w, 352, 245)
@@ -166,7 +186,10 @@ def main():
                     try: return json.loads(report.read_text())
                     except (OSError, ValueError): return {}
                 wait_until(lambda: ui_state().get('presentation_frames', 0) > 0, 'No RU UI', 30)
-                w = ui_state()['window']; key_at(w, 'k', 4); type_text(w, 'tab_sleep_mode'); key_at(w, 'Return')
+                w = ui_state()['window']
+                subprocess.run(['xdotool', 'windowsize', str(w), '2000', '1400'], check=True)
+                wait_until(lambda: abs(ui_state()['interface']['applied'] - 200) < .1, 'No full 200% UI')
+                key_at(w, 'k', 4); type_text(w, 'tab_sleep_mode'); key_at(w, 'Return')
                 wait_until(lambda: (ui_state().get('settings_ui') or {}).get('search') == 'tab_sleep_mode', 'No RU mode setting')
                 control = next(x for x in ui_state()['settings_ui']['controls'] if x['id'] == 'tab_sleep_mode')
                 r = next(x for x in control['options'] if x['value'] == 'unload')['bounds']
@@ -182,7 +205,10 @@ def main():
                     try: p.wait(timeout=5)
                     except subprocess.TimeoutExpired: os.killpg(p.pid, signal.SIGKILL); p.wait()
         server.shutdown()
-    print('PASS actual document close, stopped JS, fresh CEF/DOM restore, dirty forms, beforeunload refusal, POST/frame/audio/private guards, mode persistence' + ('' if os.environ.get('AURA_DISCARD_MANUAL_ONLY') else ', actual five-minute automatic unload'))
+    if os.environ.get('AURA_DISCARD_UI_ONLY'):
+        print('PASS RU settings choice at actual UI 200%, persistence and clean shutdown')
+    else:
+        print('PASS actual document close, stopped JS, fresh CEF/DOM restore, dirty forms, beforeunload refusal, POST/frame/audio/private guards, mode persistence, RU UI 200%' + ('' if os.environ.get('AURA_DISCARD_MANUAL_ONLY') else ', actual five-minute automatic unload'))
 
 
 if __name__ == '__main__': main()

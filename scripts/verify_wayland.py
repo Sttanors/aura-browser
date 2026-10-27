@@ -25,7 +25,7 @@ def main():
     extension=profile/'extensions'/(extension_id+'-123')
     (extension/'popup.html').write_text('<!doctype html><meta charset="utf-8"><style>body{width:360px;height:300px;margin:0;background:#edf3ff}input,textarea{position:absolute;left:20px;width:300px;height:40px}#text{top:20px}#password{top:80px}#area{top:140px}</style><input id="text"><input id="password" type="password" value="POPUP_PASSWORD"><textarea id="area"></textarea><button id="selfclose" style="position:absolute;left:20px;top:220px;height:40px">Close popup later</button><script src="popup.js"></script>')
     (extension/'popup.js').write_text("setInterval(()=>document.title=JSON.stringify(Object.fromEntries(['text','password','area'].map(id=>[id,document.getElementById(id).value]))),100);document.getElementById('selfclose').onclick=()=>setTimeout(()=>window.close(),1500)")
-    binary=ROOT/'build/linux-x64-release/aura_browser';report=out/f'report-{args.scale}.json';report.unlink(missing_ok=True)
+    binary=Path(os.environ.get('AURA_TEST_BINARY', str(ROOT/'build/linux-x64-release/aura_browser')));report=out/f'report-{args.scale}.json';report.unlink(missing_ok=True)
     weston=browser=peer=None
     with tempfile.TemporaryDirectory(prefix='aura-native-wayland-') as d,ThreadingHTTPServer(('127.0.0.1',0),partial(QuietHandler,directory=str(ROOT/'tests/fixtures/browser'))) as server:
         threading.Thread(target=server.serve_forever,daemon=True).start();runtime=Path(d)
