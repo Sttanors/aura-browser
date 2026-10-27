@@ -977,3 +977,19 @@ launcher/version, иконка, root ownership, миграция .run launcher �
 на 7a30983 PASS полностью, включая GUI установленной версии. Заключительные
 изменения после 7a30983 касаются только тестовых инструментов и документации;
 продуктовый C++/JS не менялся. Пакетные Wayland/X11 GUI и публикация завершаются.
+
+### 0.5.0 — все проверки установщиков до публикации
+
+Release binary PASS: Weston 100/200%, Cage two outputs/1.25 client scale, browser,
+discard с меню фоновой вкладки и pinned protection, RU UI 200%. X11 sleep manual/
+exceptions, commands и horizontal-tabs PASS. .run install/reinstall/remove PASS
+в HOME с кириллицей, пробелами/$/%: версия 0.5.0-preview.1, hash, icon/desktop entry,
+сохранение профиля. В runtime ZIP совпадает binary hash и unload JS, есть SDL license
+и 23 notices, отсутствуют тестовые модули/peer, профиль и закрытый ключ.
+
+Финальный Windows [40459078612](https://github.com/Sttanors/aura-browser/actions/runs/40459078612)
+на 1687123 PASS полностью. Используются именно setup/ZIP из этого CI, их sidecar
+хеши проверены. PR #1 слит в main (75e83bf); продуктовый C++/JS совпадает с 1687123.
+Linux-файлы загружены в draft, remote SHA-256 совпали. Канал версии 0.5.0-preview.1,
+sequence 8 подписан локально; передаётся только public metadata/signature.
+Публикация и независимая проверка всех публичных файлов выполняются далее.
