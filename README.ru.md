@@ -12,28 +12,33 @@ Aura разрабатывается с существенной помощью �
 вкладки, адресную строку, навигацию и собственную новую вкладку. Весь интерфейс нарисован Skia;
 HTML используется только для посещаемых страниц.
 
-**Релиз 0.4.0 Preview 1** включает все 15 дополнений из [журнала функций](docs/features-progress.md):
+Aura включает исходные 15 дополнений из [журнала функций](docs/features-progress.md):
 рабочие пространства, группы, контейнеры, профили, чтение и перевод, управление
 данными и разрешениями сайтов, закладки, сессии, скриншоты и горячие клавиши.
 
 Windows-порт использует то же приложение и интерфейс, что и Linux: **Win32 + Skia raster + CEF OSR**.
 Статус его сборки и проверок виден в [GitHub Actions](https://github.com/Sttanors/aura-browser/actions).
-Готовые portable-сборки Windows и Linux доступны в [GitHub Releases](https://github.com/Sttanors/aura-browser/releases/tag/v0.4.0-preview.2).
+Готовые portable-сборки Windows и Linux доступны в [GitHub Releases](https://github.com/Sttanors/aura-browser/releases/tag/v0.5.0-preview.1).
 Для Windows скачайте `aura2-windows64.zip`, для Linux — `aura2-linux64.zip`.
 Распакуйте архив целиком и запустите **Aura2/aura_browser.exe**. Windows 10/11 x64.
 Доверенной подписи издателя Windows пока нет. Канал обновлений проверяется
 подписью Ed25519; результаты проверок релиза отмечаются в
 [журнале работ](docs/browser-roadmap-progress.md).
 
-Версия 0.4.0-preview.1 проверена в [Windows CI](https://github.com/Sttanors/aura-browser/actions/runs/39952387746):
-сборка, модульные тесты, настоящий браузер с вводом Unicode, редактором фильтров,
-обычными/приватными окнами и повторным запуском, portable-упаковка и установщик.
-Linux 0.4.0 Preview 1: 122 CTest и 33 GUI-набора; подробные результаты — в
-[журнале работ](docs/browser-roadmap-progress.md). Установщики 0.4.0-preview.1 содержат эти изменения.
+Результаты текущего выпуска: [проверки 0.5.0](docs/releases/0.5.0-preview.1-validation.md).
+GUI Linux проверяется на отдельных программных дисплеях, Windows — на временных CI runners.
+
+Версия **0.5.0 Preview 1** добавляет масштаб по сайту, правила контейнеров,
+менеджер загрузок и процессов, «Прочитать позже», поисковики, очистку дубликатов,
+дерево и горизонтальные вкладки, живой перенос между окнами, орфографию RU/EN,
+доступ расширений к сайтам, [безопасный режим](docs/safe-mode.md),
+[экспериментальный Wayland](docs/wayland.md) и [выгрузку документов](docs/tab-memory.md).
+X11/XWayland остаётся по умолчанию. Результаты записаны в
+[журнале улучшений](docs/improvements-progress.md).
 
 ## Установка в систему
 
-Все варианты доступны в [релизе](https://github.com/Sttanors/aura-browser/releases/tag/v0.4.0-preview.2).
+Все варианты доступны в [релизе](https://github.com/Sttanors/aura-browser/releases/tag/v0.5.0-preview.1).
 Установщики содержат браузер. Пакетный менеджер Linux может скачать системные зависимости.
 
 | Платформа | Файл | Запуск |
@@ -50,9 +55,9 @@ Linux 0.4.0 Preview 1: 122 CTest и 33 GUI-набора; подробные ре
 
 | Дистрибутив (x86_64) | Установка скачанного пакета | Удаление |
 |---|---|---|
-| Arch Linux / CachyOS (актуальный rolling) | `sudo pacman -U ./aura-browser-0.4.0rc2-1-x86_64.pkg.tar.gz` | `sudo pacman -R aura-browser` |
-| Debian 13+ | `sudo apt install './aura-browser_0.4.0-preview.2-1_amd64.deb'` | `sudo apt remove aura-browser` |
-| Fedora 44 | `sudo dnf install './aura-browser-0.4.0-preview.2-1.x86_64.rpm'` | `sudo dnf remove aura-browser` |
+| Arch Linux / CachyOS (актуальный rolling) | `sudo pacman -U ./aura-browser-0.5.0rc1-1-x86_64.pkg.tar.gz` | `sudo pacman -R aura-browser` |
+| Debian 13+ | `sudo apt install './aura-browser_0.5.0-preview.1-1_amd64.deb'` | `sudo apt remove aura-browser` |
+| Fedora 44 | `sudo dnf install './aura-browser-0.5.0-preview.1-1.x86_64.rpm'` | `sudo dnf remove aura-browser` |
 
 Пакетный менеджер установит необходимые системные библиотеки. Сборка использует ABI Debian 13,
 а не более новые библиотеки компьютера разработчика. Debian 12 не поддерживается.
@@ -382,7 +387,8 @@ Scriptlets, изменение CSP ответа, regex/XPath в процедур
 
 ## Сборка
 
-Нужны Clang с C++20, CMake 3.31+, Python 3.12+, pkg-config, заголовки X11/EGL/GLES3,
+Нужны Clang с C++20, CMake 3.31+, Python 3.12+, pkg-config, заголовки X11/Xext,
+Xpresent/Xrandr, EGL/GLES3, wayland-client/libxkbcommon и wayland-protocols,
 Rust / Cargo 1.88+, заголовки OpenSSL, libarchive и SQLite3,
 и runtime-библиотеки CEF для вашего дистрибутива. При первой сборке Cargo скачивает
 зафиксированные в `core/adblock/Cargo.lock` зависимости; повторная сборка использует локальный кэш. GN/Ninja скачиваются bootstrap-скриптом.
@@ -400,6 +406,13 @@ bootstrap не устанавливает системные пакеты. URL �
 Повторная сборка из кэша: `python3 scripts/bootstrap.py --offline --jobs 8`.
 
 ## Проверка настоящего браузера
+
+В текущей ветке разработки проходят 170 CTest; результаты отдельных функций
+и ограничения записаны в [журнале](docs/improvements-progress.md).
+Нативный Wayland проверяется отдельно: `python3 scripts/verify_wayland.py`
+и запуск с `--scale=2`. Нужны Weston 15 с libweston headers, C compiler и Pillow.
+Используется приватный Pixman compositor без DISPLAY/XWayland/GPU;
+[покрытие и ограничения](docs/wayland.md).
 
 ```bash
 python3 scripts/verify_browser.py --suite=all

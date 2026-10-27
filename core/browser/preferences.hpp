@@ -16,12 +16,18 @@ struct BrowserPreferences {
     bool ntp_image_theme = true;
     bool ntp_logo = true, ntp_subtitle_visible = true, ntp_link_icons = true;
     int ui_zoom = 100;
+    bool remember_site_zoom = true;
+    bool spellcheck = true;
+    std::string spellcheck_languages = "both";
+    bool tree_tabs = true;
+    std::string tab_layout = "vertical";
     int tab_sleep_minutes = 0;
     int split_percent = 50;
     int reader_font_size = 20, reader_width = 720;
     std::string reader_font = "serif";
     std::string translation_provider = "google", translation_language = "interface";
     std::string tab_sleep_exceptions;
+    std::string tab_sleep_mode = "freeze";
     int theme = 0, default_zoom = 100, default_font_size = 16, minimum_font_size = 0,
         history_limit = 1000, history_days = 0, suggestion_limit = 6;
     bool restore = true, record_history = true, address_suggestions = true, quick_links = true,

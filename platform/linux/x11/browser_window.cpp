@@ -137,7 +137,7 @@ int windows_key(KeySym key) {
 }
 } // namespace
 
-struct BrowserWindow::Impl {
+struct X11Window::Impl {
     WindowCallbacks callbacks;
     double scale, base_scale, requested_zoom = 1;
     std::string composition, graphics_renderer, clipboard;
@@ -444,7 +444,8 @@ struct BrowserWindow::Impl {
                        1);
             return true;
         }
-        if (y >= 30 || x < 240)
+        if (y >= 30 ||
+            (x < width - 144 && !(callbacks.caption ? callbacks.caption(x, y) : x >= 240)))
             return false;
         if (x > width - 48) {
             if (callbacks.close)
@@ -709,8 +710,8 @@ struct BrowserWindow::Impl {
     }
 };
 
-BrowserWindow::BrowserWindow(int width, int height, double scale, WindowCallbacks callbacks,
-                             bool accelerated, double interface_zoom)
+X11Window::X11Window(int width, int height, double scale, WindowCallbacks callbacks,
+                     bool accelerated, double interface_zoom)
     : impl_(std::make_unique<Impl>(scale, std::move(callbacks))) {
     auto &p = *impl_;
     p.requested_zoom = interface_zoom;
@@ -800,35 +801,42 @@ BrowserWindow::BrowserWindow(int width, int height, double scale, WindowCallback
     }
     XFlush(p.display);
 }
-void BrowserWindow::interface_zoom(double factor) {
+void X11Window::interface_zoom(double factor) {
     auto &p = *impl_;
     if (p.requested_zoom == factor)
         return;
     p.requested_zoom = factor;
     p.resize(p.pixel_width, p.pixel_height);
 }
-BrowserWindow::~BrowserWindow() = default;
-void BrowserWindow::hide() {
+X11Window::~X11Window() = default;
+void X11Window::hide() {
     XUnmapWindow(impl_->display, impl_->window);
     XFlush(impl_->display);
 }
-void BrowserWindow::show() {
+void X11Window::show() {
     XMapWindow(impl_->display, impl_->window);
     XFlush(impl_->display);
     // Present the initial buffer even when the Wayland compositor defers MapNotify.
     impl_->mapped = true;
     impl_->dirty = impl_->full_damage = true;
 }
-CefWindowHandle BrowserWindow::handle() const {
-    return impl_->window;
+void X11Window::activate() {
+    XMapRaised(impl_->display, impl_->window);
+    XEvent event{};
+    event.xclient.type = ClientMessage;
+    event.xclient.window = impl_->window;
+    event.xclient.message_type = XInternAtom(impl_->display, "_NET_ACTIVE_WINDOW", False);
+    event.xclient.format = 32;
+    event.xclient.data.l[0] = 1;
+    event.xclient.data.l[1] = CurrentTime;
+    XSendEvent(impl_->display, DefaultRootWindow(impl_->display), False,
+               SubstructureRedirectMask | SubstructureNotifyMask, &event);
+    XFlush(impl_->display);
 }
-std::uintptr_t BrowserWindow::native_id() const {
-    return handle();
-}
-void BrowserWindow::invalidate() {
-    impl_->dirty = impl_->full_damage = true;
-}
-void BrowserWindow::dispatch() {
+CefWindowHandle X11Window::handle() const { return impl_->window; }
+std::uintptr_t X11Window::native_id() const { return handle(); }
+void X11Window::invalidate() { impl_->dirty = impl_->full_damage = true; }
+void X11Window::dispatch() {
     while (XPending(impl_->display)) {
         XEvent e{};
         XNextEvent(impl_->display, &e);
@@ -840,10 +848,8 @@ void BrowserWindow::dispatch() {
     if (impl_->paste_callback && std::chrono::steady_clock::now() > impl_->paste_deadline)
         impl_->finish_paste(false);
 }
-void BrowserWindow::paint() {
-    impl_->paint();
-}
-void BrowserWindow::wait(int milliseconds) {
+void X11Window::paint() { impl_->paint(); }
+void X11Window::wait(int milliseconds) {
     if (XPending(impl_->display))
         return;
     pollfd fds[] = {{ConnectionNumber(impl_->display), POLLIN, 0}, {impl_->wake_fd, POLLIN, 0}};
@@ -854,18 +860,14 @@ void BrowserWindow::wait(int milliseconds) {
         }
     }
 }
-void BrowserWindow::invalidate(Rect damage) {
-    impl_->invalidate(damage);
-}
-int BrowserWindow::refresh_rate() {
-    return impl_->software->refresh_rate();
-}
-void BrowserWindow::wake() {
+void X11Window::invalidate(Rect damage) { impl_->invalidate(damage); }
+int X11Window::refresh_rate() { return impl_->software->refresh_rate(); }
+void X11Window::wake() {
     const std::uint64_t value = 1;
     while (write(impl_->wake_fd, &value, sizeof(value)) < 0 && errno == EINTR) {
     }
 }
-std::string BrowserWindow::presentation_stats() const {
+std::string X11Window::presentation_stats() const {
     const auto &p = *impl_;
     const auto percentile = [&](std::array<double, 240> costs) {
         std::sort(costs.begin(), costs.begin() + p.paint_cost_count);
@@ -882,14 +884,14 @@ std::string BrowserWindow::presentation_stats() const {
         << "}";
     return out.str();
 }
-void BrowserWindow::title(const std::string &text) {
+void X11Window::title(const std::string &text) {
     auto &p = *impl_;
     XStoreName(p.display, p.window, text.c_str());
     XChangeProperty(p.display, p.window, p.atom("_NET_WM_NAME"), p.atom("UTF8_STRING"), 8,
                     PropModeReplace, reinterpret_cast<const unsigned char *>(text.data()),
                     static_cast<int>(text.size()));
 }
-void BrowserWindow::caret(int x, int y) {
+void X11Window::caret(int x, int y) {
     auto &p = *impl_;
     if (!p.input_context)
         return;
@@ -900,7 +902,7 @@ void BrowserWindow::caret(int x, int y) {
         XFree(list);
     }
 }
-void BrowserWindow::cursor(int kind) {
+void X11Window::cursor(int kind) {
     auto &p = *impl_;
     kind = std::clamp(kind, 0, 2);
     if (kind == p.current_cursor)
@@ -912,13 +914,13 @@ void BrowserWindow::cursor(int kind) {
     XDefineCursor(p.display, p.window, p.cursors[kind]);
     p.current_cursor = kind;
 }
-void BrowserWindow::copy(const std::string &text) {
+void X11Window::copy(const std::string &text) {
     auto &p = *impl_;
     p.clipboard = text;
     XSetSelectionOwner(p.display, p.atom("CLIPBOARD"), p.window, CurrentTime);
     XFlush(p.display);
 }
-void BrowserWindow::paste(std::function<void(std::string)> callback) {
+void X11Window::paste(std::function<void(std::string)> callback) {
     auto &p = *impl_;
     if (XGetSelectionOwner(p.display, p.atom("CLIPBOARD")) == p.window) {
         callback(p.clipboard);
@@ -933,13 +935,53 @@ void BrowserWindow::paste(std::function<void(std::string)> callback) {
                       p.window, CurrentTime);
     XFlush(p.display);
 }
-std::string BrowserWindow::compositor() const {
-    return impl_->composition;
+std::string X11Window::compositor() const { return impl_->composition; }
+std::string X11Window::renderer() const { return impl_->graphics_renderer; }
+std::uint64_t X11Window::frames() const { return impl_->frame_count; }
+
+void X11Window::clear_callbacks() { impl_->callbacks = {}; }
+std::pair<int, int> X11Window::screen_point(int x, int y) const {
+    auto &p = *impl_;
+    int sx = 0, sy = 0;
+    ::Window child = 0;
+    XTranslateCoordinates(p.display, p.window, DefaultRootWindow(p.display),
+                          int(std::lround(x * p.scale)), int(std::lround(y * p.scale)), &sx, &sy,
+                          &child);
+    return {sx, sy};
 }
-std::string BrowserWindow::renderer() const {
-    return impl_->graphics_renderer;
-}
-std::uint64_t BrowserWindow::frames() const {
-    return impl_->frame_count;
+std::optional<std::pair<int, int>> X11Window::point_from(const LinuxWindow &source, int x,
+                                                         int y) const {
+    auto &p = *impl_;
+    if (!p.mapped)
+        return {};
+    if (!dynamic_cast<const X11Window *>(&source))
+        return {};
+    const auto screen = source.screen_point(x, y);
+    const auto root = DefaultRootWindow(p.display);
+    int dx = 0, dy = 0;
+    ::Window front = 0;
+    if (!XTranslateCoordinates(p.display, root, root, screen.first, screen.second, &dx, &dy,
+                               &front) ||
+        !front)
+        return {};
+    // A window manager may wrap the client in a native frame. Match its ancestor, too.
+    auto ancestor = p.window;
+    bool match = ancestor == front;
+    for (int depth = 0; !match && depth < 16 && ancestor && ancestor != root; ++depth) {
+        ::Window r = 0, parent = 0, *children = nullptr;
+        unsigned count = 0;
+        if (!XQueryTree(p.display, ancestor, &r, &parent, &children, &count))
+            break;
+        if (children)
+            XFree(children);
+        ancestor = parent;
+        match = ancestor == front;
+    }
+    if (!match || !XTranslateCoordinates(p.display, root, p.window, screen.first, screen.second,
+                                         &dx, &dy, &front))
+        return {};
+    if (dx < 0 || dy < 0 || dx >= p.pixel_width || dy >= p.pixel_height)
+        return {};
+    return std::pair<int, int>{int(dx / p.scale), int(dy / p.scale)};
 }
 } // namespace aura

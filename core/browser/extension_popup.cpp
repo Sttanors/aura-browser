@@ -1,5 +1,6 @@
 #include "common/config.hpp"
 #include "core/browser/browser.hpp"
+#include "core/browser/native_clipboard.hpp"
 #include "include/cef_context_menu_handler.h"
 #include "include/cef_frame.h"
 #include "include/cef_image.h"
@@ -7,6 +8,26 @@
 #include <algorithm>
 #include <cstring>
 namespace aura {
+void BrowserController::edit_extension_access(const std::string &id, const std::string &operation,
+                                              const std::string &value) {
+    if (safe_mode()) {
+        ui->toast(tr("Extensions are paused in safe mode."));
+        return;
+    }
+    if (quitting || private_window ||
+        (current() && (current()->private_tab || current()->container))) {
+        ui->toast(tr("Site access is managed from a regular tab in the default container."));
+        return;
+    }
+    const auto it = std::find_if(extensions.items.begin(), extensions.items.end(),
+                                 [&](const auto &e) { return e.id == id; });
+    if (it == extensions.items.end() || !it->enabled || !it->load_requested || it->pending_update) {
+        ui->toast(tr("Restart Aura to load the extension."));
+        return;
+    }
+    state_->extension_access.request(id, operation, value);
+    changed();
+}
 namespace {
 class ExtensionPopupClient final : public DiagnosticClient,
                                    public CefContextMenuHandler,
@@ -17,11 +38,100 @@ class ExtensionPopupClient final : public DiagnosticClient,
     CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override {
         return this;
     }
-    bool RunContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, CefRefPtr<CefContextMenuParams>,
-                        CefRefPtr<CefMenuModel>,
-                        CefRefPtr<CefRunContextMenuCallback> callback) override {
-        callback->Cancel();
+    bool clipboard_key(int code) {
+        if (!current() || (code != 'C' && code != 'X' && code != 'V'))
+            return false;
+        if (code == 'V') {
+            auto popup = popup_;
+            auto &owner = owner_;
+            const auto navigation = popup->navigation_serial;
+            paste_native_selection(owner, popup->browser, popup->browser->GetFocusedFrame(),
+                                   [&owner, popup, navigation] {
+                                       return owner.extension_popup == popup &&
+                                              !popup->page.closing &&
+                                              popup->navigation_serial == navigation &&
+                                              owner.dialogs.empty() && !owner.ui->editing &&
+                                              !owner.ui->find_open &&
+                                              owner.ui->visible_panel() == BrowserUi::None;
+                                   });
+        } else {
+            clipboard_query_ = true;
+            clipboard_cut_ = code == 'X';
+            clipboard_navigation_ = popup_->navigation_serial;
+            clipboard_deadline_ = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+            request_native_copy(popup_->browser);
+        }
         return true;
+    }
+    void OnBeforeContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
+                             CefRefPtr<CefContextMenuParams> p,
+                             CefRefPtr<CefMenuModel> model) override {
+        model->Clear();
+        if (clipboard_query_) {
+            clipboard_query_ = false;
+            if (current() && popup_->navigation_serial == clipboard_navigation_ &&
+                std::chrono::steady_clock::now() < clipboard_deadline_) {
+                ++owner_.audit["native_clipboard_queries"];
+                copy_native_selection(owner_, frame, p, clipboard_cut_);
+                owner_.changed();
+            }
+            return;
+        }
+        if (!current() || owner_.window->backend() != "wayland")
+            return;
+        menu_navigation_ = popup_->navigation_serial;
+        if (p->IsEditable()) {
+            model->AddItem(MENU_ID_UNDO, owner_.tr("Undo"));
+            model->SetEnabled(MENU_ID_UNDO, (p->GetEditStateFlags() & CM_EDITFLAG_CAN_UNDO) != 0);
+            model->AddItem(MENU_ID_CUT, owner_.tr("Cut"));
+            model->SetEnabled(MENU_ID_CUT, (p->GetEditStateFlags() & CM_EDITFLAG_CAN_CUT) != 0);
+        }
+        model->AddItem(MENU_ID_COPY, owner_.tr("Copy"));
+        model->SetEnabled(MENU_ID_COPY, (p->GetEditStateFlags() & CM_EDITFLAG_CAN_COPY) != 0);
+        if (p->IsEditable())
+            model->AddItem(MENU_ID_PASTE, owner_.tr("Paste"));
+        model->AddItem(MENU_ID_SELECT_ALL, owner_.tr("Select all"));
+    }
+    bool RunContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
+                        CefRefPtr<CefContextMenuParams> p, CefRefPtr<CefMenuModel> model,
+                        CefRefPtr<CefRunContextMenuCallback> callback) override {
+        if (!current() || !model->GetCount()) {
+            callback->Cancel();
+            return true;
+        }
+        owner_.close_menu();
+        owner_.menu_callback = callback;
+        for (size_t i = 0; i < model->GetCount(); ++i)
+            owner_.menu.push_back(
+                {model->GetCommandIdAt(i), model->GetLabelAt(i).ToString(), model->IsEnabledAt(i)});
+        owner_.menu_x = std::clamp(popup_->content.x + int(p->GetXCoord() / owner_.ui_scale), 8,
+                                   owner_.width - 250);
+        owner_.menu_y = std::clamp(popup_->content.y + int(p->GetYCoord() / owner_.ui_scale), 32,
+                                   std::max(32, owner_.height - int(owner_.menu.size()) * 32 - 12));
+        owner_.changed();
+        return true;
+    }
+    bool OnContextMenuCommand(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
+                              CefRefPtr<CefContextMenuParams> p, int command, EventFlags) override {
+        if (!current() || popup_->navigation_serial != menu_navigation_)
+            return true;
+        if (command == MENU_ID_COPY || command == MENU_ID_CUT) {
+            copy_native_selection(owner_, frame, p, command == MENU_ID_CUT);
+            return true;
+        }
+        if (command == MENU_ID_PASTE) {
+            if (p->IsEditable()) {
+                auto popup = popup_;
+                auto &owner = owner_;
+                const auto navigation = popup->navigation_serial;
+                paste_native_selection(owner, browser, frame, [&owner, popup, navigation] {
+                    return owner.extension_popup == popup && !popup->page.closing &&
+                           popup->navigation_serial == navigation && owner.dialogs.empty();
+                });
+            }
+            return true;
+        }
+        return false;
     }
     CefRefPtr<CefJSDialogHandler> GetJSDialogHandler() override {
         return this;
@@ -69,6 +179,9 @@ class ExtensionPopupClient final : public DiagnosticClient,
         });
     }
     void OnLoadStart(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, TransitionType) override {
+        ++popup_->navigation_serial;
+        if (owner_.extension_popup == popup_)
+            owner_.close_menu();
         if (frame->IsMain()) {
             popup_->page.loaded = false;
             popup_->page.failed = false;
@@ -138,12 +251,28 @@ class ExtensionPopupClient final : public DiagnosticClient,
     }
 
   private:
+    bool current() const {
+        return owner_.extension_popup == popup_ && popup_->browser && !popup_->page.closing &&
+               owner_.dialogs.empty() && !owner_.quitting;
+    }
+    bool clipboard_query_ = false, clipboard_cut_ = false;
+    uint64_t clipboard_navigation_ = 0, menu_navigation_ = 0;
+    std::chrono::steady_clock::time_point clipboard_deadline_;
     BrowserController &owner_;
     std::shared_ptr<ExtensionPopup> popup_;
     IMPLEMENT_REFCOUNTING(ExtensionPopupClient);
 };
 } // namespace
+bool BrowserController::extension_clipboard_key(int code) {
+    if (!extension_popup || !extension_popup->client || window->backend() != "wayland")
+        return false;
+    return static_cast<ExtensionPopupClient *>(extension_popup->client.get())->clipboard_key(code);
+}
 void BrowserController::open_extension_popup(size_t index) {
+    if (safe_mode()) {
+        ui->toast(tr("Extensions are paused in safe mode."));
+        return;
+    }
     if (index >= extensions.items.size() || quitting)
         return;
     const auto e = extensions.items[index];
@@ -229,6 +358,7 @@ void BrowserController::popup_closed(const std::shared_ptr<ExtensionPopup> &popu
     ++closed_;
     ++audit["extension_popups_closed"];
     if (extension_popup == popup) {
+        close_menu();
         extension_popup.reset();
         if (!quitting)
             if (auto t = current(); t && t->browser)
@@ -239,6 +369,8 @@ void BrowserController::popup_closed(const std::shared_ptr<ExtensionPopup> &popu
 void BrowserController::close_extension_popup(bool restore_focus) {
     if (!extension_popup)
         return;
+    close_menu();
+    ui->cancel_ime();
     auto popup = std::move(extension_popup);
     closing_popups_.push_back(popup);
     popup->page.closing = true;

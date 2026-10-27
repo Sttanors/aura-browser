@@ -1,8 +1,10 @@
 #include "common/config.hpp"
+#include "common/platform.hpp"
 #include "core/browser/browser.hpp"
 #include "include/cef_parser.h"
 #include "ui/browser_ui.hpp"
 #include <algorithm>
+#include <fstream>
 namespace aura {
 namespace {
 CefRefPtr<CefDictionaryValue> dictionary(const std::string &json) {
@@ -10,7 +12,175 @@ CefRefPtr<CefDictionaryValue> dictionary(const std::string &json) {
     return value && value->GetType() == VTYPE_DICTIONARY ? value->GetDictionary() : nullptr;
 }
 } // namespace
+void BrowserController::save_reading_article() {
+    if (safe_mode()) {
+        ui->toast(tr("This tool is paused in safe mode."));
+        return;
+    }
+    auto t = current();
+    if (!t || t->private_tab || private_window) {
+        ui->toast(tr("Private pages cannot be saved to the reading list."));
+        return;
+    }
+    if (!t->browser || !t->devtools || t->ntp || t->loading || !t->page.loaded ||
+        !(t->page.url.starts_with("http://") || t->page.url.starts_with("https://"))) {
+        ui->toast(tr("Open a loaded article on a website first."));
+        return;
+    }
+    if (t->reading_pending || t->reader_pending)
+        return;
+    const auto source = read_resource(resources / "vendor/readability.js") + "\n" +
+                        read_resource(resources / "reader/extract.js");
+    const int id = t->id;
+    const auto serial = t->navigation_serial;
+    const auto url = t->page.url;
+    const auto weak = std::weak_ptr<void>(callback_lifetime);
+    const auto generation = ++t->reading_generation;
+    t->reading_pending = true;
+    t->reader_started = std::chrono::steady_clock::now();
+    ui->toast(tr("Saving article…"));
+    changed();
+    auto valid = [this, weak, id, serial, generation]() -> Tab * {
+        if (weak.expired())
+            return nullptr;
+        auto t = tab(id);
+        return t && !t->closing && t->reading_pending && t->devtools &&
+                       t->navigation_serial == serial && t->reading_generation == generation
+                   ? t
+                   : nullptr;
+    };
+    auto fail = [this, valid] {
+        if (auto t = valid()) {
+            t->reading_pending = false;
+            ui->toast(tr("Could not save the article. Check the page and available disk space."));
+            changed();
+        }
+    };
+    t->devtools->call(
+        "Page.getFrameTree", "{}",
+        [this, source, valid, fail, url](bool ok, const std::string &json) {
+            auto t = valid();
+            if (!t)
+                return;
+            auto data = dictionary(json);
+            auto tree = ok && data ? data->GetDictionary("frameTree") : nullptr;
+            auto frame = tree ? tree->GetDictionary("frame") : nullptr;
+            if (!frame) {
+                fail();
+                return;
+            }
+            t->devtools->call(
+                "Page.createIsolatedWorld",
+                "{\"frameId\":" + json_quote(frame->GetString("id").ToString()) +
+                    ",\"worldName\":\"Aura Saved Article\"}",
+                [this, source, valid, fail, url](bool ok, const std::string &json) {
+                    auto t = valid();
+                    if (!t)
+                        return;
+                    auto data = dictionary(json);
+                    int context = ok && data ? data->GetInt("executionContextId") : 0;
+                    if (!context) {
+                        fail();
+                        return;
+                    }
+                    const auto expression = "(()=>{\n" + source +
+                                            "\nconst a=auraExtractArticle();if(a&&typeof "
+                                            "a==='object')delete a.textContent;return a;})()";
+                    t->devtools->call(
+                        "Runtime.evaluate",
+                        "{\"contextId\":" + std::to_string(context) +
+                            ",\"returnByValue\":true,\"expression\":" + json_quote(expression) +
+                            "}",
+                        [this, valid, fail, url](bool ok, const std::string &json) {
+                            auto t = valid();
+                            if (!t)
+                                return;
+                            auto data = dictionary(json);
+                            auto result = ok && data && !data->HasKey("exceptionDetails")
+                                              ? data->GetDictionary("result")
+                                              : nullptr;
+                            auto value = result ? result->GetDictionary("value") : nullptr;
+                            auto blocks = value ? value->GetList("blocks") : nullptr;
+                            if (!blocks || blocks->GetSize() > 2000) {
+                                fail();
+                                return;
+                            }
+                            SavedArticle a;
+                            a.url = url;
+                            a.title = value->GetString("title").ToString();
+                            a.byline = value->GetString("byline").ToString();
+                            for (size_t i = 0; i < blocks->GetSize(); ++i) {
+                                auto b = blocks->GetDictionary(i);
+                                if (!b) {
+                                    fail();
+                                    return;
+                                }
+                                a.blocks.push_back({b->GetString("tag").ToString(),
+                                                    b->GetString("text").ToString()});
+                            }
+                            if (!state_->reading_list.save(std::move(a))) {
+                                fail();
+                                return;
+                            }
+                            t->reading_pending = false;
+                            ++audit["reading_articles_saved"];
+                            ui->toast(tr("Article saved for offline reading."));
+                            changed();
+                        });
+                });
+        });
+}
+void BrowserController::open_reading_article(int id) {
+    const auto a = state_->reading_list.find(id);
+    if (!a)
+        return;
+    try {
+        const auto directory = profile.directory / "reading-copies";
+        std::filesystem::create_directories(directory);
+        const auto path = directory / (std::to_string(id) + ".html");
+        auto temporary = path;
+        temporary += ".tmp";
+        std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
+        file << offline_article_html(*a, profile.theme % 2 == 0, profile.reader_font_size,
+                                     profile.reader_width, profile.reader_font == "serif");
+        file.flush();
+        if (!file)
+            throw std::runtime_error("write");
+        file.close();
+        if (!file)
+            throw std::runtime_error("close");
+        replace_file(temporary, path);
+        std::string encoded;
+        for (unsigned char ch : utf8_path(std::filesystem::absolute(path))) {
+            if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
+                ch == '/' || ch == ':' || ch == '-' || ch == '_' || ch == '.')
+                encoded += ch;
+            else {
+                const char *hex = "0123456789ABCDEF";
+                encoded += '%';
+                encoded += hex[ch >> 4];
+                encoded += hex[ch & 15];
+            }
+        }
+#ifdef _WIN32
+        // generic_string provides forward slashes for file URLs.
+        for (size_t p = 0; (p = encoded.find("%5C", p)) != std::string::npos;)
+            encoded.replace(p, 3, "/");
+        encoded = "/" + encoded;
+#endif
+        ui->panel(BrowserUi::None);
+        new_tab("file://" + encoded, private_window, true, false, -1, 0, 0);
+        ++audit["reading_articles_opened"];
+        changed();
+    } catch (const std::exception &) {
+        ui->toast(tr("Could not open the offline copy. Check available disk space."));
+    }
+}
 void BrowserController::toggle_reader() {
+    if (safe_mode()) {
+        ui->toast(tr("This tool is paused in safe mode."));
+        return;
+    }
     auto t = current();
     if (!t || !t->devtools || !t->browser || t->ntp || t->closing)
         return;
@@ -20,7 +190,7 @@ void BrowserController::toggle_reader() {
                               ",\"expression\":\"globalThis.__auraReader?.close()\"}");
         return;
     }
-    if (t->reader_pending)
+    if (t->reader_pending || t->reading_pending)
         return;
     const auto &url = t->page.url;
     if ((!url.starts_with("http://") && !url.starts_with("https://")) || t->loading) {
@@ -28,7 +198,8 @@ void BrowserController::toggle_reader() {
         return;
     }
     auto source = read_resource(resources / "vendor/readability.js"),
-         view = read_resource(resources / "reader/view.js");
+         view = read_resource(resources / "reader/extract.js") + "\n" +
+                read_resource(resources / "reader/view.js");
     if (source.empty() || view.empty()) {
         ui->toast(tr("Reader files are missing. Reinstall Aura."));
         return;

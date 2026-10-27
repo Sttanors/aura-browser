@@ -14,6 +14,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from dependencies import ROOT
 from release_identity import read_identity
 from smoke_compatibility import Server as CompatServer, Handler as CompatHandler
+from smoke_extension_access import seed as seed_access_extension
 
 
 def main():
@@ -22,6 +23,8 @@ def main():
     user = ctypes.WinDLL('user32', use_last_error=True)
     user.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
     user.SendMessageW.restype = ctypes.c_ssize_t
+    user.ClientToScreen.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
+    user.ClientToScreen.restype = wintypes.BOOL
     user.IsWindow.argtypes = [wintypes.HWND]
     user.SetProcessDpiAwarenessContext.argtypes = [ctypes.c_void_p]
     user.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
@@ -30,6 +33,7 @@ def main():
     profile = output/'profile-кириллица'
     shutil.rmtree(profile, ignore_errors=True)
     profile.mkdir()
+    access_extension_id = seed_access_extension(profile)
     (profile/'profile.toml').write_text('language="ru"\nfilter_updates=false\ncheck_updates=false\nrestore=false\nblock_popups=true\n', encoding='utf-8')
     server = ThreadingHTTPServer(('127.0.0.1', 0), partial(SimpleHTTPRequestHandler, directory=str(ROOT/'tests/fixtures')))
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -40,7 +44,7 @@ def main():
     binary = Path(os.environ.get('AURA_TEST_BINARY', str(ROOT/'build/windows-x64-release/aura_browser.exe')))
     process = None
     try:
-        for launch in range(2):
+        for launch in range(3):
             report_path = output/f'report-{launch}.json'
             report_path.unlink(missing_ok=True)
             last_report = {}
@@ -59,6 +63,32 @@ def main():
                     if process.poll() is not None: raise RuntimeError(f'Browser exited ({process.returncode}): {message}')
                     time.sleep(.1)
                 raise RuntimeError(message)
+            if launch == 2:
+                # A separate safe launch uses the same real extension/profile as normal runs.
+                clean = output/'safe-diagnostics.json'
+                safe_url = f'http://127.0.0.1:{server.server_port}/browser/diagnostics.html?token=PRIVATE_URL_SENTINEL'
+                with (output/'safe-process.log').open('w') as safe_log:
+                    process = subprocess.Popen([str(binary), f'--data-dir={profile}', f'--report={report_path}', f'--diagnostic-report={clean}', '--safe-mode', '--gpu', f'--load-extension={profile/"extensions"/(access_extension_id+"-123")}', f'--url={safe_url}'], stdout=safe_log, stderr=subprocess.STDOUT)
+                    def safe_doc(s):
+                        try: return json.loads(s['tabs'][s['active_tab']]['title'])
+                        except (KeyError, IndexError, ValueError): return {}
+                    safe = wait(lambda s: bool(safe_doc(s).get('token')), 'Safe mode page JavaScript must work')
+                    assert safe['safe_mode'] and 'DIB' in safe['renderer']
+                    assert not safe_doc(safe)['extension'] and not safe_doc(safe)['dark']
+                    assert all(t['injection_scripts'] == 0 for t in safe['tabs'])
+                    assert all(e['enabled'] and not e['load_requested'] and not e['loaded'] for e in safe['extensions']['items'])
+                    assert not safe['extension_toolbar']
+                    wait(lambda s: clean.exists(), 'Sanitized diagnostics must be saved')
+                    text = clean.read_text(encoding='utf-8');sanitized = json.loads(text)
+                    assert sanitized['safe_mode'] and sanitized['renderer'] == 'raster'
+                    for marker in ('PRIVATE_', 'http:', str(profile), 'diagnostics.html'):
+                        assert marker not in text, 'Diagnostics leaked '+marker
+                    assert not (profile/'diagnostics/verbose.log').exists() and not (profile/'diagnostics/cef-verbose.log').exists()
+                    user.SendMessageW(safe['window'], 0x10, 0, 0)
+                    process.wait(timeout=30);assert process.returncode == 0
+                    final = read();assert final['cef_created_total'] == final['cef_closed_total']
+                    process = None
+                continue
             with (output/f'process-{launch}.log').open('w') as log:
                 process = subprocess.Popen([str(binary), f'--data-dir={profile}', f'--report={report_path}', '--software-rendering', f'--url={url}'], stdout=log, stderr=subprocess.STDOUT)
                 state = wait(lambda s: any(t.get('title') == 'Alpha' and t.get('loaded') and t.get('frames', 0) > 0 for t in s.get('tabs', [])), 'Alpha must load and paint')
@@ -147,6 +177,53 @@ def main():
                 assert api['passed'],api
                 assert api['capabilities']['initial_indexeddb']==('fictional-persistent-marker' if launch else ''),api
                 wait(lambda s:any(t.get('title')=='Compatibility PASS' and not t.get('failed') for t in s.get('tabs',[])),'Native report must acknowledge compatibility page')
+                # Real native spelling markers and replacement, with bundled dictionaries.
+                assert read()['spelling_resources_ready'] and not read()['spelling']['remote']
+                spelling_url=f'http://127.0.0.1:{server.server_port}/browser/spelling.html'
+                click(480,55);type_text(spelling_url)
+                user.SendMessageW(window,0x100,13,1);user.SendMessageW(window,0x101,13,1)
+                wait(lambda s:any(t.get('title')=='Spelling ready' and t.get('spelling_supported') for t in s.get('tabs',[])),'Spelling document API must initialize')
+                click_web(52,42);type_text('helllo ')
+                wait(lambda s:any(t.get('title')=='Spelling [helllo ]' for t in s.get('tabs',[])),'Spelling fixture must receive native input')
+                def spelling_context():
+                    current=read();factor=current['interface']['applied']/100
+                    scale=factor*current['interface']['device_scale']
+                    point=round((x+52/factor)*scale)|(round((y+42/factor)*scale)<<16)
+                    user.SendMessageW(window,0x204,2,point);user.SendMessageW(window,0x205,0,point)
+                # The marker arrives asynchronously after the input event.
+                deadline=time.monotonic()+30
+                while True:
+                    spelling_context()
+                    opened=wait(lambda s: bool(s.get('menu_ui')), 'Native spelling menu must open on Windows',timeout=5)
+                    suggestions=opened['menu_ui']
+                    (output/f'spelling-context-{launch}.json').write_text(json.dumps(suggestions,ensure_ascii=False,indent=2),encoding='utf-8')
+                    correction=next((i for i in suggestions if 200<=i['id']<=204 and i['label'].lower()=='hello'),None)
+                    if correction:break
+                    user.SendMessageW(window,0x100,27,1);user.SendMessageW(window,0x101,27,1)
+                    wait(lambda s: not s.get('menu_ui'), 'Native spelling menu must dismiss on Windows',timeout=5)
+                    if time.monotonic()>deadline:raise RuntimeError('Native English spelling suggestions missing on Windows; see spelling-context JSON')
+                    time.sleep(.3)
+                rect=correction['bounds'];click(rect[0]+rect[2]/2,rect[1]+rect[3]/2)
+                wait(lambda s:any(t.get('title')=='Spelling [hello ]' for t in s.get('tabs',[])),'Native spelling replacement must update the field')
+                # Chromium's real host permissions must also apply to Alloy OSR tabs.
+                access_url=f'http://127.0.0.1:{server.server_port}/browser/extension-access.html'
+                def access_page(injected):
+                    click(480,55);type_text(access_url)
+                    user.SendMessageW(window,0x100,13,1);user.SendMessageW(window,0x101,13,1)
+                    expected='Access injected' if injected else 'Access withheld'
+                    wait(lambda s:any(t.get('title')==expected for t in s.get('tabs',[])),'Runtime host permissions must enforce '+expected)
+                def access_mode(index):
+                    click(read()['interface']['width']-173,55)
+                    panel=wait(lambda s:bool(s.get('extensions_ui')),'Extension manager must open')['extensions_ui']['bounds']
+                    click(panel[0]+panel[2]-240,panel[1]+234)
+                    wait(lambda s:s.get('extension_access_ui') and not s['extension_access']['busy'] and s['extension_access']['available'],'Native host permissions must load')
+                    assert read()['extension_access']['id']==access_extension_id and not read()['extension_access']['service_visible']
+                    revision=read()['extension_access']['revision'];rect=read()['extension_access_ui']['modes'][index]
+                    click(rect[0]+rect[2]/2,rect[1]+rect[3]/2)
+                    wait(lambda s:not s['extension_access']['busy'] and s['extension_access']['revision']>=revision+2,'Host mode must apply')
+                    assert not read()['extension_access']['error']
+                    user.SendMessageW(window,0x100,27,1);user.SendMessageW(window,0x101,27,1)
+                access_page(True);access_mode(0);access_page(False);access_mode(2);access_page(True)
                 popup_url=f'http://127.0.0.1:{server.server_port}/browser/popup-parent.html'
                 click(480,55);type_text(popup_url)
                 user.SendMessageW(window,0x100,13,1);user.SendMessageW(window,0x101,13,1)
@@ -179,6 +256,26 @@ def main():
                 assert user.IsWindow(child['window']) and not child['private_window']
                 assert child['pid'] == group['pid'] and child['settings']['language'] == 'en'
                 assert child['settings']['ui_zoom'] == 125
+                if launch == 0:
+                    moved_browser = read()['tabs'][read()['active_tab']]['cef_browser_id']
+                    assert moved_browser
+                    created_total = read()['cef_created_total']
+                    active_id = read()['tabs'][read()['active_tab']]['id']
+                    row = next(r['bounds'] for r in read()['sidebar'] if r['tab_index'] >= 0 and read()['tabs'][r['tab_index']]['id'] == active_id)
+                    scale = read()['interface']['device_scale']*read()['interface']['applied']/100
+                    point = round((row[0]+row[2]/2)*scale) | (round((row[1]+row[3]/2)*scale)<<16)
+                    user.SendMessageW(window, 0x204, 2, point)
+                    user.SendMessageW(window, 0x205, 0, point)
+                    menu = wait(lambda s: any(i['id'] == 13 for i in (s.get('menu_ui') or [])), 'Tab menu must expose Move to window')
+                    rect = next(i['bounds'] for i in menu['menu_ui'] if i['id'] == 13)
+                    click(rect[0]+rect[2]//2, rect[1]+rect[3]//2)
+                    chooser = wait(lambda s: any(i['kind'] == 'window_move' for i in (s.get('commands_ui') or {}).get('items', [])), 'Window chooser must open')
+                    item = next(i for i in chooser['commands_ui']['items'] if i['id'] == str(child['window_uid']))
+                    assert item['enabled']
+                    rect=item['bounds'];click(rect[0]+rect[2]//2, rect[1]+rect[3]//2)
+                    group = wait(lambda s: any(w['window'] == child['window'] and any(t['cef_browser_id'] == moved_browser for t in w['tabs']) for w in s.get('windows', [])), 'Win32 transfer must retain the CEF browser')
+                    assert all(t['cef_browser_id'] != moved_browser for t in group['tabs'])
+                    assert group['cef_created_total'] == created_total, 'Transfer must not recreate a page'
                 user.SendMessageW(child['window'], 0x10, 0, 0)
                 wait(lambda s: len(s.get('windows', [])) == 1, 'Closing a child must keep the root open')
                 forwarded = subprocess.run([str(binary), f'--data-dir={profile}', f'--url={url}', '--software-rendering'], capture_output=True, timeout=45)
@@ -188,6 +285,40 @@ def main():
                 assert child['pid'] == group['pid']
                 user.SendMessageW(child['window'], 0x10, 0, 0)
                 wait(lambda s: len(s.get('windows', [])) == 1, 'Forwarded window must close independently')
+                if launch == 1:
+                    # Test the new caption callback through Win32 itself, not just synthetic clicks.
+                    before_created = read()['cef_created_total']
+                    def set_layout(value):
+                        click(read()['interface']['width']-53, 55)
+                        panel = wait(lambda s: bool(s.get('settings_ui')), 'Layout settings must open')
+                        search = panel['settings_ui']['search_bounds']
+                        click(search[0]+search[2]-20, search[1]+search[3]//2)
+                        type_text('tab_layout')
+                        panel = wait(lambda s: (s.get('settings_ui') or {}).get('search') == 'tab_layout', 'Layout search must accept text')
+                        control = next(c for c in panel['settings_ui']['controls'] if c['id'] == 'tab_layout')
+                        rect = next(o['bounds'] for o in control['options'] if o['value'] == value)
+                        click(rect[0]+rect[2]//2, rect[1]+rect[3]//2)
+                        wait(lambda s: bool(s.get('tab_strip')) == (value == 'horizontal'), 'Layout must reflow the native window')
+                        user.SendMessageW(window, 0x100, 27, 1)
+                        user.SendMessageW(window, 0x101, 27, 1)
+                        wait(lambda s: s['panel'] == 0, 'Settings must close')
+                    set_layout('horizontal')
+                    def native_hit(rect):
+                        info = read()['interface']
+                        factor = info['device_scale']*info['applied']/100
+                        point = wintypes.POINT(round((rect[0]+rect[2]/2)*factor), round((rect[1]+rect[3]/2)*factor))
+                        assert user.ClientToScreen(window, ctypes.byref(point))
+                        return user.SendMessageW(window, 0x84, 0, (point.x & 0xffff) | ((point.y & 0xffff) << 16))
+                    strip = read()['tab_strip']
+                    assert native_hit(strip['caption']) == 2, 'Blank strip must be HTCAPTION'
+                    assert native_hit(strip['add']) == 1, 'New-tab button must remain HTCLIENT'
+                    for item in strip['items']:
+                        assert native_hit(item['bounds']) == 1, 'Tabs must not become draggable window captions'
+                    target = next(item for item in strip['items'] if item['id'])
+                    rect = target['bounds'];click(rect[0]+rect[2]//2, rect[1]+rect[3]//2)
+                    wait(lambda s: s['tabs'][s['active_tab']]['id'] == target['id'], 'Native top-tab click must select its page')
+                    assert read()['cef_created_total'] == before_created, 'Layout changes must not recreate pages'
+                    set_layout('vertical')
                 click(80, 35)
                 menu = wait(lambda s: any(item['id'] == 2 for item in (s.get('menu_ui') or [])), 'Aura menu must expose New private window')
                 bounds = next(item['bounds'] for item in menu['menu_ui'] if item['id'] == 2)
@@ -204,7 +335,7 @@ def main():
                 assert final['cef_created_total'] == final['cef_closed_total'], final
                 assert (profile/'profile.toml').is_file(), 'Profile must persist'
                 process = None
-        (output/'PASS.txt').write_text('PASS: full Win32 browser, Chromium page, Unicode path/input, pointer navigation, native dialog, English, interface scaling, adblock, real API/media/CSP/CORS/origin and IndexedDB persistence, profile replacement and balanced CEF shutdown.\n')
+        (output/'PASS.txt').write_text('PASS: full Win32 browser, Chromium page, Unicode path/input, pointer navigation, native dialog, English, interface scaling, adblock, real API/media/CSP/CORS/origin and IndexedDB persistence, profile replacement, horizontal/vertical reflow, Win32 HTCLIENT/HTCAPTION separation, live cross-window transfer and balanced CEF shutdown.\n')
     finally:
         if process and process.poll() is None:
             subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'], check=False)

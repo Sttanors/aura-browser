@@ -1,6 +1,7 @@
 #include "core/browser/browser.hpp"
 #include "aura/design_tokens.hpp"
 #include "common/config.hpp"
+#include "common/diagnostics.hpp"
 #include "common/platform.hpp"
 #include "common/update_key.hpp"
 #include "core/browser/client.hpp"
@@ -8,6 +9,7 @@
 #include "include/cef_cookie.h"
 #include "include/cef_frame.h"
 #include "include/cef_image.h"
+#include "include/cef_parser.h"
 #include "ui/browser_ui.hpp"
 #include <algorithm>
 #include <cerrno>
@@ -47,6 +49,8 @@ std::string tabs_json(const std::vector<std::unique_ptr<Tab>> &tabs) {
             << "\",\"private\":" << (t->private_tab ? "true" : "false")
             << ",\"pinned\":" << (t->pinned ? "true" : "false")
             << ",\"sleeping\":" << (t->sleeping ? "true" : "false")
+            << ",\"discarded\":" << (t->discarded ? "true" : "false")
+            << ",\"discard_pending\":" << (t->discard_pending ? "true" : "false")
             << ",\"creation_pending\":" << (t->creation_pending ? "true" : "false")
             << ",\"sleep_pending\":" << (t->sleep_pending ? "true" : "false")
             << ",\"media_video\":" << (t->media_video ? "true" : "false")
@@ -56,9 +60,16 @@ std::string tabs_json(const std::vector<std::unique_ptr<Tab>> &tabs) {
             << ",\"reader_ui\":" << t->reader_ui
             << ",\"selection_bytes\":" << t->selected_text.size()
             << ",\"buffer_bytes\":" << t->page.view.bytes().size() + t->page.popup.bytes().size()
+            << ",\"injection_scripts\":"
+            << (!t->protection_script.empty() + !t->spelling_script.empty())
+            << ",\"spelling_supported\":" << (t->spelling_supported ? "true" : "false")
+            << ",\"cef_browser_id\":" << (t->browser ? t->browser->GetIdentifier() : 0)
             << ",\"container\":" << t->container << ",\"workspace\":" << t->workspace
+            << ",\"parent\":" << t->parent
+            << ",\"tree_collapsed\":" << (t->tree_collapsed ? "true" : "false")
             << ",\"group\":" << t->group << ",\"loaded\":" << (t->page.loaded ? "true" : "false")
             << ",\"failed\":" << (t->page.failed ? "true" : "false")
+            << ",\"process_ended\":" << (t->process_ended ? "true" : "false")
             << ",\"http_status\":" << t->page.http_status << ",\"frame_rate\":"
             << (t->browser ? t->browser->GetHost()->GetWindowlessFrameRate() : 0)
             << ",\"popup_visible\":" << (t->page.popup_visible ? "true" : "false")
@@ -143,8 +154,9 @@ class ToolsClient final : public CefClient, public CefLifeSpanHandler {
     IMPLEMENT_REFCOUNTING(ToolsClient);
 };
 } // namespace
-BrowserState::BrowserState(const std::filesystem::path &path)
-    : profile(path), profiles(path, profile.profiles_root), extensions(path), updates(path),
+BrowserState::BrowserState(const std::filesystem::path &path, bool diagnostic_safe)
+    : safe_mode(diagnostic_safe), profile(path), reading_list(path),
+      profiles(path, profile.profiles_root), extensions(path), updates(path),
       passwords(path / "passwords.aura") {
     previous_windows = profile.windows;
     if (previous_windows.empty() && !profile.session.empty())
@@ -154,12 +166,13 @@ BrowserState::BrowserState(const std::filesystem::path &path)
 }
 BrowserController::BrowserController(std::filesystem::path path, std::filesystem::path font,
                                      double factor, bool accelerated,
-                                     std::shared_ptr<BrowserState> shared, bool private_mode)
-    : state_(shared ? std::move(shared) : std::make_shared<BrowserState>(path)),
-      profile(state_->profile), private_window(private_mode), scale(factor),
-      extensions(state_->extensions), updates(state_->updates), importer(state_->importer),
-      passwords(state_->passwords), request_policy(state_->policy),
-      private_context_(state_->private_context) {
+                                     std::shared_ptr<BrowserState> shared, bool private_mode,
+                                     bool diagnostic_safe)
+    : state_(shared ? std::move(shared) : std::make_shared<BrowserState>(path, diagnostic_safe)),
+      profile(state_->profile), private_window(private_mode), downloads(state_->downloads),
+      window_uid(++state_->next_window_uid), scale(factor), extensions(state_->extensions),
+      updates(state_->updates), importer(state_->importer), passwords(state_->passwords),
+      request_policy(state_->policy), private_context_(state_->private_context) {
     resources = font.parent_path().parent_path();
     if (!request_policy->protection)
         request_policy->protection = std::make_shared<Protection>();
@@ -179,14 +192,30 @@ BrowserController::BrowserController(std::filesystem::path path, std::filesystem
         resize_extension_popup();
         resize_pages();
     };
+    hooks.caption = [this](int x, int y) { return ui->caption_hit(x, y); };
     hooks.pointer = [this](const PointerInput &p) {
         if (p.kind == PointerInput::Down)
             ++audit["native_pointer_down"];
         ui->pointer(p);
     };
-    hooks.key = [this](const CefKeyEvent &key) { return ui->key(key); };
-    hooks.text = [this](const std::string &text) { ui->text(text); };
+    hooks.key = [this](const CefKeyEvent &key) {
+        if (key.type == KEYEVENT_RAWKEYDOWN)
+            ++audit["native_key_down"];
+        return ui->key(key);
+    };
+    hooks.text = [this](const std::string &text) {
+        if (window && window->backend() == "wayland")
+            ui->commit_composition(text);
+        else
+            ui->text(text);
+    };
+    hooks.preedit = [this](const std::string &t, int start, int length) {
+        ui->composition(t, start, length);
+    };
+    hooks.tab_drag = [this](int stage, int x, int y) { return native_tab_drag(stage, x, y); };
     hooks.focus = [this](bool focus) {
+        native_focus = focus;
+        ++audit[focus ? "native_focus_gained" : "native_focus_lost"];
         if (focus && window) {
             try {
                 state_->profiles.reload();
@@ -196,19 +225,26 @@ BrowserController::BrowserController(std::filesystem::path path, std::filesystem
                 // Keep the current profile usable if another process damaged the catalog.
             }
         }
-        if (!focus)
+        if (!focus) {
+            ui->cancel_ime();
+            // Wayland DND temporarily removes keyboard focus while the compositor owns the grab.
+            if (window->backend() != "wayland" || !state_->tab_drop.source)
+                ui->cancel_tab_gesture();
             close_extension_popup(false);
+        }
         if (auto p = extension_popup; p && p->browser)
             p->browser->GetHost()->SetFocus(focus);
         else if (auto t = current(); t && t->browser)
             t->browser->GetHost()->SetFocus(focus && !ui->editing);
     };
     hooks.close = [this] { request_quit(); };
-    window = std::make_unique<BrowserWindow>(width, height, scale, std::move(hooks), accelerated,
+    window = std::make_shared<BrowserWindow>(width, height, scale, std::move(hooks), accelerated,
                                              profile.ui_zoom / 100.0);
     state_->windows.push_back(this);
 }
 BrowserController::~BrowserController() {
+    cancel_tab_drag();
+    window->clear_callbacks();
     callback_lifetime.reset();
     std::erase(state_->windows, this);
 }
@@ -220,9 +256,11 @@ void BrowserController::apply_settings(bool update_zoom, bool propagate) {
         for (auto *other : state_->windows)
             if (other != this && !other->quitting)
                 other->apply_settings(update_zoom, false);
+    const bool layout_changed = ui->sync_tab_layout();
     window->interface_zoom(profile.ui_zoom / 100.0);
     close_menu();
-    request_policy->protection->configure(profile.adblock, profile.cosmetic_filtering,
+    request_policy->protection->configure(profile.adblock && !safe_mode(),
+                                          profile.cosmetic_filtering && !safe_mode(),
                                           profile.adblock_exceptions);
     request_policy->do_not_track = profile.do_not_track;
     request_policy->send_referrer = profile.send_referrer;
@@ -238,6 +276,7 @@ void BrowserController::apply_settings(bool update_zoom, bool propagate) {
         if (t->sleeping && site_exception(t->page.url, profile.tab_sleep_exceptions))
             wake_tab(t->id);
         update_site_tools(*t);
+        update_spelling(*t);
         if (t->browser && (t->private_tab || t->container))
             configure_font_preferences(t->browser->GetHost()->GetRequestContext());
         if (t->browser &&
@@ -248,12 +287,13 @@ void BrowserController::apply_settings(bool update_zoom, bool propagate) {
             t->page.title = tr(t->private_tab ? "Private tab" : "New tab");
         if (update_zoom) {
             t->zoom = std::log(profile.default_zoom / 100.0) / std::log(1.2);
-            if (t->browser)
-                t->browser->GetHost()->SetZoomLevel(t->zoom);
+            apply_site_zoom(*t);
         }
     }
-    if (split_enabled())
+    if (layout_changed || split_enabled())
         resize_pages();
+    if (layout_changed)
+        resize_extension_popup();
     if (current())
         update_window_title();
     changed(true);
@@ -291,7 +331,13 @@ std::vector<int> BrowserController::visible_tabs(bool include_closed) const {
     return result;
 }
 void BrowserController::cycle_tab(int direction) {
-    const auto visible = visible_tabs();
+    auto visible = visible_tabs();
+    if (profile.tree_tabs) {
+        visible.clear();
+        for (const auto &r : tree_rows(false))
+            if (tabs[r.index]->workspace == workspace)
+                visible.push_back(r.index);
+    }
     if (visible.empty())
         return;
     const auto it = std::find(visible.begin(), visible.end(), active);
@@ -299,7 +345,13 @@ void BrowserController::cycle_tab(int direction) {
     activate(visible[(position + direction + int(visible.size())) % visible.size()]);
 }
 void BrowserController::select_visible_tab(int number) {
-    const auto visible = visible_tabs();
+    auto visible = visible_tabs();
+    if (profile.tree_tabs) {
+        visible.clear();
+        for (const auto &r : tree_rows(false))
+            if (tabs[r.index]->workspace == workspace)
+                visible.push_back(r.index);
+    }
     if (!visible.empty())
         activate(visible[number == 9 ? visible.size() - 1
                                      : std::min(size_t(number - 1), visible.size() - 1)]);
@@ -371,13 +423,11 @@ void BrowserController::start(const std::string &initial, bool private_mode, boo
             state_->pending_windows.push_back({false, saved[i], ""});
     } else if ((profile.restore || resume_once) && !profile.session.empty()) {
         state_->previous_restored = true;
-        auto saved = profile.session;
-        int selected = profile.active;
-        restoring_ = true;
-        for (auto &t : saved)
-            new_tab(t.url, false, false, t.pinned);
-        restoring_ = false;
-        activate(std::min(selected, static_cast<int>(tabs.size()) - 1));
+        SavedWindow saved{profile.session, profile.active};
+        if (!saved.tabs.empty())
+            saved.workspace =
+                saved.tabs[std::clamp(saved.active, 0, int(saved.tabs.size()) - 1)].workspace;
+        restore_window(saved);
     } else
         new_tab(profile.startup_page == "home" ? profile.home_page : "aura://newtab");
     if (!private_mode && state_->windows.size() == 1 && state_->unclean_start &&
@@ -396,7 +446,7 @@ void BrowserController::start(const std::string &initial, bool private_mode, boo
         };
         dialogs.push_back(std::move(dialog));
     }
-    if (!private_mode && profile.check_updates && updates.due())
+    if (!safe_mode() && !private_mode && profile.check_updates && updates.due())
         updates.check();
     if (profile.recovered_profile) {
         ui->toast(profile.language == "ru"
@@ -419,23 +469,39 @@ void BrowserController::defer(std::function<void()> action) {
     pending_.push_back(std::move(action));
 }
 void BrowserController::tick() {
+    state_->extension_access.tick();
+    tick_duplicate_merge();
     const auto now = std::chrono::steady_clock::now();
     for (auto &t : tabs)
-        if (t->reader_pending && now - t->reader_started > std::chrono::seconds(30)) {
-            t->reader_pending = false;
-            if (t->devtools && t->reader_context)
+        if ((t->reader_pending || t->reading_pending) &&
+            now - t->reader_started > std::chrono::seconds(30)) {
+            const bool saving = t->reading_pending;
+            t->reader_pending = t->reading_pending = false;
+            if (!saving && t->devtools && t->reader_context)
                 t->devtools->call("Runtime.evaluate",
                                   "{\"contextId\":" + std::to_string(t->reader_context) +
                                       ",\"expression\":\"globalThis.__auraReader?.close()\"}");
             if (t.get() == current())
-                ui->toast(tr("Could not prepare reader view. Try again after the page loads."));
+                ui->toast(tr(
+                    saving ? "Could not save the article. Check the page and available disk space."
+                           : "Could not prepare reader view. Try again after the page loads."));
             changed();
+        }
+    for (auto &t : tabs)
+        if (t->discard_pending && !t->discard_closing &&
+            now - t->discard_started > std::chrono::seconds(10)) {
+            t->discard_pending = false;
+            t->sleep_retry_after = now + std::chrono::seconds(30);
         }
     if (profile.tab_sleep_minutes > 0 && !quitting)
         for (auto &t : tabs)
             if (can_sleep(*t) && now >= t->sleep_retry_after &&
-                now - t->inactive_since >= std::chrono::minutes(profile.tab_sleep_minutes))
-                sleep_tab(t->id, false);
+                now - t->inactive_since >= std::chrono::minutes(profile.tab_sleep_minutes)) {
+                if (profile.tab_sleep_mode == "unload")
+                    discard_tab(t->id, false);
+                else
+                    sleep_tab(t->id, false);
+            }
     if (!quitting)
         for (auto &t : tabs)
             if (t->creation_pending && !t->closing) {
@@ -452,10 +518,10 @@ void BrowserController::tick() {
                     changed();
                 }
             }
-    if (background_updates_ && profile.check_updates && updates.due())
+    if (!safe_mode() && background_updates_ && profile.check_updates && updates.due())
         updates.check();
     auto &filters = filter_lists();
-    if (background_updates_ && profile.adblock && profile.filter_updates &&
+    if (!safe_mode() && background_updates_ && profile.adblock && profile.filter_updates &&
         std::chrono::steady_clock::now() >= state_->filters_after && filters.due())
         filters.check();
     const auto filter_revision = filters.revision;
@@ -524,6 +590,7 @@ void BrowserController::tick() {
                 if (recently_closed_.size() > 30)
                     recently_closed_.erase(recently_closed_.begin());
             }
+            detach_tree_tab(tabs[i]->id);
             tabs.erase(tabs.begin() + i);
             if (i < active)
                 --active;
@@ -549,13 +616,15 @@ void BrowserController::tick() {
                                                                            : old_position)]);
     } else if (!quitting && current() && current()->id != old_active_id)
         activate(active);
-    if (private_context_) {
+    if (private_context_ || !state_->private_spelling_words.empty()) {
         bool private_alive = false;
         for (const auto *other : state_->windows)
             for (const auto &t : other->tabs)
                 private_alive = private_alive || (t->private_tab && !t->page.closed);
-        if (!private_alive)
+        if (!private_alive) {
             private_context_ = nullptr;
+            state_->private_spelling_words.clear();
+        }
     }
     if (ui->tick())
         changed();
@@ -567,6 +636,23 @@ void BrowserController::tick() {
         }
         needs_save_ = false;
     }
+}
+void BrowserController::bind_tab_callbacks(Tab &t) {
+    t.page.invalidate = [this, id = t.id] {
+        if (tab_visible(id))
+            changed();
+    };
+    t.page.repaint = [this, id = t.id] {
+        if (auto t = tab(id); t && tab_visible(id) && !t->ntp)
+            window->invalidate(ui->web_bounds());
+    };
+    t.page.ime_caret = [this, id = t.id](const CefRect &caret) {
+        if (current() && current()->id == id) {
+            auto r = ui->page_bounds(*current());
+            window->caret(r.x + int(caret.x / ui_scale),
+                          r.y + int((caret.y + caret.height) / ui_scale));
+        }
+    };
 }
 void BrowserController::ensure_browser(Tab &t, const std::string &url) {
     auto r = ui->page_bounds(t);
@@ -595,21 +681,8 @@ void BrowserController::ensure_browser(Tab &t, const std::string &url) {
         t.pending_url = url;
         return;
     }
-    t.page.invalidate = [this, id = t.id] {
-        if (tab_visible(id))
-            changed();
-    };
-    t.page.repaint = [this, id = t.id] {
-        if (auto t = tab(id); t && tab_visible(id) && !t->ntp)
-            window->invalidate(ui->web_bounds());
-    };
-    t.page.ime_caret = [this, id = t.id](const CefRect &caret) {
-        if (current() && current()->id == id) {
-            auto r = ui->page_bounds(*current());
-            window->caret(r.x + int(caret.x / ui_scale),
-                          r.y + int((caret.y + caret.height) / ui_scale));
-        }
-    };
+    bind_tab_callbacks(t);
+    t.cef_parent = window;
     t.pending_url = url;
     t.client = new BrowserClient(*this, t);
     CefWindowInfo info;
@@ -660,13 +733,14 @@ void BrowserController::ensure_browser(Tab &t, const std::string &url) {
     }
 }
 void BrowserController::new_tab(std::string input, bool private_tab, bool foreground, bool pinned,
-                                int space, int group_id, int container_id) {
+                                int space, int group_id, int container_id, int parent_id) {
     if (quitting)
         return;
     private_tab = private_tab || private_window;
     std::string url;
     try {
-        url = navigation_url(std::move(input), profile.search_engine);
+        url = navigation_url(std::move(input), profile.search_engine, profile.search_providers,
+                             profile.default_search_provider);
     } catch (const std::exception &e) {
         ui->toast(tr(e.what()));
         return;
@@ -688,6 +762,11 @@ void BrowserController::new_tab(std::string input, bool private_tab, bool foregr
     t->page.scale = scale;
     t->private_tab = private_tab;
     t->pinned = pinned;
+    if (auto parent = tab(parent_id);
+        parent && !parent->closing && !parent->page.closed && parent->private_tab == private_tab &&
+        parent->workspace == t->workspace && parent->group == t->group &&
+        parent->container == t->container)
+        t->parent = parent_id;
     t->muted = profile.mute_new_tabs;
     t->page.url = url;
     t->page.title = tr(private_tab ? "Private tab" : "New tab");
@@ -713,6 +792,8 @@ void BrowserController::activate(int index, bool reveal_group) {
         if (index != active)
             old->inactive_since = std::chrono::steady_clock::now();
     }
+    if (index != active)
+        ui->cancel_ime();
     bool layout_changed = false;
     if (split_enabled()) {
         if (tabs[index]->workspace != workspace || tabs[index]->ntp)
@@ -725,6 +806,8 @@ void BrowserController::activate(int index, bool reveal_group) {
     active = index;
     wake_tab(tabs[index]->id);
     workspace = tabs[index]->workspace;
+    if (reveal_group)
+        reveal_tree(tabs[index]->id);
     if (reveal_group)
         if (auto g = profile.group(tabs[index]->group))
             g->collapsed = false;
@@ -743,11 +826,13 @@ void BrowserController::activate(int index, bool reveal_group) {
     ++audit["tab_switches"];
     changed(true);
 }
-void BrowserController::close_tab(int index) {
+void BrowserController::close_tab(int index, bool preserve_window) {
     if (index < 0 || index >= static_cast<int>(tabs.size()))
         return;
     auto &t = *tabs[index];
-    if ((profile.quit_last_tab || private_window) && !quitting &&
+    if (&t == current())
+        ui->cancel_ime();
+    if (!preserve_window && (profile.quit_last_tab || private_window) && !quitting &&
         std::count_if(tabs.begin(), tabs.end(), [](auto &t) { return !t->closing; }) == 1) {
         request_quit();
         return;
@@ -777,28 +862,18 @@ void BrowserController::reopen() {
             t.group, t.container);
     ++audit["tabs_reopened"];
 }
-void BrowserController::move_tab(int from, int to) {
-    if (from < 0 || to < 0 || from >= static_cast<int>(tabs.size()) ||
-        to >= static_cast<int>(tabs.size()) || from == to)
-        return;
-    const auto id = current() ? current()->id : 0;
-    auto item = std::move(tabs[from]);
-    tabs.erase(tabs.begin() + from);
-    tabs.insert(tabs.begin() + to, std::move(item));
-    for (std::size_t i = 0; i < tabs.size(); ++i)
-        if (tabs[i]->id == id)
-            active = i;
-    changed(true);
-}
 void BrowserController::navigate(std::string input) {
     close_extension_popup();
     auto t = current();
     if (!t)
         return;
     try {
-        const auto url = navigation_url(std::move(input), profile.search_engine);
+        const auto url = navigation_url(std::move(input), profile.search_engine,
+                                        profile.search_providers, profile.default_search_provider);
         ui->editing = false;
         ui->panel(BrowserUi::None);
+        if (route_container(t->id, url))
+            return;
         if (url == "aura://newtab") {
             if (t->browser) {
                 // A real history entry unloads the old document and honours
@@ -852,17 +927,69 @@ void BrowserController::reload(bool ignore) {
         ++audit["reload"];
     }
 }
+namespace {
+std::string zoom_host(const std::string &url) {
+    CefURLParts parts;
+    if (!CefParseURL(url, parts))
+        return {};
+    const auto scheme = CefString(&parts.scheme).ToString();
+    if (scheme != "http" && scheme != "https")
+        return {};
+    auto host = CefString(&parts.host).ToString();
+    if (host.find(':') != std::string::npos && !host.starts_with('['))
+        host = "[" + host + "]";
+    return host;
+}
+} // namespace
+void BrowserController::apply_site_zoom(Tab &t, const std::string &url) {
+    if (profile.remember_site_zoom) {
+        const auto site = zoom_host(url.empty() ? t.page.url : url);
+        const auto &rules = t.private_tab ? state_->private_site_zooms : profile.site_zooms;
+        t.zoom = find_site_zoom(rules, site, t.container)
+                     .value_or(std::log(profile.default_zoom / 100.0) / std::log(1.2));
+    }
+    if (t.browser)
+        t.browser->GetHost()->SetZoomLevel(t.zoom);
+}
 void BrowserController::zoom(double delta, bool reset) {
     if (auto t = current(); t && t->browser) {
-        t->zoom = reset ? std::log(profile.default_zoom / 100.0) / std::log(1.2)
-                        : std::clamp(t->zoom + delta, -4.0, 5.0);
-        t->browser->GetHost()->SetZoomLevel(t->zoom);
+        const auto site = zoom_host(t->page.url);
+        const double level = reset ? std::log(profile.default_zoom / 100.0) / std::log(1.2)
+                                   : std::clamp(t->zoom + delta, -4.0, 5.0);
+        if ((profile.remember_site_zoom || reset) && !site.empty()) {
+            auto &rules = t->private_tab ? state_->private_site_zooms : profile.site_zooms;
+            if (!update_site_zoom(rules, site, t->container,
+                                  reset ? std::optional<double>{} : std::optional<double>{level})) {
+                t->zoom = level;
+                t->browser->GetHost()->SetZoomLevel(level);
+                ui->toast(tr("Could not remember site zoom. Reset a saved site first."));
+                changed();
+                return;
+            }
+            for (auto *window : state_->windows)
+                for (auto &other : window->tabs)
+                    if (other->private_tab == t->private_tab && other->container == t->container &&
+                        zoom_host(other->page.url) == site) {
+                        if (reset)
+                            other->zoom = level;
+                        window->apply_site_zoom(*other);
+                    }
+            changed(!t->private_tab);
+        } else {
+            t->zoom = level;
+            t->browser->GetHost()->SetZoomLevel(t->zoom);
+        }
         ui->toast(tr("Page zoom  ") +
                   std::to_string(static_cast<int>(std::round(std::pow(1.2, t->zoom) * 100))) + "%");
     }
 }
+
 void BrowserController::bookmark() {
     if (auto t = current(); t && !t->ntp) {
+        if (!valid_bookmark_address(t->page.url)) {
+            ui->toast(tr("This page cannot be bookmarked."));
+            return;
+        }
         profile.toggle_bookmark(t->page.url, t->page.title);
         ui->toast(tr(profile.bookmarked(t->page.url) ? "Bookmark saved" : "Bookmark removed"));
         ++audit["bookmark"];
@@ -923,12 +1050,19 @@ void BrowserController::answer_dialog(bool accept) {
     auto dialog = std::move(dialogs.front());
     dialogs.pop_front();
     if (!accept && dialog.before_unload) {
-        if (auto t = tab(dialog.tab))
+        const auto &merge = state_->duplicate_merge;
+        if (merge.active && merge.waiting && merge.waiting->ref.window == window_uid &&
+            merge.waiting->ref.tab == dialog.tab)
+            stop_duplicate_merge("Closing was cancelled. Remaining duplicates were kept.");
+        if (auto t = tab(dialog.tab)) {
             t->remember_on_close = false;
+            t->discard_pending = t->discard_closing = false;
+        }
         // Cancel the whole exit transaction, including restart/update intent.
         if (state_->exiting) {
             state_->exiting = false;
             state_->session_frozen = false;
+            state_->restart_mode = -1;
             for (auto *other : state_->windows) {
                 other->restart_on_exit = false;
                 other->install_update_on_exit = false;
@@ -956,20 +1090,24 @@ void BrowserController::answer_dialog(bool accept) {
         dialog.action(accept, dialog.input.value);
     changed();
 }
-void BrowserController::restart() {
+void BrowserController::restart() { restart_in_mode(safe_mode()); }
+void BrowserController::restart_in_mode(bool safe) {
     if (quitting || extensions.busy || passwords.busy || importer.busy || updates.busy() ||
         filter_lists().busy()) {
         ui->toast(tr("Finish the current operation before restarting."));
         return;
     }
-    confirm_action(tr("Restart Aura?"), tr("Regular tabs will reopen. Private tabs will close."),
-                   [this] {
+    confirm_action(tr(safe == safe_mode() ? "Restart Aura?"
+                      : safe              ? "Restart in safe mode?"
+                                          : "Restart in normal mode?"),
+                   tr("Regular tabs will reopen. Private tabs will close."), [this, safe] {
                        try {
                            save_session();
                        } catch (...) {
                            ui->toast(tr("Cannot save the session. Restart cancelled."));
                            return;
                        }
+                       state_->restart_mode = safe ? 1 : 0;
                        restart_on_exit = true;
                        request_exit(true);
                    });
@@ -1046,6 +1184,10 @@ bool BrowserController::finished() {
                    std::all_of(w->tabs.begin(), w->tabs.end(),
                                [](const auto &t) { return t->page.closed; });
         });
+    if (browsers_closed && all_closed && !state_->extension_access.closed()) {
+        state_->extension_access.close();
+        return false;
+    }
     if (browsers_closed && all_closed && !state_->cleanup_started) {
         state_->cleanup_started = true;
         profile.session_clean = true;
@@ -1068,6 +1210,7 @@ bool BrowserController::finished() {
     return browsers_closed && data_tasks_ == 0;
 }
 void BrowserController::prepare_shutdown() {
+    state_->task_manager = nullptr;
     importer.shutdown();
     passwords.shutdown();
     updates.shutdown();
@@ -1079,13 +1222,30 @@ void BrowserController::prepare_shutdown() {
     state_->container_contexts_ready.clear();
 }
 void BrowserController::detach_window() {
+    if (state_->duplicate_merge.requester == window_uid)
+        stop_duplicate_merge();
+    if (std::none_of(state_->windows.begin(), state_->windows.end(), [&](auto *w) {
+            return w != this && !w->quitting && w->ui &&
+                   w->ui->visible_panel() == BrowserUi::TaskManager;
+        }))
+        state_->task_manager = nullptr;
     ui->passwords_locked();
     closing_popups_.clear();
     extension_popup.reset();
     close_menu();
     dialogs.clear();
     for (auto &d : downloads)
-        d.callback = nullptr;
+        if (d.source_window == window_uid) {
+            if (d.callback)
+                d.callback->Cancel();
+            d.callback = nullptr;
+            if (!d.complete && !d.cancelled) {
+                d.interrupted = true;
+                d.speed = 0;
+            }
+        }
+    std::erase_if(downloads,
+                  [&](const auto &d) { return d.private_mode && d.source_window == window_uid; });
     for (auto &t : tabs) {
         t->browser = nullptr;
         t->client = nullptr;
@@ -1100,22 +1260,43 @@ void BrowserController::restore_window(const SavedWindow &saved) {
     background_updates_ = !private_window;
     workspace = saved.workspace;
     restoring_ = true;
+    std::vector<int> ids;
     for (const auto &t : saved.tabs) {
+        const int id = next_id_;
         new_tab(t.url, false, false, t.pinned, t.workspace, t.group, t.container);
-        if (t.workspace_active && !tabs.empty())
-            workspace_selection_[t.workspace] = tabs.back()->id;
+        const auto created = tab(id);
+        ids.push_back(created ? id : 0);
+        if (created) {
+            created->tree_collapsed = t.tree_collapsed;
+            if (t.workspace_active)
+                workspace_selection_[t.workspace] = id;
+        }
     }
+    for (int i = 0; i < int(saved.tabs.size()); ++i)
+        if (auto t = tab(ids[i])) {
+            const auto parent = saved.tabs[i].parent;
+            t->parent = parent >= 0 && parent < int(ids.size()) ? ids[parent] : 0;
+        }
+    normalize_tree();
     restoring_ = false;
     if (tabs.empty())
         open_new_tab();
-    activate(std::clamp(saved.active, 0, int(tabs.size()) - 1), false);
-    if (saved.split_left >= 0 && saved.split_right >= 0 && saved.split_left != saved.split_right &&
-        saved.split_left < int(tabs.size()) && saved.split_right < int(tabs.size()) &&
-        (active == saved.split_left || active == saved.split_right) &&
-        !tabs[saved.split_left]->ntp && !tabs[saved.split_right]->ntp &&
-        tabs[saved.split_left]->workspace == workspace &&
-        tabs[saved.split_right]->workspace == workspace) {
-        split_tabs = {tabs[saved.split_left]->id, tabs[saved.split_right]->id};
+    auto restored_index = [&](int source) {
+        if (source < 0 || source >= int(ids.size()) || !ids[source])
+            return -1;
+        for (int i = 0; i < int(tabs.size()); ++i)
+            if (tabs[i]->id == ids[source])
+                return i;
+        return -1;
+    };
+    const int selected = restored_index(saved.active);
+    activate(selected < 0 ? 0 : selected, false);
+    const int left = restored_index(saved.split_left), right = restored_index(saved.split_right);
+    if (left >= 0 && right >= 0 && left != right && left < int(tabs.size()) &&
+        right < int(tabs.size()) && (active == left || active == right) && !tabs[left]->ntp &&
+        !tabs[right]->ntp && tabs[left]->workspace == workspace &&
+        tabs[right]->workspace == workspace) {
+        split_tabs = {tabs[left]->id, tabs[right]->id};
         resize_pages();
     }
 }
@@ -1218,8 +1399,9 @@ std::vector<SavedWindow> BrowserController::capture_session() const {
         const auto current = other->active >= 0 && other->active < int(other->tabs.size())
                                  ? other->tabs[other->active].get()
                                  : nullptr;
+        std::vector<int> saved_ids;
         for (const auto &t : other->tabs)
-            if (!t->private_tab && !t->closing) {
+            if (!t->private_tab && !t->closing && !t->page.closed) {
                 const auto remembered = other->workspace_selection_.find(t->workspace);
                 const bool selected =
                     t->workspace == other->workspace && current && !current->private_tab
@@ -1233,8 +1415,15 @@ std::vector<SavedWindow> BrowserController::capture_session() const {
                 if (t->id == other->split_tabs[1])
                     window.split_right = int(window.tabs.size());
                 window.tabs.push_back({restorable_url(*t), t->pinned, t->workspace, selected,
-                                       t->group, t->container});
+                                       t->group, t->container, t->parent, t->tree_collapsed});
+                saved_ids.push_back(t->id);
             }
+        if (!saved_ids.empty()) {
+            window.active = saved_ids[window.active];
+            window.split_left = window.split_left >= 0 ? saved_ids[window.split_left] : -1;
+            window.split_right = window.split_right >= 0 ? saved_ids[window.split_right] : -1;
+            remap_saved_tabs(window, saved_ids);
+        }
         if (!window.tabs.empty() && window.tabs[window.active].workspace != window.workspace) {
             auto selected =
                 std::find_if(window.tabs.begin(), window.tabs.end(),
@@ -1265,8 +1454,14 @@ void BrowserController::save_session() {
 }
 std::string BrowserController::report() const {
     std::ostringstream out;
-    out << "{\"product\":\"Aura\",\"pid\":" << process_id() << ",\"window\":" << window->native_id()
-        << ",\"cef_created\":" << created_ << ",\"cef_closed\":" << closed_ << ",\"compositor\":\""
+    out << "{\"safe_mode\":" << (safe_mode() ? "true" : "false")
+        << ",\"window_system\":" << json_quote(window->backend())
+        << ",\"product\":\"Aura\",\"pid\":" << process_id() << ",\"window\":" << window->native_id()
+        << ",\"window_uid\":" << window_uid
+        << ",\"spelling_resources_ready\":" << (state_->spelling_resources_ready ? "true" : "false")
+        << ",\"tab_drop_source\":" << state_->tab_drop.source
+        << ",\"tab_drop_target\":" << state_->tab_drop.target << ",\"cef_created\":" << created_
+        << ",\"cef_closed\":" << closed_ << ",\"compositor\":\""
         << json_escape(window->compositor()) << "\",\"renderer\":\""
         << json_escape(window->renderer())
         << "\",\"version\":" << json_quote(std::string(browser_version))
@@ -1284,10 +1479,16 @@ std::string BrowserController::report() const {
         << ",\"blocked_requests\":" << request_policy->protection->blocked.load()
         << ",\"rewritten_requests\":" << request_policy->protection->rewritten_requests.load()
         << ",\"adblock_ready\":" << (request_policy->protection->ready() ? "true" : "false")
-        << ",\"extensions\":" << extensions.report() << ",\"filters_ui\":" << ui->filters_report()
+        << ",\"extension_access\":" << state_->extension_access.report()
+        << ",\"spelling\":" << spelling_status() << ",\"extensions\":" << extensions.report()
+        << ",\"spelling_ui\":" << ui->spelling_report()
+        << ",\"extension_access_ui\":" << ui->extension_access_report()
+        << ",\"filters_ui\":" << ui->filters_report()
         << ",\"workspaces_ui\":" << ui->workspaces_report()
         << ",\"groups_ui\":" << ui->groups_report() << ",\"sidebar\":" << ui->sidebar_report()
+        << ",\"tab_strip\":" << ui->tab_strip_report()
         << ",\"filter_lists\":" << state_->filters->report()
+        << ",\"diagnostics_ui\":" << ui->diagnostics_report()
         << ",\"extensions_ui\":" << ui->extensions_report()
         << ",\"extension_popup\":" << ui->extension_popup_report()
         << ",\"extension_toolbar\":" << ui->extension_toolbar_report()
@@ -1330,16 +1531,29 @@ std::string BrowserController::report() const {
             out << '"';
     }
     out << '}' << ",\"history_count\":" << profile.history.size()
+        << ",\"duplicates_ui\":" << ui->duplicates_report()
+        << ",\"search_ui\":" << ui->search_providers_report()
+        << ",\"reading_ui\":" << ui->reading_report()
+        << ",\"tasks_ui\":" << ui->task_manager_report()
+        << ",\"downloads_ui\":" << ui->downloads_report()
         << ",\"bookmark_count\":" << profile.bookmarks.size() << ",\"downloads\":[";
     bool first = true;
     for (auto &d : downloads) {
+        if (!download_visible(d))
+            continue;
         if (!first)
             out << ',';
         first = false;
         out << "{\"name\":\"" << json_escape(d.name)
             << "\",\"complete\":" << (d.complete ? "true" : "false")
+            << ",\"source_tab\":" << d.source_tab
             << ",\"interrupted\":" << (d.interrupted ? "true" : "false")
-            << ",\"received\":" << d.received << '}';
+            << ",\"received\":" << d.received << ",\"speed\":" << d.speed
+            << ",\"total\":" << d.total << ",\"cancelled\":" << (d.cancelled ? "true" : "false")
+            << ",\"paused\":" << (d.paused ? "true" : "false") << ",\"id\":" << d.id
+            << ",\"source_window\":" << d.source_window
+            << ",\"checksum_status\":" << json_quote(d.checksum_status)
+            << ",\"sha256\":" << json_quote(d.sha256) << '}';
     }
     out << "],\"audit\":{";
     first = true;
@@ -1372,7 +1586,7 @@ void BrowserController::browser_created(int id, CefRefPtr<CefBrowser> browser) {
             configure_permissions(browser->GetHost()->GetRequestContext(), "", "", 0, true);
             state_->private_permissions_initialized = true;
         }
-        t->devtools = new DevToolsSession(browser);
+        t->devtools = new DevToolsSession(browser, safe_mode());
         t->devtools->attach();
         setup_site_tools(id, [this, id] {
             if (auto t = tab(id); t && t->browser && !t->closing) {
@@ -1381,6 +1595,7 @@ void BrowserController::browser_created(int id, CefRefPtr<CefBrowser> browser) {
                 t->pending_url.clear();
                 if (!initial.empty() && (!t->ntp || initial == "about:blank#aura-newtab"))
                     t->browser->GetMainFrame()->LoadURL(initial);
+                begin_pending_download(id);
             }
         });
         ++created_;
@@ -1390,12 +1605,39 @@ void BrowserController::browser_created(int id, CefRefPtr<CefBrowser> browser) {
 }
 void BrowserController::browser_closed(int id) {
     if (auto t = tab(id)) {
-        t->page.closed = true;
+        const bool unloaded = t->discard_pending && !t->closing && !quitting;
+        t->page.closed = !unloaded;
         if (t->devtools)
             t->devtools->close();
         t->devtools = nullptr;
         t->browser = nullptr;
         ++closed_;
+        if (unloaded) {
+            t->discarded = true;
+            t->discard_pending = t->discard_closing = false;
+            t->sleeping = t->sleep_pending = false;
+            t->site_tools_ready = false;
+            t->client = nullptr;
+            t->cef_parent.reset();
+            t->page.view = PaintBuffer{};
+            t->page.popup = PaintBuffer{};
+            t->page.popup_visible = false;
+            t->protection_contexts.clear();
+            t->spelling_contexts.clear();
+            t->audio_contexts.clear();
+            t->protection_script.clear();
+            t->spelling_script.clear();
+            t->permission_origins.clear();
+            t->selected_text.clear();
+            t->back = t->forward = false;
+            ++audit["tabs_unloaded"];
+            // Selection can race the asynchronous Chromium close callback.
+            if (tab_visible(id))
+                defer([this, id] {
+                    if (!quitting)
+                        wake_tab(id);
+                });
+        }
         changed();
     }
 }
@@ -1416,9 +1658,9 @@ void BrowserController::open_from_page(int source, std::string url, bool foregro
         return;
     const bool private_tab = t->private_tab;
     const int space = t->workspace, group = t->group, container = t->container;
-    defer([this, url = std::move(url), private_tab, foreground, space, group, container] {
+    defer([this, url = std::move(url), private_tab, foreground, space, group, container, source] {
         new_tab(url, private_tab, foreground && profile.foreground_links && space == workspace,
-                false, space, group, container);
+                false, space, group, container, source);
     });
     ++audit["page_opened_tabs"];
 }
@@ -1432,7 +1674,7 @@ Tab *BrowserController::prepare_popup(int source, int popup_id, const std::strin
     const int space = opener->workspace, group = opener->group, container = opener->container;
     new_tab("aura://newtab", private_tab,
             foreground && profile.foreground_links && space == workspace, false, space, group,
-            container);
+            container, source);
     auto target = tab(id);
     if (!target)
         return nullptr;
@@ -1443,11 +1685,8 @@ Tab *BrowserController::prepare_popup(int source, int popup_id, const std::strin
     const auto bounds = ui->page_bounds(*target);
     target->page.view_width = std::max(1, int(std::lround(bounds.width * ui_scale)));
     target->page.view_height = std::max(1, int(std::lround(bounds.height * ui_scale)));
-    target->page.invalidate = [this] { changed(); };
-    target->page.repaint = [this, id] {
-        if (tab_visible(id))
-            window->invalidate(ui->web_bounds());
-    };
+    bind_tab_callbacks(*target);
+    target->cef_parent = window;
     pending_popups_[{source, popup_id}] = id;
     return target;
 }
@@ -1472,9 +1711,31 @@ void BrowserController::update_favicon(int id, const std::string &url) {
 }
 void BrowserController::start_download(CefRefPtr<CefDownloadItem> item,
                                        CefRefPtr<CefBeforeDownloadCallback> callback,
-                                       const std::string &suggested) {
+                                       const std::string &suggested, int source_tab) {
     spdlog::info("Download {} accepted", item->GetId());
-    (void)item;
+    auto it = std::find_if(downloads.begin(), downloads.end(), [&](const auto &d) {
+        return d.id == item->GetId() && d.source_window == window_uid;
+    });
+    if (it == downloads.end()) {
+        downloads.insert(downloads.begin(), Download{});
+        it = downloads.begin();
+        it->id = item->GetId();
+        it->source_window = window_uid;
+    }
+    it->source_tab = source_tab;
+    if (!suggested.empty())
+        it->name = suggested;
+    it->url = item->GetOriginalUrl().ToString();
+    if (it->url.empty())
+        it->url = item->GetURL().ToString();
+    if (auto source = tab(source_tab)) {
+        it->container = source->container;
+        it->private_mode = source->private_tab;
+    }
+    if (!it->path.empty()) {
+        callback->Continue(it->path, false);
+        return;
+    }
     if (profile.ask_download_name) {
         BrowserDialog dialog;
         dialog.origin = "Download filename";
@@ -1482,21 +1743,22 @@ void BrowserController::start_download(CefRefPtr<CefDownloadItem> item,
         dialog.owned = true;
         dialog.prompt = true;
         dialog.input.set(suggested, true);
-        dialog.action = [this, callback, suggested](bool accept, const std::string &name) {
+        dialog.action = [this, callback, suggested, id = item->GetId()](bool accept,
+                                                                        const std::string &name) {
             if (accept)
-                finish_download(callback, name.empty() ? suggested : name);
+                finish_download(callback, name.empty() ? suggested : name, id);
         };
         dialogs.push_back(std::move(dialog));
         changed();
     } else
-        finish_download(callback, suggested);
+        finish_download(callback, suggested, item->GetId());
 }
 std::filesystem::path BrowserController::downloads_directory() const {
     return profile.download_directory.empty() ? profile.directory / "downloads"
                                               : path_from_utf8(profile.download_directory);
 }
 void BrowserController::finish_download(CefRefPtr<CefBeforeDownloadCallback> callback,
-                                        std::string input) {
+                                        std::string input, uint32_t id) {
     auto folder = downloads_directory();
     std::error_code error;
     std::filesystem::create_directories(folder, error);
@@ -1517,10 +1779,18 @@ void BrowserController::finish_download(CefRefPtr<CefBeforeDownloadCallback> cal
     auto path = folder / name;
     int suffix = 1;
     while (std::filesystem::exists(path) ||
-           std::find(download_paths_.begin(), download_paths_.end(), path) != download_paths_.end())
+           std::find(state_->download_paths.begin(), state_->download_paths.end(), path) !=
+               state_->download_paths.end())
         path = folder / path_from_utf8(utf8_path(name.stem()) + " (" + std::to_string(suffix++) +
                                        ")" + utf8_path(name.extension()));
-    download_paths_.push_back(path);
+    state_->download_paths.push_back(path);
+    auto record = std::find_if(downloads.begin(), downloads.end(), [&](const auto &d) {
+        return d.id == id && d.source_window == window_uid;
+    });
+    if (record != downloads.end()) {
+        record->path = utf8_path(path);
+        record->name = utf8_path(path.filename());
+    }
     callback->Continue(utf8_path(path), false);
     ++audit["download_started"];
     if (profile.open_downloads)
@@ -1528,27 +1798,50 @@ void BrowserController::finish_download(CefRefPtr<CefBeforeDownloadCallback> cal
     ui->toast(tr("Download started"));
 }
 void BrowserController::download_updated(CefRefPtr<CefDownloadItem> item,
-                                         CefRefPtr<CefDownloadItemCallback> callback) {
+                                         CefRefPtr<CefDownloadItemCallback> callback,
+                                         int source_tab) {
     if (!item->IsValid())
         return;
     if (item->IsComplete() || item->IsCanceled() || item->IsInterrupted())
         spdlog::info("Download {} complete={} canceled={} interrupted={} reason={}", item->GetId(),
                      item->IsComplete(), item->IsCanceled(), item->IsInterrupted(),
                      static_cast<int>(item->GetInterruptReason()));
-    auto it = std::find_if(downloads.begin(), downloads.end(),
-                           [&](auto &d) { return d.id == item->GetId(); });
+    auto it = std::find_if(downloads.begin(), downloads.end(), [&](auto &d) {
+        return d.id == item->GetId() && d.source_window == window_uid;
+    });
     if (it == downloads.end()) {
         downloads.insert(downloads.begin(), Download{});
         it = downloads.begin();
         it->id = item->GetId();
+        it->source_window = window_uid;
     }
     auto &d = *it;
-    d.name = item->GetSuggestedFileName();
-    d.path = item->GetFullPath();
+    d.source_tab = source_tab;
+    if (auto url = item->GetOriginalUrl().ToString(); !url.empty())
+        d.url = url;
+    if (d.url.empty())
+        d.url = item->GetURL().ToString();
+    if (auto source = tab(source_tab)) {
+        d.container = source->container;
+        d.private_mode = source->private_tab;
+    }
+    d.speed = item->IsInProgress() && !item->IsPaused()
+                  ? std::max<int64_t>(0, item->GetCurrentSpeed())
+                  : 0;
+    if (auto name = item->GetSuggestedFileName().ToString(); !name.empty())
+        d.name = name;
+    if (auto path = item->GetFullPath().ToString(); !path.empty())
+        d.path = path;
     if (!d.path.empty())
         d.name = utf8_path(path_from_utf8(d.path).filename());
+    if (d.name.empty()) {
+        CefURLParts parts;
+        if (CefParseURL(d.url, parts))
+            d.name = utf8_path(path_from_utf8(CefString(&parts.path).ToString()).filename());
+    }
     d.percent = item->GetPercentComplete();
-    d.received = item->GetReceivedBytes();
+    d.received = item->IsCanceled() ? std::max<long long>(d.received, item->GetReceivedBytes())
+                                    : item->GetReceivedBytes();
     d.total = item->GetTotalBytes();
     const bool just_completed = !d.complete && item->IsComplete();
     d.complete = item->IsComplete();
@@ -1560,13 +1853,20 @@ void BrowserController::download_updated(CefRefPtr<CefDownloadItem> item,
     if (just_completed && profile.notify_downloads)
         ui->toast(tr("Download complete") + " · " + d.name);
     if (just_completed && profile.close_downloads && ui->visible_panel() == BrowserUi::Downloads &&
-        std::all_of(downloads.begin(), downloads.end(),
-                    [](auto &v) { return v.complete || v.cancelled; }))
+        std::all_of(downloads.begin(), downloads.end(), [&](auto &v) {
+            return !download_visible(v) || v.complete || v.cancelled || v.interrupted;
+        }))
         ui->panel(BrowserUi::None);
     changed();
 }
 void BrowserController::download_action(std::size_t i, bool cancel) {
-    if (i >= downloads.size() || !downloads[i].callback)
+    if (i >= downloads.size() || !download_visible(downloads[i]))
+        return;
+    if (!cancel && (downloads[i].cancelled || downloads[i].interrupted)) {
+        retry_download(i);
+        return;
+    }
+    if (!downloads[i].callback)
         return;
     auto &d = downloads[i];
     if (cancel)
@@ -1593,7 +1893,7 @@ void BrowserController::confirm_action(std::string title, std::string message,
 void BrowserController::cancel_permissions(int tab_id) {
     std::vector<std::function<void(bool, const std::string &)>> actions;
     for (auto it = dialogs.begin(); it != dialogs.end();) {
-        if (it->permission && it->tab == tab_id) {
+        if ((it->permission || it->container_route) && it->tab == tab_id) {
             actions.push_back(std::move(it->action));
             it = dialogs.erase(it);
         } else
@@ -1613,7 +1913,10 @@ void BrowserController::clear_data(const std::string &kind) {
     }
     if (kind == "reset") {
         static_cast<BrowserPreferences &>(profile) = BrowserPreferences{};
+        profile.default_search_provider = 0;
         profile.hotkeys.clear();
+        profile.site_zooms.clear();
+        state_->private_site_zooms.clear();
         for (auto &rule : profile.site_permissions)
             rule.value = "default";
         for (auto &rule : state_->private_site_permissions)
@@ -1623,7 +1926,8 @@ void BrowserController::clear_data(const std::string &kind) {
         return;
     }
     if (kind == "downloads") {
-        std::erase_if(downloads, [](auto &d) { return d.complete || d.cancelled; });
+        std::erase_if(downloads,
+                      [&](auto &d) { return download_visible(d) && (d.complete || d.cancelled); });
         changed();
         return;
     }
@@ -1687,6 +1991,9 @@ void BrowserController::move_tab_to_workspace(int tab_id, int workspace_id) {
     if (!profile.has_workspace(workspace_id) || private_window)
         return;
     if (auto t = tab(tab_id)) {
+        if (t->workspace == workspace_id)
+            return;
+        detach_tree_tab(tab_id);
         t->workspace = workspace_id;
         const auto g = profile.group(t->group);
         if (!g || g->workspace != workspace_id)
@@ -1694,14 +2001,33 @@ void BrowserController::move_tab_to_workspace(int tab_id, int workspace_id) {
         changed(true);
     }
 }
-void BrowserController::set_tab_group(int tab_id, int group_id) {
+void BrowserController::set_tab_group(int tab_id, int group_id, bool branch) {
     if (private_window)
         return;
     if (auto t = tab(tab_id)) {
         auto g = profile.group(group_id);
         if (group_id && (!g || g->workspace != t->workspace))
             return;
-        t->group = group_id;
+        if (t->group != group_id) {
+            if (branch && profile.tree_tabs) {
+                const auto rows = tree_rows(false);
+                bool inside = false;
+                int depth = 0;
+                for (const auto &r : rows) {
+                    if (tabs[r.index]->id == tab_id) {
+                        inside = true;
+                        depth = r.depth;
+                    } else if (inside && r.depth <= depth)
+                        break;
+                    if (inside)
+                        tabs[r.index]->group = group_id;
+                }
+                t->parent = 0;
+            } else {
+                detach_tree_tab(tab_id);
+                t->group = group_id;
+            }
+        }
         if (g)
             g->collapsed = false;
         changed(true);
@@ -1732,7 +2058,8 @@ std::string BrowserController::profile_name() const {
 }
 void BrowserController::update_window_title() {
     if (auto t = current())
-        window->title(t->page.title + " — Aura · " + profile_name());
+        window->title((safe_mode() ? tr("Safe mode") + " — " : "") + t->page.title + " — Aura · " +
+                      profile_name());
 }
 void BrowserController::open_profile(int id) {
     try {
@@ -1761,6 +2088,8 @@ void BrowserController::open_profile(int id) {
         const auto executable = executable_directory() / "aura_browser";
 #endif
         std::vector<std::string> arguments{"--data-dir=" + utf8_path(directory)};
+        if (window->backend() == "wayland")
+            arguments.push_back("--window-system=wayland");
         // Keep disposable integration reports and renderer options scoped to this profile.
         if (const auto command = CefCommandLine::GetGlobalCommandLine()) {
             for (const char *option : {"scale", "gpu", "software-rendering"})
@@ -1781,5 +2110,26 @@ void BrowserController::open_profile(int id) {
     } catch (const std::exception &e) {
         ui->toast(tr(e.what()));
     }
+}
+} // namespace aura
+
+namespace aura {
+std::string BrowserController::diagnostics_report() const {
+    DiagnosticSummary summary;
+    summary.safe_mode = safe_mode();
+    summary.verbose = state_->verbose_logging;
+    summary.created = state_->retired_created + state_->extension_access.created_count();
+    summary.closed = state_->retired_closed + state_->extension_access.closed_count();
+    for (const auto *w : state_->windows) {
+        summary.windows += !w->quitting;
+        summary.created += w->created_count();
+        summary.closed += w->closed_count();
+        for (const auto &t : w->tabs) {
+            summary.tabs += !t->page.closed;
+            summary.renderer_crashes += t->page.renderer_crashes;
+            summary.gpu |= t->page.accelerated_frames > 0;
+        }
+    }
+    return diagnostic_report(summary);
 }
 } // namespace aura

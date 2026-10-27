@@ -4,7 +4,9 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
+#include <utility>
 class SkCanvas;
 namespace aura {
 struct PointerInput {
@@ -19,8 +21,12 @@ struct WindowCallbacks {
     std::function<void(const PointerInput &)> pointer;
     std::function<bool(const CefKeyEvent &)> key;
     std::function<void(const std::string &)> text;
+    std::function<void(const std::string &, int, int)> preedit;
+    // 0 motion/enter, 1 drop, 2 leave, 3 source finished; true accepts a target.
+    std::function<bool(int, int, int)> tab_drag;
     std::function<void(bool)> focus;
     std::function<void()> close;
+    std::function<bool(int, int)> caption;
 };
 class BrowserWindow {
   public:
@@ -29,7 +35,13 @@ class BrowserWindow {
     ~BrowserWindow();
     CefWindowHandle handle() const;
     std::uintptr_t native_id() const;
+    bool begin_tab_drag();
+    void cancel_composition();
     void show();
+    void clear_callbacks();
+    std::optional<std::pair<int, int>> point_from(const BrowserWindow &source, int x, int y) const;
+    std::pair<int, int> screen_point(int x, int y) const;
+    void activate();
     void hide();
     void dispatch();
     void paint();
@@ -45,6 +57,7 @@ class BrowserWindow {
     void cursor(int kind);
     void copy(const std::string &text);
     void paste(std::function<void(std::string)> callback);
+    std::string backend() const;
     std::string compositor() const;
     std::string renderer() const;
     std::uint64_t frames() const;

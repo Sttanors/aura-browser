@@ -1,4 +1,5 @@
 #include "common/config.hpp"
+#include "common/diagnostics.hpp"
 #include "common/platform.hpp"
 #include "common/update_key.hpp"
 #include "core/browser/browser.hpp"
@@ -11,12 +12,28 @@
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/spdlog.h>
 #include <thread>
+#ifndef _WIN32
+#include "platform/linux/window_backend.hpp"
+#endif
 #ifdef _WIN32
 #include "include/cef_sandbox_win.h"
 #include "include/cef_version.h"
 #include <windows.h>
 #endif
 namespace {
+#ifndef _WIN32
+volatile std::sig_atomic_t quit_signal = 0;
+void request_signal_quit(int) { quit_signal = 1; }
+struct QuitSignals {
+    using Handler = void (*)(int);
+    Handler term = std::signal(SIGTERM, request_signal_quit);
+    Handler interrupt = std::signal(SIGINT, request_signal_quit);
+    ~QuitSignals() {
+        std::signal(SIGTERM, term);
+        std::signal(SIGINT, interrupt);
+    }
+};
+#endif
 int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbox_info) {
     const auto binary = aura::executable_directory();
     if (command->HasSwitch("version")) {
@@ -26,7 +43,8 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
     if (command->HasSwitch("help")) {
         std::cout << "Aura browser\n  --version --url=URL --data-dir=PROFILE --theme=aurora-dark "
                      "--scale=1.5\n  --private --report=FILE --software-rendering (default) --gpu "
-                     "(experimental)\n";
+                     "(experimental)\n  --safe-mode --diagnostic-report=FILE "
+                     "--diagnostic-verbose\n  --window-system=auto|x11|wayland (Linux)\n";
         return 0;
     }
     const auto path = command->HasSwitch("data-dir")
@@ -34,7 +52,9 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
                                 command->GetSwitchValue("data-dir").ToString()))
                           : binary / "profile";
     std::filesystem::create_directories(path);
-    auto logger = spdlog::basic_logger_mt("aura", (path / "aura.log").native());
+    const bool safe_mode = command->HasSwitch("safe-mode");
+    const bool verbose = command->HasSwitch("diagnostic-verbose");
+    auto logger = aura::diagnostic_logger(path, verbose);
     spdlog::set_default_logger(logger);
     spdlog::flush_on(spdlog::level::info);
     double scale = 1;
@@ -45,8 +65,27 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
         if (parsed != input.size() || !std::isfinite(scale) || scale < 1 || scale > 3)
             throw std::runtime_error("Scale must be between 1 and 3");
     }
-    const bool accelerated = command->HasSwitch("gpu") && !command->HasSwitch("software-rendering");
-    aura::BrowserController browser(path, binary / "fonts/InterVariable.ttf", scale, accelerated);
+#ifndef _WIN32
+    const char *backend_env = std::getenv("AURA_WINDOW_SYSTEM");
+    aura::select_linux_window_system(command->HasSwitch("window-system")
+                                         ? command->GetSwitchValue("window-system").ToString()
+                                     : backend_env ? backend_env
+                                                   : "x11");
+#endif
+    bool accelerated =
+        !safe_mode && command->HasSwitch("gpu") && !command->HasSwitch("software-rendering");
+#ifndef _WIN32
+    if (aura::linux_window_system() == "wayland")
+        accelerated = false;
+#endif
+    aura::BrowserController browser(path, binary / "fonts/InterVariable.ttf", scale, accelerated,
+                                    {}, false, safe_mode);
+    browser.state()->verbose_logging = verbose;
+    if (safe_mode)
+        for (auto &e : browser.extensions.items) {
+            e.load_requested = false;
+            e.runtime_version.clear();
+        }
     aura::PumpSchedule schedule([&browser] { browser.window->wake(); });
     if (command->HasSwitch("theme")) {
         const auto theme = command->GetSwitchValue("theme").ToString();
@@ -59,23 +98,34 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
     }
     std::vector<std::string> restart_arguments{"--data-dir=" + aura::utf8_path(path),
                                                "--resume-session"};
-    for (const char *name : {"report", "scale", "gpu", "software-rendering"})
+    for (const char *name : {"report", "diagnostic-report", "diagnostic-verbose", "scale", "gpu",
+                             "software-rendering", "window-system"})
         if (command->HasSwitch(name)) {
             auto value = command->GetSwitchValue(name).ToString();
-            if (std::string_view(name) == "report" && !value.empty())
+            if ((std::string_view(name) == "report" ||
+                 std::string_view(name) == "diagnostic-report") &&
+                !value.empty())
                 value = aura::utf8_path(std::filesystem::absolute(aura::path_from_utf8(value)));
             restart_arguments.push_back(std::string("--") + name +
                                         (value.empty() ? "" : "=" + value));
         }
     auto extension_paths = browser.extensions.enabled_paths();
-    if (command->HasSwitch("load-extension"))
+    if (!safe_mode && command->HasSwitch("load-extension"))
         extension_paths = command->GetSwitchValue("load-extension").ToString();
+    if (safe_mode)
+        extension_paths.clear();
     CefRefPtr<aura::DiagnosticApp> app = new aura::DiagnosticApp(
-        schedule, false, !accelerated, extension_paths.empty() ? "-" : extension_paths);
+        schedule, false, !accelerated, extension_paths.empty() ? "-" : extension_paths, safe_mode,
+        verbose, browser.window->backend());
     app->relaunch = [&browser](CefRefPtr<CefCommandLine> incoming) {
+        if (incoming->HasSwitch("safe-mode") && !browser.safe_mode()) {
+            browser.restart_in_mode(true);
+            return;
+        }
         browser.new_window(incoming->HasSwitch("private"),
                            incoming->GetSwitchValue("url").ToString());
     };
+    browser.prepare_spelling_resources();
     CefSettings settings;
     settings.windowless_rendering_enabled = true;
     settings.external_message_pump = true;
@@ -83,7 +133,8 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
     CefString(&settings.cache_path) = aura::utf8_path(path / "cache/default");
     settings.persist_session_cookies = true;
     CefString(&settings.accept_language_list) = browser.profile.site_language;
-    CefString(&settings.log_file) = aura::utf8_path(path / "cef.log");
+    CefString(&settings.log_file) = aura::utf8_path(path / "diagnostics/cef-verbose.log");
+    settings.log_severity = verbose ? LOGSEVERITY_DEFAULT : LOGSEVERITY_DISABLE;
     if (!CefInitialize(args, settings, app, sandbox_info)) {
         const auto code = CefGetExitCode();
         if (code == CEF_RESULT_CODE_NORMAL_EXIT_PROCESS_NOTIFIED) {
@@ -102,7 +153,6 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
     }
     std::vector<std::unique_ptr<aura::BrowserController>> additional_windows;
     std::vector<aura::BrowserController *> hidden_windows;
-    int retired_created = 0, retired_closed = 0;
     auto group_report = [&] {
         auto text = browser.report();
         text.pop_back();
@@ -116,7 +166,10 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
             first = false;
             text += w->report();
         }
-        int created = retired_created, closed = retired_closed;
+        int created =
+            browser.state()->retired_created + browser.state()->extension_access.created_count();
+        int closed =
+            browser.state()->retired_closed + browser.state()->extension_access.closed_count();
         for (auto *w : browser.state()->windows) {
             created += w->created_count();
             closed += w->closed_count();
@@ -131,16 +184,21 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
         return all && browser.state()->pending_windows.empty();
     };
     std::string report;
+    std::string diagnostics;
+    const auto diagnostic_path =
+        command->HasSwitch("diagnostic-report")
+            ? aura::path_from_utf8(command->GetSwitchValue("diagnostic-report").ToString())
+            : std::filesystem::path{};
     const auto report_path =
         command->HasSwitch("report")
             ? aura::path_from_utf8(command->GetSwitchValue("report").ToString())
             : std::filesystem::path{};
-    auto write_report = [&](const std::string &text) {
-        if (report_path.empty())
+    auto write_file = [&](const std::filesystem::path &target, const std::string &text) {
+        if (target.empty())
             return;
-        if (!report_path.parent_path().empty())
-            std::filesystem::create_directories(report_path.parent_path());
-        auto temporary = report_path;
+        if (!target.parent_path().empty())
+            std::filesystem::create_directories(target.parent_path());
+        auto temporary = target;
         temporary += ".tmp";
         {
             std::ofstream out(temporary);
@@ -148,8 +206,11 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
             if (!out)
                 throw std::runtime_error("Cannot write browser report");
         }
-        aura::replace_file(temporary, report_path);
+        aura::replace_file(temporary, target);
     };
+#ifndef _WIN32
+    QuitSignals quit_signals;
+#endif
     try {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
         while (!app->context_ready()) {
@@ -167,6 +228,12 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
         auto last_pump = std::chrono::steady_clock::now();
         schedule.schedule(0);
         while (!finished()) {
+#ifndef _WIN32
+            if (quit_signal) {
+                quit_signal = 0;
+                browser.request_exit();
+            }
+#endif
             auto shared = browser.state();
             while (!shared->pending_windows.empty() && !shared->exiting) {
                 auto request = std::move(shared->pending_windows.front());
@@ -214,15 +281,17 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
                 browser.restart_on_exit = browser.restart_on_exit || closed->restart_on_exit;
                 browser.install_update_on_exit =
                     browser.install_update_on_exit || closed->install_update_on_exit;
-                retired_created += closed->created_count();
-                retired_closed += closed->closed_count();
+                browser.state()->retired_created += closed->created_count();
+                browser.state()->retired_closed += closed->closed_count();
                 closed->detach_window();
                 std::erase(hidden_windows, closed);
                 it = additional_windows.erase(it);
             }
-            if (!report_path.empty() &&
+            if ((!report_path.empty() || !diagnostic_path.empty()) &&
                 std::chrono::steady_clock::now() - last_report > std::chrono::milliseconds(250)) {
-                write_report(group_report());
+                if (!report_path.empty())
+                    write_file(report_path, group_report());
+                write_file(diagnostic_path, browser.diagnostics_report());
                 last_report = std::chrono::steady_clock::now();
             }
             for (auto *w : shared->windows)
@@ -231,6 +300,7 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
             browser.window->wait(std::min(16, schedule.wait_ms()));
         }
         report = group_report();
+        diagnostics = browser.diagnostics_report();
         for (auto *w : browser.state()->windows)
             w->prepare_shutdown();
         app = nullptr;
@@ -247,7 +317,8 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
         CefShutdown();
         throw;
     }
-    write_report(report);
+    write_file(report_path, report);
+    write_file(diagnostic_path, diagnostics);
     for (auto *w : browser.state()->windows) {
         browser.restart_on_exit = browser.restart_on_exit || w->restart_on_exit;
         browser.install_update_on_exit =
@@ -258,6 +329,10 @@ int run(const CefMainArgs &args, CefRefPtr<CefCommandLine> command, void *sandbo
         std::cerr << "Aura: could not launch the verified update installer.\n";
     }
     if (browser.restart_on_exit && !browser.install_update_on_exit) {
+        const bool next_safe =
+            browser.state()->restart_mode < 0 ? safe_mode : browser.state()->restart_mode == 1;
+        if (next_safe)
+            restart_arguments.push_back("--safe-mode");
 #ifdef _WIN32
         const auto executable = binary / "aura_browser.exe";
 #else

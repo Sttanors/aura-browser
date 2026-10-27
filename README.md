@@ -6,19 +6,27 @@
 
 Aura is a desktop browser built with **C++20, Chromium Embedded Framework (CEF OSR), and Skia**.
 The browser interface is drawn natively with Skia; HTML is used for the websites you visit.
-Linux uses X11/XWayland; Windows uses Win32. Both versions share the browser and interface code.
+Linux uses X11/XWayland by default; an opt-in [native Wayland backend](docs/wayland.md)
+is available as an experimental preview. Windows uses Win32. Both versions share the browser and interface code.
 
 **Developed with substantial AI assistance (OpenAI Codex)** for design, implementation,
 documentation and automated checks. The project owner directs the product and makes product decisions.
 AI assistance does not imply that the software is error-free. Aura is currently a preview.
 
-**Release 0.4.0 Preview 1** includes all 15 additions recorded in the
+Aura includes the original 15 additions recorded in the
 [feature progress journal](docs/features-progress.md) (Russian): workspaces, groups, containers, profiles,
 reader/translation tools, site controls, bookmark/session managers, screenshots and configurable hotkeys.
 
+**Release 0.5.0 Preview 1** also includes site zoom, container routing, improved
+downloads, a process manager, reading list, custom search engines, duplicate cleanup,
+tree/horizontal tabs, live tab transfer, local RU/EN spelling, extension site access,
+[safe diagnostic mode](docs/safe-mode.md), [native Wayland preview](docs/wayland.md)
+and [real background document unloading](docs/tab-memory.md).
+The [progress journal](docs/improvements-progress.md) records implementation and checks.
+
 ## Download and install
 
-Get the files from [GitHub Releases](https://github.com/Sttanors/aura-browser/releases/tag/v0.4.0-preview.2).
+Get the files from [GitHub Releases](https://github.com/Sttanors/aura-browser/releases/tag/v0.5.0-preview.1).
 SHA-256 checksum files accompany each download. Installers contain the browser runtime. Native Linux package managers can download system-library dependencies.
 
 | Platform | Installer | How to install |
@@ -35,9 +43,9 @@ Close Aura before upgrading.
 
 | Distribution (x86_64) | Install downloaded package | Remove |
 |---|---|---|
-| Arch Linux / CachyOS (current rolling) | `sudo pacman -U ./aura-browser-0.4.0rc2-1-x86_64.pkg.tar.gz` | `sudo pacman -R aura-browser` |
-| Debian 13+ | `sudo apt install './aura-browser_0.4.0-preview.2-1_amd64.deb'` | `sudo apt remove aura-browser` |
-| Fedora 44 | `sudo dnf install './aura-browser-0.4.0-preview.2-1.x86_64.rpm'` | `sudo dnf remove aura-browser` |
+| Arch Linux / CachyOS (current rolling) | `sudo pacman -U ./aura-browser-0.5.0rc1-1-x86_64.pkg.tar.gz` | `sudo pacman -R aura-browser` |
+| Debian 13+ | `sudo apt install './aura-browser_0.5.0-preview.1-1_amd64.deb'` | `sudo apt remove aura-browser` |
+| Fedora 44 | `sudo dnf install './aura-browser-0.5.0-preview.1-1.x86_64.rpm'` | `sudo dnf remove aura-browser` |
 
 Native package managers install required system libraries. These packages are built against Debian 13's
 ABI, rather than the newer ABI of the original development machine; Debian 12 is not a supported target.
@@ -287,7 +295,8 @@ Clearing Aura history does not clear CEF cookies/site data. Private CEF contexts
 ### Linux
 
 Requirements: C++20 Clang, CMake 3.31+, Python 3.12+, pkg-config, X11/EGL/GLES3,
-Xext/Xpresent/Xrandr and wayland-client development headers, Rust/Cargo 1.88+,
+Xext/Xpresent/Xrandr, wayland-client/libxkbcommon development headers and
+wayland-protocols, Rust/Cargo 1.88+,
 OpenSSL/libarchive/SQLite3 headers and your distribution's CEF runtime dependencies.
 Bootstrap downloads GN/Ninja and locked dependencies, but does not install system packages.
 Allow several GB of disk space. URLs/checksums are pinned in `third_party/dependencies.lock.json`;
@@ -329,12 +338,11 @@ The optional legacy GPU harness requires bootstrap `--diagnostic-angle` and CMak
 
 ## Validation
 
-[Windows browser CI](https://github.com/Sttanors/aura-browser/actions/runs/39602429743)
-passed compilation, unit tests, native browser integration (Unicode input, settings,
-filter editing, multiple normal/private windows and relaunch), portable packaging and installer checks.
-Linux currently passes 86 CTest cases and 23 Python tests. Feature-specific GUI results
-and remaining limits are recorded in [the progress journal](docs/browser-roadmap-progress.md).
-All Linux GUI checks use an isolated software display; physical GPU/monitor behavior is a separate check.
+Release checks are recorded in [the 0.5.0 validation report](docs/releases/0.5.0-preview.1-validation.md):
+Linux unit/integration tests, native Wayland, actual document unloading, installer lifecycle,
+and Windows build/native browser/portable/installer CI. The current suite has 170 CTest entries.
+[The progress journal](docs/improvements-progress.md) records checks for individual features.
+All Linux GUI checks use isolated software displays; physical GPU/monitor behavior is a separate check.
 
 ```bash
 python3 scripts/verify_browser.py --suite=all
@@ -346,7 +354,11 @@ and Xwayland SHM display with GLX disabled; it does not use your desktop display
 Direct GUI smoke scripts refuse to run outside that isolated display.
 Checks cover navigation/input, tabs, bookmarks/find, dialogs/downloads, private cookies,
 settings/content permissions, protection/extensions and persistence.
-Individual suites include `browser`, `settings`, `features`, `interface` and `wallpaper`.
+Individual suites include `discard`, `browser`, `settings`, `features`, `interface` and `wallpaper`.
+Native Wayland checks use `python3 scripts/verify_wayland.py` (and `--scale=2`),
+requiring Weston 15 with libweston development headers, a C compiler and Pillow.
+They use a separate private Pixman compositor without DISPLAY/XWayland/GPU;
+see [the Wayland validation limits](docs/wayland.md).
 Reports/screenshots are written under `artifacts/`. Windows GUI checks run only on disposable CI runners.
 
 ## Packaging and source layout

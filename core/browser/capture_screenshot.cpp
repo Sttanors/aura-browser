@@ -27,6 +27,11 @@ void BrowserController::cancel_screenshot() {
     changed();
 }
 void BrowserController::capture_screenshot(CaptureRect relative) {
+    if (safe_mode()) {
+        screenshot.error = tr("This tool is paused in safe mode.");
+        changed();
+        return;
+    }
     auto t = tab(screenshot.tab);
     if (screenshot.native_running) {
         screenshot.error = tr("Wait for the previous capture to finish.");

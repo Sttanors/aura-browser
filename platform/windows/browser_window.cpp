@@ -270,7 +270,9 @@ struct BrowserWindow::Impl {
                 if (b)
                     return HTBOTTOM;
             }
-            if (p.y < 30 * scale && p.x >= 240 * scale && p.x < (width - 144) * scale)
+            if (p.y >= 0 && p.y < 30 * scale && p.x < (width - 144) * scale &&
+                (callbacks.caption ? callbacks.caption(int(p.x / scale), int(p.y / scale))
+                                   : p.x >= 240 * scale))
                 return HTCAPTION;
             return HTCLIENT;
         }
@@ -432,6 +434,10 @@ void BrowserWindow::show() {
     ShowWindow(handle(), SW_SHOW);
     UpdateWindow(handle());
 }
+void BrowserWindow::activate() {
+    ShowWindow(handle(), SW_RESTORE);
+    SetForegroundWindow(handle());
+}
 void BrowserWindow::dispatch() {
     MSG message;
     while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
@@ -532,4 +538,38 @@ std::string BrowserWindow::renderer() const {
 std::uint64_t BrowserWindow::frames() const {
     return impl_->frame_count;
 }
+
+void BrowserWindow::clear_callbacks() { impl_->callbacks = {}; }
+std::pair<int, int> BrowserWindow::screen_point(int x, int y) const {
+    POINT p{LONG(std::lround(x * impl_->scale)), LONG(std::lround(y * impl_->scale))};
+    ClientToScreen(handle(), &p);
+    return {p.x, p.y};
+}
+std::optional<std::pair<int, int>> BrowserWindow::point_from(const BrowserWindow &source, int x,
+                                                             int y) const {
+    if (!IsWindowVisible(handle()) || IsIconic(handle()))
+        return {};
+    const auto screen = source.screen_point(x, y);
+    POINT p{screen.first, screen.second};
+    const auto front = WindowFromPoint(p);
+    if (!front || GetAncestor(front, GA_ROOT) != handle() || !ScreenToClient(handle(), &p))
+        return {};
+    RECT r{};
+    GetClientRect(handle(), &r);
+    if (p.x < 0 || p.y < 0 || p.x >= r.right || p.y >= r.bottom)
+        return {};
+    return std::pair<int, int>{int(p.x / impl_->scale), int(p.y / impl_->scale)};
+}
+} // namespace aura
+
+namespace aura {
+std::string BrowserWindow::backend() const { return "win32"; }
+} // namespace aura
+
+namespace aura {
+bool BrowserWindow::begin_tab_drag() { return false; }
+} // namespace aura
+
+namespace aura {
+void BrowserWindow::cancel_composition() {}
 } // namespace aura

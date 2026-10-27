@@ -135,7 +135,7 @@ def main():
                         # Reports and ordinary profile/log files must never contain fixture passwords.
                         assert not state()['audit'].get('password_preference_errors',0)
                         secrets=('fictional-filled-password','fictional-captured-password',master,transfer)
-                        for item in (profile/'profile.toml',profile/'aura.log',report):
+                        for item in (profile/'profile.toml',profile/'diagnostics/events.log',report):
                             data=item.read_text();assert not any(secret in data for secret in secrets),item
                         key_at(window,'Escape');key_at(window,'Escape');key_at(window,'q',4);proc.wait(timeout=15);assert proc.returncode==0
                     finally:

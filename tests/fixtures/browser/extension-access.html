@@ -1,0 +1,6 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Access pending</title>
+<script>
+setInterval(() => document.title = document.documentElement.dataset.extAccess === 'yes' ? 'Access injected' : 'Access withheld', 100);
+</script>

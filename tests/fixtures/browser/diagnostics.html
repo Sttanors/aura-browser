@@ -1,0 +1,10 @@
+<!doctype html><meta charset="utf-8"><title>DIAGNOSTIC_PRIVATE_TITLE</title>
+<style>body{background:white;color:black}button{position:absolute;left:20px;top:100px;width:160px;height:40px}</style>
+<h1>DIAGNOSTIC_PRIVATE_TITLE</h1><input value="PRIVATE_PASSWORD_SENTINEL" type="password">
+<button onclick="onbeforeunload=onbeforeunload?null:()=>true">Protect page</button>
+<script src="/ads/cbr.js"></script>
+<script>
+const token=Math.random().toString(36);
+console.log('AURA_MV3_PROBE:',location.href,'PRIVATE_PASSWORD_SENTINEL');
+setInterval(()=>document.title=JSON.stringify({token,extension:document.documentElement.dataset.extAccess==='yes',dark:!!document.querySelector('style.darkreader'),ad:!!window.diagnosticAd,protected:!!window.onbeforeunload}),100);
+</script>

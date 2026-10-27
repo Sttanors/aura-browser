@@ -6,7 +6,12 @@
 #include "common/paint_buffer.hpp"
 #include "common/platform.hpp"
 #include "common/pump_schedule.hpp"
+#include "common/text.hpp"
+#include "core/browser/download_hash.hpp"
+#include "core/browser/duplicate_tabs.hpp"
+#include "core/browser/process_tasks.hpp"
 #include "core/browser/profiles.hpp"
+#include "core/browser/reading_list.hpp"
 #include "core/browser/screenshot.hpp"
 #include "core/browser/translation.hpp"
 #include <climits>
@@ -379,6 +384,51 @@ TEST(Preferences, CatalogRoundTripsEverySettingAndRejectsInvalidInput) {
     EXPECT_FALSE(set_setting(defaults, *find_setting("download_directory"), "relative/path"));
     EXPECT_FALSE(set_setting(defaults, *find_setting("minimum_font_size"), "500"));
     EXPECT_FALSE(set_setting(defaults, *find_setting("notifications"), "allow"));
+}
+TEST(Profile, SiteZoomPersistsSeparatesContainersValidatesAndResets) {
+    TemporaryProfile temp;
+    Profile p(temp.path);
+    const int work = p.add_container("Work");
+    ASSERT_TRUE(update_site_zoom(p.site_zooms, "example.test", 0, 1.0));
+    ASSERT_TRUE(update_site_zoom(p.site_zooms, "example.test", work, -1.0));
+    EXPECT_FALSE(update_site_zoom(p.site_zooms, "example.test:80", 0, 1));
+    EXPECT_FALSE(update_site_zoom(p.site_zooms, "[::1]:123", 0, 1));
+    EXPECT_FALSE(update_site_zoom(p.site_zooms, "bad/host", 0, 1));
+    EXPECT_FALSE(update_site_zoom(p.site_zooms, "example.test", 0,
+                                  std::numeric_limits<double>::quiet_NaN()));
+    EXPECT_FALSE(update_site_zoom(p.site_zooms, "example.test", 0, 6));
+    p.save();
+    Profile restored(temp.path);
+    EXPECT_DOUBLE_EQ(*find_site_zoom(restored.site_zooms, "example.test", 0), 1);
+    EXPECT_DOUBLE_EQ(*find_site_zoom(restored.site_zooms, "example.test", work), -1);
+    EXPECT_FALSE(find_site_zoom(restored.site_zooms, "other.test", 0));
+    ASSERT_TRUE(update_site_zoom(restored.site_zooms, "example.test", 0, {}));
+    EXPECT_FALSE(find_site_zoom(restored.site_zooms, "example.test", 0));
+    ASSERT_TRUE(restored.remove_container(work));
+    EXPECT_TRUE(restored.site_zooms.empty());
+    for (int i = 0; i < 1000; ++i)
+        ASSERT_TRUE(
+            update_site_zoom(restored.site_zooms, "site" + std::to_string(i) + ".test", 0, 1));
+    EXPECT_FALSE(update_site_zoom(restored.site_zooms, "overflow.test", 0, 1));
+    EXPECT_TRUE(update_site_zoom(restored.site_zooms, "site0.test", 0, 2));
+    EXPECT_EQ(restored.site_zooms.size(), 1000);
+}
+TEST(Preferences, HomeAddressValidatesAuthorityAndKeepsPreviousSettingOnFailure) {
+    for (const auto *address :
+         {"https://[broken", "https://example.com:99999/", "https://example.com:0/",
+          "https://bad..host/", "https://user@example.com/", "http://300.400.1.2/",
+          "http://[not-ip]/", "https://-bad.example/", "https://example.com\\@other.test/",
+          "https:///path"}) {
+        BrowserPreferences p;
+        const auto before = p.home_page;
+        EXPECT_FALSE(valid_home_address(address)) << address;
+        EXPECT_FALSE(set_setting(p, *find_setting("home_page"), address)) << address;
+        EXPECT_EQ(p.home_page, before);
+    }
+    for (const auto *address :
+         {"https://example.com:8443/path?q=1#part", "http://localhost/", "http://intranet/",
+          "http://127.0.0.1:8080/", "https://[2001:db8::1]:8443/", "https://пример.рф/"})
+        EXPECT_TRUE(valid_home_address(address)) << address;
 }
 TEST(Profile, RetentionAndSuggestionSourcesRespectPreferences) {
     TemporaryProfile temp;
@@ -956,6 +1006,16 @@ TEST(Translation, EncodesTextAndPageAsDataAndRejectsUnsupportedModes) {
     EXPECT_NO_THROW(translation_url("google", "en", false, std::string(5000, 'a')));
 }
 
+TEST(Permissions, ExtensionSitesKeepExactHostsAndSchemesWhileIgnoringPorts) {
+    EXPECT_EQ(extension_site_pattern(" HTTPS://Example.COM:8443/ "), "https://example.com/*");
+    EXPECT_EQ(extension_site_pattern("http://127.0.0.2:1234"), "http://127.0.0.2/*");
+    EXPECT_EQ(extension_site_pattern("https://[::1]:443/*"), "https://[::1]/*");
+    for (const auto *site : {"", "<all_urls>", "https://*.example.com", "*://example.com/*",
+                             "https://example.com/path", "https://example.com?query",
+                             "https://user@example.com", "https://example.com\\evil",
+                             "file:///tmp/a", "javascript:alert(1)", "https://example.com:99999"})
+        EXPECT_TRUE(extension_site_pattern(site).empty()) << site;
+}
 TEST(Permissions, OriginsHaveExactSchemeHostPortAndNeverWildcardOrCredentials) {
     for (const auto &origin :
          {"https://example.com", "https://www.example.com:8443", "http://127.0.0.1:3030",
@@ -1125,6 +1185,26 @@ TEST(Bookmarks, OldFormatUnknownFoldersAndLimitsAreHandledWithoutLosingUrls) {
     EXPECT_EQ(p.add_bookmark_folder("One more"), -1);
     EXPECT_FALSE(p.rename_bookmark_folder(0, "Root"));
 }
+TEST(Bookmarks, LocalFilesCanBeSavedEditedAndExportedAfterRestart) {
+    TemporaryProfile temp;
+    Profile p(temp.path);
+    const std::string address = "file:///tmp/Manual%20RU.html";
+    p.toggle_bookmark(address, "Manual");
+    ASSERT_TRUE(p.edit_bookmark(address, "Локальный справочник", address, 0, "offline"));
+    p.toggle_bookmark("javascript:alert(1)", "Unsafe");
+    p.save();
+    Profile restored(temp.path);
+    ASSERT_EQ(restored.bookmarks.size(), 1);
+    size_t skipped = 999;
+    const auto html = bookmarks_html(restored.bookmarks, restored.bookmark_folders, &skipped);
+    EXPECT_EQ(skipped, 0);
+    EXPECT_NE(html.find(address), std::string::npos);
+    EXPECT_NE(html.find("Локальный справочник"), std::string::npos);
+    EXPECT_NE(html.find("TAGS=\"offline\""), std::string::npos);
+    EXPECT_FALSE(valid_bookmark_address("file://"));
+    EXPECT_FALSE(valid_bookmark_address("data:text/html,unsafe"));
+    EXPECT_FALSE(valid_bookmark_address("file:///tmp/bad\nname"));
+}
 TEST(Bookmarks, ExportEscapesEveryHtmlContextAndExcludesExecutableSchemes) {
     const std::vector<Visit> links = {{"https://example.test/?q=\"<x>&y='ok'",
                                        "<script>alert(1)</script>",
@@ -1133,7 +1213,9 @@ TEST(Bookmarks, ExportEscapesEveryHtmlContextAndExcludesExecutableSchemes) {
                                        {"\"tag\"", "A&B"}},
                                       {"javascript:alert(1)", "Unsafe", 0},
                                       {"https://orphan.test/", "Orphan", 0, 999, {}}};
-    const auto html = bookmarks_html(links, {{7, "<Work & \"stuff\">"}});
+    size_t skipped = 0;
+    const auto html = bookmarks_html(links, {{7, "<Work & \"stuff\">"}}, &skipped);
+    EXPECT_EQ(skipped, 1);
     EXPECT_NE(html.find("&lt;script&gt;"), std::string::npos);
     EXPECT_NE(html.find("&quot;&lt;x&gt;&amp;y=&#39;ok&#39;"), std::string::npos);
     EXPECT_NE(html.find("TAGS=\"&quot;tag&quot;,A&amp;B\""), std::string::npos);
@@ -1162,6 +1244,34 @@ TEST(Exports, AtomicBinaryOverwriteAndFailurePreserveChosenFile) {
     EXPECT_THROW(write_export("relative.html", "x"), std::exception);
 }
 
+TEST(Sessions, RussianCaseMatchingIsSharedAndLegacyDuplicatesKeepTheirData) {
+    EXPECT_EQ(fold_text("ЁЖ Работа WORK"), "ёж работа work");
+    TemporaryProfile temp;
+    Profile p(temp.path);
+    SavedWindow w;
+    w.tabs = {{"https://normal.test/"}};
+    const int first = p.save_named_session("Работа", {w});
+    ASSERT_GT(first, 0);
+    EXPECT_LT(p.save_named_session("рАбОтА", {w}), 0);
+    const int second = p.save_named_session("Учёба", {w});
+    ASSERT_GT(second, 0);
+    EXPECT_FALSE(p.rename_named_session(second, "РАБОТА"));
+    // Simulate a legacy file written before Russian case matching was fixed.
+    p.named_sessions[1].name = "работа";
+    p.named_sessions[1].windows[0].tabs[0].url = "https://legacy-kept.test/";
+    p.save();
+    Profile restored(temp.path);
+    ASSERT_EQ(restored.named_sessions.size(), 2);
+    EXPECT_NE(fold_text(restored.named_sessions[0].name),
+              fold_text(restored.named_sessions[1].name));
+    EXPECT_EQ(restored.named_session(second)->windows[0].tabs[0].url, "https://legacy-kept.test/");
+    EXPECT_TRUE(restored.named_session_available(first));
+    EXPECT_TRUE(restored.named_session_available(second));
+    restored.save();
+    Profile again(temp.path);
+    ASSERT_EQ(again.named_sessions.size(), 2);
+    EXPECT_EQ(again.named_session(second)->name, restored.named_session(second)->name);
+}
 TEST(Sessions, RoundTripRestoresPinnedActiveSplitAndOrganization) {
     TemporaryProfile temp;
     Profile p(temp.path);
@@ -1397,4 +1507,388 @@ TEST(Hotkeys, ProfileRoundtripKeepsDisabledActionsAndRejectsConflictingConfigura
     restored.load();
     EXPECT_TRUE(restored.hotkeys.empty());
     EXPECT_EQ(effective_hotkey(restored.hotkeys, "new_tab"), (Hotkey{'T', 1}));
+}
+
+TEST(Containers, RulesMatchBoundariesSpecificHostsAndPersist) {
+    TemporaryProfile temp;
+    Profile p(temp.path);
+    int work = p.add_container("Work");
+    ASSERT_TRUE(set_container_rule(p.container_rules, "example.test", work, true));
+    ASSERT_TRUE(set_container_rule(p.container_rules, "personal.example.test", 0, false));
+    EXPECT_EQ(match_container_rule(p.container_rules, "docs.example.test")->container, work);
+    EXPECT_EQ(match_container_rule(p.container_rules, "personal.example.test")->container, 0);
+    EXPECT_FALSE(match_container_rule(p.container_rules, "badexample.test"));
+    EXPECT_FALSE(match_container_rule(p.container_rules, "example.test.evil.test"));
+    EXPECT_EQ(match_container_rule(p.container_rules, "sub.personal.example.test")->container,
+              work);
+    EXPECT_FALSE(set_container_rule(p.container_rules, "example.test:443", work, false));
+    EXPECT_FALSE(set_container_rule(p.container_rules, "user@example.test", work, false));
+    EXPECT_FALSE(set_container_rule(p.container_rules, "EXAMPLE.test", work, false));
+    EXPECT_FALSE(set_container_rule(p.container_rules, "example.test/path", work, false));
+    EXPECT_FALSE(set_container_rule(p.container_rules, "example.test", -1, false));
+    ASSERT_TRUE(set_container_rule(p.container_rules, "[::1]", work, false));
+    p.save();
+    Profile restored(temp.path);
+    EXPECT_EQ(restored.container_rules.size(), 3);
+    EXPECT_EQ(match_container_rule(restored.container_rules, "[::1]")->container, work);
+    ASSERT_TRUE(restored.remove_container(work));
+    EXPECT_EQ(restored.container_rules.size(), 1);
+    for (int i = 0; i < 255; ++i)
+        ASSERT_TRUE(set_container_rule(restored.container_rules,
+                                       "site" + std::to_string(i) + ".test", 0, false));
+    EXPECT_FALSE(set_container_rule(restored.container_rules, "overflow.test", 0, false));
+    EXPECT_TRUE(set_container_rule(restored.container_rules, "personal.example.test", 0, true));
+}
+
+TEST(Containers, LoadedRulesRejectMissingContainersAndInvalidHosts) {
+    TemporaryProfile temp;
+    std::ofstream(temp.path / "profile.toml") << R"TOML(schema=16
+[[container_rules]]
+host="orphan.test"
+container=77
+[[container_rules]]
+host="bad.test/path"
+container=0
+[[container_rules]]
+host="good.test"
+container=0
+subdomains=true
+)TOML";
+    Profile p(temp.path);
+    ASSERT_EQ(p.container_rules.size(), 1);
+    EXPECT_EQ(p.container_rules.front().host, "good.test");
+    EXPECT_EQ(match_container_rule(p.container_rules, "sub.good.test")->container, 0);
+}
+
+TEST(Downloads, HashesFileAndRejectsInvalidDigestAndMissingFile) {
+    TemporaryProfile temp;
+    const auto file = temp.path / "download.bin";
+    std::ofstream(file, std::ios::binary) << "abc";
+    EXPECT_EQ(download_sha256(file),
+              "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    EXPECT_EQ(normalize_sha256(std::string(64, 'A')), std::string(64, 'a'));
+    EXPECT_TRUE(normalize_sha256(std::string(63, 'a')).empty());
+    EXPECT_TRUE(normalize_sha256(std::string(64, 'z')).empty());
+    EXPECT_THROW(download_sha256(temp.path / "missing"), std::exception);
+    EXPECT_THROW(download_sha256(temp.path), std::exception);
+}
+
+TEST(Processes, GroupsSharedMetricsProtectsHiddenTabsAndRejectsStaleTargets) {
+    ProcessTask first{10, 123, "Page process", 12.0, 4096, true, false, {{1, 1, 7, "First"}}};
+    ProcessTask second{11, 123, "Page process", 12.0, 4096, true, false, {{2, 1, 8, "Second"}}};
+    auto rows = group_process_tasks({first, second});
+    ASSERT_EQ(rows.size(), 1);
+    EXPECT_EQ(rows[0].memory, 4096);
+    EXPECT_EQ(rows[0].cpu, 12.0);
+    ASSERT_EQ(rows[0].tabs.size(), 2);
+    EXPECT_TRUE(rows[0].killable);
+    EXPECT_TRUE(same_process_target(rows[0], rows[0]));
+    auto changed = rows[0];
+    changed.tabs[0].navigation++;
+    EXPECT_FALSE(same_process_target(rows[0], changed));
+    changed = rows[0];
+    changed.task++;
+    EXPECT_FALSE(same_process_target(rows[0], changed));
+    second.hidden_tabs = true;
+    second.tabs.clear();
+    rows = group_process_tasks({first, second});
+    ASSERT_EQ(rows.size(), 1);
+    EXPECT_FALSE(rows[0].killable);
+    EXPECT_EQ(rows[0].tabs.size(), 1);
+    EXPECT_TRUE(group_process_tasks({second}).empty());
+    first.process = 0;
+    rows = group_process_tasks({first});
+    EXPECT_FALSE(rows[0].killable);
+    first.process = 123;
+    first.kind = "Browser process";
+    rows = group_process_tasks({first});
+    EXPECT_FALSE(rows[0].killable);
+}
+
+TEST(Hotkeys, TaskManagerChordHasReadableLabelAndCanBeReassigned) {
+    EXPECT_TRUE(allowed_hotkey({0x1B, 2}));
+    EXPECT_EQ(hotkey_label({0x1B, 2}), "Shift+Esc");
+    std::vector<HotkeyOverride> keys;
+    EXPECT_EQ(assign_hotkey(keys, "task_manager", {'M', 3}), "");
+    EXPECT_EQ(effective_hotkey(keys, "task_manager"), (Hotkey{'M', 3}));
+}
+
+TEST(Processes, RendererKeyUsesCefFramePrefixAndRejectsUnknownFormats) {
+    EXPECT_EQ(renderer_process_key("A-00000000000000000000000000000001"), 10);
+    EXPECT_EQ(renderer_process_key("B-00000000000000000000000000000001"), 11);
+    EXPECT_EQ(renderer_process_key("A-00000000000000000000000000000002"), 10);
+    for (auto value :
+         {"", "-token", "A-", "unknown", "G-token", "FFFFFFFFF-token", "80000000-token"})
+        EXPECT_EQ(renderer_process_key(value), 0);
+}
+
+TEST(ReadingList, PersistsTextSearchReadStateAndReplacement) {
+    const auto dir = std::filesystem::temp_directory_path() / "aura-reading-unit";
+    std::filesystem::remove_all(dir);
+    ReadingList list(dir);
+    SavedArticle a;
+    a.url = "https://example.com/story";
+    a.title = "Статья";
+    a.blocks = {{"p", "Секретный ЁЖ и offline text"}, {"h2", "Heading"}};
+    ASSERT_TRUE(list.save(a));
+    ASSERT_EQ(list.items().size(), 1u);
+    const int id = list.items()[0].id;
+    EXPECT_EQ(list.search("ёж"), std::vector<int>{id});
+    EXPECT_EQ(list.search("OFFLINE"), std::vector<int>{id});
+    ASSERT_TRUE(list.mark(id, true));
+    a.title = "Updated";
+    ASSERT_TRUE(list.save(a));
+    EXPECT_EQ(list.items().size(), 1u);
+    EXPECT_TRUE(list.find(id)->read);
+    ReadingList reloaded(dir);
+    ASSERT_TRUE(reloaded.available());
+    ASSERT_NE(reloaded.find(id), nullptr);
+    EXPECT_TRUE(reloaded.find(id)->read);
+    EXPECT_EQ(reloaded.find(id)->blocks.size(), 2u);
+    ASSERT_TRUE(reloaded.remove(id));
+    EXPECT_FALSE(ReadingList(dir).find(id));
+    ReadingList after_delete(dir);
+    ASSERT_TRUE(after_delete.save(a));
+    EXPECT_GT(after_delete.items()[0].id, id);
+    std::filesystem::remove_all(dir);
+}
+TEST(ReadingList, EscapesActiveContentAndBoundsStorage) {
+    SavedArticle a;
+    a.id = 1;
+    a.url = "https://example.com/";
+    a.title = "</title><script>attack()</script>";
+    a.blocks = {{"p", "<img src=x onerror=attack()> & text"}};
+    auto html = offline_article_html(a, true, 900, 1, true);
+    EXPECT_EQ(html.find("<script>"), std::string::npos);
+    EXPECT_EQ(html.find("<img"), std::string::npos);
+    EXPECT_NE(html.find("&lt;img"), std::string::npos);
+    EXPECT_NE(html.find("default-src 'none'"), std::string::npos);
+    EXPECT_NE(html.find("32px/1.7"), std::string::npos);
+    a.blocks[0].tag = "script";
+    EXPECT_FALSE(valid_article(a));
+    a.blocks = {{"p", std::string(513 * 1024, 'x')}};
+    EXPECT_FALSE(valid_article(a));
+    a.blocks = {{"p", "text"}};
+    a.url = "file:///etc/passwd";
+    EXPECT_FALSE(valid_article(a));
+}
+TEST(ReadingList, PreservesMalformedFileAndRollsBackFailedWrites) {
+    auto dir = std::filesystem::temp_directory_path() / "aura-reading-failure-unit";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    std::ofstream(dir / "reading-list.toml") << "not valid [";
+    ReadingList damaged(dir);
+    EXPECT_FALSE(damaged.available());
+    SavedArticle a;
+    a.url = "https://example.com/";
+    a.title = "Title";
+    a.blocks = {{"p", "Text"}};
+    EXPECT_FALSE(damaged.save(a));
+    std::ifstream in(dir / "reading-list.toml");
+    std::string text((std::istreambuf_iterator<char>(in)), {});
+    EXPECT_EQ(text, "not valid [");
+    in.close();
+    std::filesystem::remove_all(dir);
+    ReadingList list(dir);
+    ASSERT_TRUE(list.save(a));
+    std::filesystem::create_directory(dir / "reading-list.toml.tmp");
+    EXPECT_FALSE(list.mark(list.items()[0].id, true));
+    EXPECT_FALSE(list.items()[0].read);
+    EXPECT_FALSE(list.remove(list.items()[0].id));
+    EXPECT_EQ(list.items().size(), 1u);
+    std::filesystem::remove_all(dir);
+}
+
+TEST(SearchProviders, RequiresOneTokenOutsideAuthorityAndSafeURL) {
+    SearchProvider p{1, "Wiki", "w", "https://example.org/search?q={searchTerms}"};
+    EXPECT_TRUE(valid_search_provider(p));
+    for (const auto &url :
+         {"javascript:alert('{searchTerms}')", "file:///{searchTerms}",
+          "https://{searchTerms}.example.org/", "https://example.org:{searchTerms}/",
+          "https://example.org/", "https://example.org/?a={searchTerms}&b={searchTerms}",
+          "https://user:pass@example.org/?q={searchTerms}", "https://example.org/?q={other}",
+          "https://example.org/?q={searchTerms}&x={other}",
+          "https://example.org/?q={searchTerms}\n"}) {
+        p.url = url;
+        EXPECT_FALSE(valid_search_provider(p)) << url;
+    }
+    p.url = "http://127.0.0.1:8080/find/{searchTerms}";
+    EXPECT_TRUE(valid_search_provider(p));
+    p.keyword = "w.test";
+    EXPECT_FALSE(valid_search_provider(p));
+    p.keyword = "1w";
+    EXPECT_FALSE(valid_search_provider(p));
+}
+TEST(SearchProviders, EncodesQueryWithoutChangingTemplate) {
+    SearchProvider p{1, "Wiki", "w", "https://example.org/find/{searchTerms}?fixed=yes#section"};
+    EXPECT_EQ(search_address(p, "a b&c=1#%/ёж"),
+              "https://example.org/find/a%20b%26c%3D1%23%25%2F%D1%91%D0%B6?fixed=yes#section");
+    EXPECT_TRUE(search_address(p, "").empty());
+    EXPECT_TRUE(search_address(p, std::string(16385, 'x')).empty());
+}
+TEST(SearchProviders, ResolvesKeywordsDefaultAndOrdinaryAddresses) {
+    const std::vector<SearchProvider> providers = {
+        {1, "Wiki", "w", "https://wiki.test/?q={searchTerms}"},
+        {2, "Code", "gh", "https://code.test/search/{searchTerms}"}};
+    EXPECT_EQ(navigation_url(" W  hello world ", "bing", providers, 2),
+              "https://wiki.test/?q=hello%20world");
+    EXPECT_EQ(navigation_url("hello world", "bing", providers, 2),
+              "https://code.test/search/hello%20world");
+    EXPECT_EQ(navigation_url("missing hello", "bing", providers, 0),
+              "https://www.bing.com/search?q=missing%20hello");
+    EXPECT_EQ(navigation_url("example.com/path", "bing", providers, 2), "https://example.com/path");
+    EXPECT_EQ(navigation_url("http://localhost:8080/", "bing", providers, 2),
+              "http://localhost:8080/");
+    EXPECT_EQ(navigation_url("file:///tmp/doc.html", "bing", providers, 2), "file:///tmp/doc.html");
+    EXPECT_EQ(navigation_url("about:blank", "bing", providers, 2), "about:blank");
+    EXPECT_THROW(navigation_url("javascript:alert(1)", "bing", providers, 2),
+                 std::invalid_argument);
+    EXPECT_THROW(navigation_url("w " + std::string(16385, 'x'), "bing", providers, 2),
+                 std::invalid_argument);
+    EXPECT_EQ(navigation_url("hello world", "bing", providers, 999),
+              "https://www.bing.com/search?q=hello%20world");
+}
+TEST(SearchProviders, ProfileCRUDPersistsDefaultAndDoesNotReuseIDs) {
+    TemporaryProfile temp;
+    Profile p(temp.path);
+    int id = p.save_search_provider({0, " Wiki ", " W ", " https://example.org/?q={searchTerms} "});
+    ASSERT_GT(id, 0);
+    EXPECT_EQ(p.search_providers[0].keyword, "w");
+    EXPECT_EQ(p.save_search_provider({0, "Duplicate", "w", "https://example.org/?q={searchTerms}"}),
+              0);
+    p.default_search_provider = id;
+    EXPECT_EQ(p.current_search_name(), "Wiki");
+    ASSERT_EQ(
+        p.save_search_provider({id, "Updated", "wiki", "https://example.org/find/{searchTerms}"}),
+        id);
+    p.save();
+    Profile restored(temp.path);
+    EXPECT_EQ(restored.default_search_provider, id);
+    EXPECT_EQ(restored.current_search_name(), "Updated");
+    ASSERT_TRUE(restored.remove_search_provider(id));
+    EXPECT_EQ(restored.default_search_provider, 0);
+    restored.save();
+    Profile removed(temp.path);
+    EXPECT_GT(removed.save_search_provider({0, "New", "w", "https://example.org/?q={searchTerms}"}),
+              id);
+}
+TEST(SearchProviders, RejectsCapacityAndMalformedProfileRows) {
+    TemporaryProfile temp;
+    Profile p(temp.path);
+    for (int i = 0; i < 32; ++i)
+        ASSERT_GT(p.save_search_provider({0, "Engine", "w" + std::to_string(i),
+                                          "https://example.org/?q={searchTerms}"}),
+                  0);
+    EXPECT_EQ(p.save_search_provider({0, "Extra", "extra", "https://example.org/?q={searchTerms}"}),
+              0);
+    EXPECT_EQ(p.search_providers.size(), 32u);
+    std::ofstream file(temp.path / "profile.toml");
+    file << "default_search_provider=5\n[[search_providers]]\nid=1\nname='Valid'\nkeyword='w'\nurl="
+            "'https://example.org/?q={searchTerms}'\n"
+            "[[search_providers]]\nid=5\nname='Invalid'\nkeyword='bad'\nurl='javascript:{"
+            "searchTerms}'\n"
+            "[[search_providers]]\nid=6\nname='Duplicate'\nkeyword='w'\nurl='https://example.org/"
+            "?q={searchTerms}'\n";
+    file.close();
+    Profile loaded(temp.path);
+    ASSERT_EQ(loaded.search_providers.size(), 1u);
+    EXPECT_EQ(loaded.default_search_provider, 0);
+    EXPECT_EQ(loaded.search_providers[0].id, 1);
+}
+
+TEST(DuplicateTabs, MatchesFullURLAndContextAcrossWindowsAndWorkspaces) {
+    DuplicateTab a{{1, 1}, 7, "https://example.org/page?q=1#part", "One", 0, 0, 0, false, true, 0};
+    auto b = a;
+    b.ref = {2, 1};
+    b.workspace = 3;
+    b.current = false;
+    auto other = b;
+    other.ref.tab = 2;
+    other.url = "https://example.org/page?q=2#part";
+    auto anchor = b;
+    anchor.ref.tab = 3;
+    anchor.url = "https://example.org/page?q=1#other";
+    auto container = b;
+    container.ref.tab = 4;
+    container.container = 1;
+    auto groups = group_duplicate_tabs(std::vector<DuplicateTab>{a, b, other, anchor, container});
+    ASSERT_EQ(groups.size(), 1u);
+    EXPECT_EQ(groups[0].tabs.size(), 2u);
+    EXPECT_EQ(groups[0].tabs[1].workspace, 3);
+}
+TEST(DuplicateTabs, PrivateCopiesAreScopedToTheirWindow) {
+    DuplicateTab a{{1, 1}, 1, "https://example.org/", "Public"};
+    auto b = a;
+    b.ref.tab = 2;
+    auto priv = a;
+    priv.private_mode = true;
+    priv.ref = {2, 1};
+    auto priv2 = priv;
+    priv2.ref.tab = 2;
+    auto separate = priv;
+    separate.ref = {3, 1};
+    auto groups = group_duplicate_tabs(std::vector<DuplicateTab>{a, b, priv, priv2, separate});
+    ASSERT_EQ(groups.size(), 2u);
+    EXPECT_EQ(groups[0].private_window, 0u);
+    EXPECT_EQ(groups[1].private_window, 2u);
+    EXPECT_EQ(groups[1].tabs.size(), 2u);
+}
+TEST(DuplicateTabs, ProtectsPinnedBusyMediaDownloadsAndUsesScopedIDs) {
+    DuplicateTab a{{1, 1}, 1, "https://example.org/", "First", 0, 0, 0, false, true, 0};
+    auto pinned = a;
+    pinned.ref.tab = 2;
+    pinned.protection = DuplicatePinned;
+    auto remote = a;
+    remote.ref = {2, 1};
+    auto busy = a;
+    busy.ref.tab = 3;
+    busy.protection = DuplicateBusy;
+    auto media = a;
+    media.ref.tab = 4;
+    media.protection = DuplicateMedia;
+    auto download = a;
+    download.ref.tab = 5;
+    download.protection = DuplicateDownload;
+    auto groups =
+        group_duplicate_tabs(std::vector<DuplicateTab>{a, pinned, remote, busy, media, download});
+    ASSERT_EQ(groups.size(), 1u);
+    EXPECT_EQ(preferred_duplicate(groups[0]), pinned.ref);
+    auto plan = duplicate_close_plan(groups[0], a.ref);
+    ASSERT_EQ(plan.size(), 1u);
+    EXPECT_EQ(plan[0].ref, remote.ref);
+    EXPECT_TRUE(duplicate_close_plan(groups[0], {9, 9}).empty());
+}
+TEST(DuplicateTabs, DetectsStaleNavigationMembershipAndProtection) {
+    DuplicateTab a{{1, 1}, 1, "https://example.org/", "First"};
+    auto b = a;
+    b.ref.tab = 2;
+    auto g = group_duplicate_tabs(std::vector<DuplicateTab>{a, b})[0];
+    auto newer = g;
+    newer.tabs[0].title = "New title";
+    newer.tabs[0].current = true;
+    EXPECT_TRUE(same_duplicate_group(g, newer));
+    ++newer.tabs[0].navigation;
+    EXPECT_FALSE(same_duplicate_group(g, newer));
+    newer = g;
+    newer.tabs[1].workspace = 9;
+    EXPECT_FALSE(same_duplicate_group(g, newer));
+    newer = g;
+    newer.tabs[1].protection = DuplicatePinned;
+    EXPECT_FALSE(same_duplicate_group(g, newer));
+    newer = g;
+    newer.tabs.pop_back();
+    EXPECT_FALSE(same_duplicate_group(g, newer));
+}
+TEST(DuplicateTabs, ExcludesStartBlankExtensionAndMalformedPages) {
+    std::vector<DuplicateTab> tabs;
+    for (const auto &url :
+         {"aura://newtab", "about:blank",
+          "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/a.html", "https:///bad"}) {
+        tabs.push_back({{1, int(tabs.size() + 1)}, 1, url, "Hidden"});
+        tabs.push_back({{1, int(tabs.size() + 1)}, 1, url, "Hidden"});
+    }
+    EXPECT_TRUE(group_duplicate_tabs(tabs).empty());
+    tabs = {{{1, 1}, 1, "file:///tmp/article.html", "Saved"},
+            {{2, 1}, 1, "file:///tmp/article.html", "Saved"}};
+    ASSERT_EQ(group_duplicate_tabs(tabs).size(), 1u);
 }

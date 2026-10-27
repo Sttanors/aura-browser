@@ -28,7 +28,7 @@ add_custom_command(
           "${AURA_GENERATED}/aura/design_tokens.hpp"
   DEPENDS design/tokens.json scripts/generate_tokens.py VERBATIM)
 add_custom_target(aura_design_tokens DEPENDS "${AURA_GENERATED}/aura/design_tokens.hpp")
-add_library(aura_common common/exports.cpp core/browser/screenshot.cpp core/browser/hotkeys.cpp core/browser/sessions.cpp core/browser/bookmarks.cpp core/browser/permissions.cpp core/browser/translation.cpp common/file_lock.cpp core/browser/profiles.cpp common/platform.cpp common/config.cpp common/paint_buffer.cpp common/pump_schedule.cpp core/browser/profile.cpp core/browser/i18n.cpp core/browser/preferences.cpp core/browser/update_policy.cpp core/browser/passwords.cpp)
+add_library(aura_common common/diagnostics.cpp core/browser/spelling.cpp core/browser/tab_strip.cpp core/browser/tab_tree.cpp core/browser/duplicate_tabs.cpp core/browser/search_providers.cpp core/browser/reading_list.cpp core/browser/process_tasks.cpp core/browser/download_hash.cpp core/browser/container_rules.cpp core/browser/site_zoom.cpp common/exports.cpp core/browser/screenshot.cpp core/browser/hotkeys.cpp core/browser/sessions.cpp core/browser/bookmarks.cpp core/browser/permissions.cpp core/browser/translation.cpp common/file_lock.cpp core/browser/profiles.cpp common/platform.cpp common/config.cpp common/paint_buffer.cpp common/pump_schedule.cpp core/browser/profile.cpp core/browser/i18n.cpp core/browser/preferences.cpp core/browser/update_policy.cpp core/browser/passwords.cpp)
 target_include_directories(aura_common PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}" "${AURA_GENERATED}")
 target_link_libraries(aura_common PUBLIC tomlplusplus::tomlplusplus spdlog::spdlog OpenSSL::Crypto)
 add_dependencies(aura_common aura_design_tokens)
@@ -40,7 +40,7 @@ else()
 endif()
 
 if(BUILD_TESTING)
-  add_executable(aura_tests tests/common_tests.cpp tests/update_tests.cpp tests/password_tests.cpp)
+  add_executable(aura_tests tests/diagnostics_tests.cpp tests/common_tests.cpp tests/tab_tree_tests.cpp tests/tab_strip_tests.cpp tests/spelling_tests.cpp tests/update_tests.cpp tests/password_tests.cpp)
   target_link_libraries(aura_tests PRIVATE aura_common GTest::gtest_main)
   target_compile_definitions(aura_tests PRIVATE AURA_TEST_PYTHON="${Python3_EXECUTABLE}")
   include(GoogleTest)
@@ -127,7 +127,8 @@ if(AURA_BUILD_DIAGNOSTIC AND NOT APPLE)
   else()
     pkg_check_modules(AURA_ARCHIVE REQUIRED IMPORTED_TARGET libarchive)
     pkg_check_modules(AURA_WAYLAND REQUIRED IMPORTED_TARGET wayland-client)
-    set(AURA_BROWSER_LIBS X11::X11 X11::Xext PkgConfig::AURA_WAYLAND PkgConfig::AURA_EGL
+    include(cmake/wayland.cmake)
+    set(AURA_BROWSER_LIBS SDL3::SDL3-static X11::X11 X11::Xext PkgConfig::AURA_WAYLAND PkgConfig::AURA_EGL
       PkgConfig::AURA_GLES dl pthread PkgConfig::AURA_ARCHIVE)
     set(AURA_RUST_LIBRARY libaura_adblock.a)
     set(AURA_RUST_FLAGS "")
@@ -143,8 +144,8 @@ if(AURA_BUILD_DIAGNOSTIC AND NOT APPLE)
   add_library(aura_adblock STATIC IMPORTED)
   set_target_properties(aura_adblock PROPERTIES IMPORTED_LOCATION "${AURA_RUST_TARGET}/release/${AURA_RUST_LIBRARY}")
   add_dependencies(aura_adblock aura_adblock_build)
-  set(AURA_BROWSER_SOURCES app/browser_main.cpp core/browser/browser.cpp core/browser/client.cpp core/browser/devtools.cpp core/browser/tab_lifecycle.cpp core/browser/split_view.cpp core/browser/containers.cpp core/browser/protection.cpp core/browser/filter_lists.cpp core/browser/extensions.cpp core/browser/site_tools.cpp core/browser/extension_popup.cpp core/browser/updates.cpp core/browser/imports.cpp
-    core/cef/diagnostic_client.cpp core/browser/capture_screenshot.cpp core/browser/site_data.cpp core/browser/site_permissions.cpp core/browser/reader.cpp ui/browser_ui.cpp ui/wallpaper.cpp)
+  set(AURA_BROWSER_SOURCES app/browser_main.cpp core/browser/browser.cpp core/browser/client.cpp core/browser/devtools.cpp core/browser/tab_lifecycle.cpp core/browser/tab_transfer.cpp core/browser/spellcheck.cpp core/browser/tree_tabs.cpp core/browser/split_view.cpp core/browser/containers.cpp core/browser/downloads.cpp core/browser/task_manager.cpp core/browser/merge_duplicates.cpp core/browser/protection.cpp core/browser/filter_lists.cpp core/browser/extensions.cpp core/browser/site_tools.cpp core/browser/extension_popup.cpp core/browser/updates.cpp core/browser/imports.cpp
+    core/cef/diagnostic_client.cpp core/browser/extension_access.cpp core/browser/capture_screenshot.cpp core/browser/site_data.cpp core/browser/site_permissions.cpp core/browser/reader.cpp ui/browser_ui.cpp ui/wallpaper.cpp)
   if(WIN32)
     add_library(aura_browser SHARED ${AURA_BROWSER_SOURCES} platform/windows/browser_window.cpp render/cef_bridge/shared_texture_probe.cpp)
     target_link_libraries(aura_browser PRIVATE d3d11 dxgi)
@@ -154,7 +155,7 @@ if(AURA_BUILD_DIAGNOSTIC AND NOT APPLE)
     target_link_libraries(aura_browser PRIVATE ${CEF_STANDARD_LIBS})
     set_target_properties(aura_browser PROPERTIES PREFIX "")
   else()
-    add_executable(aura_browser ${AURA_BROWSER_SOURCES} platform/linux/x11/browser_window.cpp
+    add_executable(aura_browser ${AURA_BROWSER_SOURCES} platform/linux/browser_window.cpp platform/linux/wayland/browser_window.cpp platform/linux/wayland/clipboard.cpp platform/linux/x11/browser_window.cpp
       platform/linux/x11/software_presenter.cpp platform/linux/x11/wayland_refresh.cpp)
     target_compile_options(aura_browser PRIVATE -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers)
     set_target_properties(aura_browser PROPERTIES BUILD_RPATH "$ORIGIN")
@@ -168,6 +169,9 @@ if(AURA_BUILD_DIAGNOSTIC AND NOT APPLE)
   set_target_properties(aura_browser PROPERTIES COMPILE_DEFINITIONS "${AURA_BROWSER_DEFINITIONS}")
   if(BUILD_TESTING)
     if(NOT WIN32)
+      add_executable(aura_wayland_peer tests/wayland_peer.cpp platform/linux/wayland/browser_window.cpp platform/linux/wayland/clipboard.cpp)
+      target_link_libraries(aura_wayland_peer PRIVATE aura_common aura_skia SDL3::SDL3-static PkgConfig::AURA_WAYLAND)
+      target_include_directories(aura_wayland_peer PRIVATE "${CEF_ROOT}")
       add_executable(aura_wayland_tests tests/wayland_refresh_tests.cpp platform/linux/x11/wayland_refresh.cpp)
       target_link_libraries(aura_wayland_tests PRIVATE aura_common PkgConfig::AURA_WAYLAND GTest::gtest_main)
       gtest_discover_tests(aura_wayland_tests DISCOVERY_MODE PRE_TEST PROPERTIES TIMEOUT 3)
@@ -228,6 +232,7 @@ if(AURA_BUILD_DIAGNOSTIC AND NOT APPLE)
   endif()
   add_custom_target(aura_protection_resources ALL
     COMMAND "${CMAKE_COMMAND}" -E copy_directory "${PROJECT_SOURCE_DIR}/resources/protection" "$<TARGET_FILE_DIR:aura_browser>/protection"
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory "${PROJECT_SOURCE_DIR}/resources/Dictionaries" "$<TARGET_FILE_DIR:aura_browser>/Dictionaries"
     COMMAND "${CMAKE_COMMAND}" -E copy_directory "${PROJECT_SOURCE_DIR}/resources/reader" "$<TARGET_FILE_DIR:aura_browser>/reader"
     COMMAND "${CMAKE_COMMAND}" -E copy_directory "${PROJECT_SOURCE_DIR}/resources/vendor" "$<TARGET_FILE_DIR:aura_browser>/vendor" VERBATIM)
   add_dependencies(aura_browser aura_protection_resources)

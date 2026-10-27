@@ -1,26 +1,11 @@
 /* Aura local reader: article markup is never inserted into the live document. */
 function auraOpenReader(config) {
     if (globalThis.__auraReader) { globalThis.__auraReader.close(); return false; }
-    if(document.getElementsByTagName('*').length>50000) return 'too_large';
-    const clone = document.cloneNode(true);
-    const article = new Readability(clone, {maxElemsToParse: 50000, serializer: element => element}).parse();
-    if (!article || !article.content || article.textContent.trim().length < 300) return false;
-    if(article.textContent.length>2000000) return 'too_large';
-    const blocks = [];
-    let oversized=false;
-    function collect(node) {
-        if (blocks.length >= 2000) {oversized=true;return;}
-        if (node.nodeType !== 1) return;
-        if (/^(P|H[1-6]|LI|PRE|BLOCKQUOTE)$/.test(node.tagName)) {
-            const text = node.textContent.replace(/\s+/g, ' ').trim();
-            if (text) blocks.push({tag: /^H/.test(node.tagName) ? 'h2' : node.tagName === 'PRE' ? 'pre' : node.tagName === 'BLOCKQUOTE' ? 'blockquote' : 'p', text});
-        } else for (const child of node.children) collect(child);
-    }
-    collect(article.content);
-    if(oversized) return 'too_large';
-    if (!blocks.length) blocks.push({tag:'p',text:article.textContent});
+    const article = auraExtractArticle();
+    if (!article || article === 'too_large') return article;
+    const blocks = article.blocks;
     const previous = document.activeElement;
-    const host = document.createElement('dialog');
+    const host = document.createElement('dialog'); host.setAttribute('data-aura-reader','');
     for (const [key,value] of Object.entries({position:'fixed',inset:'0',margin:'0',padding:'0',width:'100vw',height:'100vh','max-width':'none','max-height':'none',border:'0',background:config.dark?'#0D111B':'#FAFBFF',color:config.dark?'#EDF3FF':'#182033','box-sizing':'border-box'})) host.style.setProperty(key,value,'important');
     host.setAttribute('aria-label',config.labels['Reader mode']);
     const mount = document.createElement('div');

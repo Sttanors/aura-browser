@@ -19,6 +19,10 @@ def main() -> None:
     args = parser.parse_args()
     platform = host()
     install(f"cef-{platform}", ROOT / "third_party/src" / f"cef-{platform}", args.offline)
+    if os.name != "nt":
+        install("sdl3", ROOT / "third_party/src/sdl3", args.offline)
+        from patch_sdl_wayland import patch as patch_wayland
+        patch_wayland()
     skia = install("skia", ROOT / "third_party/src/skia", args.offline)
     for name in ["googletest", "spdlog", "tomlplusplus"]:
         install(name, ROOT / "third_party/src" / name, args.offline)

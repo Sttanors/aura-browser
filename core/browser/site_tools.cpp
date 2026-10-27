@@ -28,6 +28,7 @@ std::string script(const std::filesystem::path &resources, const Profile &profil
 }
 } // namespace
 void BrowserController::configure_font_preferences(CefRefPtr<CefRequestContext> context) {
+    configure_spelling(context);
     // Aura owns the vault; do not offer a second Chromium save/sign-in path.
     for (const char *name : {"credentials_enable_service", "credentials_enable_autosignin"}) {
         if (!context->HasPreference(name))
@@ -62,7 +63,7 @@ void BrowserController::configure_font_preferences(CefRefPtr<CefRequestContext> 
     if (!context->SetPreference("webkit.webprefs.fonts.standard.Zyyy", value, error))
         ++audit["font_preference_errors"];
 }
-void BrowserController::setup_site_tools(int id, std::function<void()> ready) {
+void BrowserController::bind_site_tool_events(int id) {
     auto t = tab(id);
     if (!t || !t->devtools)
         return;
@@ -87,10 +88,15 @@ void BrowserController::setup_site_tools(int id, std::function<void()> ready) {
             auto c = p->GetDictionary("context");
             if (c && extensions.observe_origin(c->GetString("origin")))
                 changed();
+            if (c && c->GetString("name") == "Aura Spelling") {
+                t->spelling_contexts.insert(c->GetInt("id"));
+                update_spelling(*t, false);
+            }
             if (c && c->GetString("name") == "Aura Site Protection")
                 t->protection_contexts[c->GetInt("id")] = c->GetString("origin").ToString();
         } else if (method == "Runtime.executionContextDestroyed") {
             const int context = p->GetInt("executionContextId");
+            t->spelling_contexts.erase(context);
             t->protection_contexts.erase(context);
             if (context == t->reader_context) {
                 t->reader_active = t->reader_pending = false;
@@ -99,6 +105,8 @@ void BrowserController::setup_site_tools(int id, std::function<void()> ready) {
                 changed();
             }
         } else if (method == "Runtime.executionContextsCleared") {
+            t->spelling_contexts.clear();
+            t->spelling_supported = false;
             t->protection_contexts.clear();
             t->audio_contexts.clear();
             t->reader_active = t->reader_pending = false;
@@ -149,9 +157,20 @@ void BrowserController::setup_site_tools(int id, std::function<void()> ready) {
             });
         }
     };
+}
+void BrowserController::setup_site_tools(int id, std::function<void()> ready) {
+    auto t = tab(id);
+    if (!t || !t->devtools)
+        return;
+    bind_site_tool_events(id);
     t->devtools->call("WebAudio.enable");
     t->devtools->call("Runtime.enable");
     t->devtools->call("Page.enable");
+    if (safe_mode()) {
+        defer(std::move(ready));
+        return;
+    }
+    setup_spelling(*t);
     t->devtools->call(
         "Runtime.addBinding",
         "{\"name\":\"auraProtection\",\"executionContextName\":\"Aura Site Protection\"}");
@@ -169,6 +188,8 @@ void BrowserController::setup_site_tools(int id, std::function<void()> ready) {
         });
 }
 void BrowserController::update_site_tools(Tab &t) {
+    if (safe_mode())
+        return;
     if (!t.devtools)
         return;
     for (const auto &[context, origin] : t.protection_contexts)
@@ -192,6 +213,10 @@ void BrowserController::update_site_tools(Tab &t) {
                      });
 }
 void BrowserController::protection_menu() {
+    if (safe_mode()) {
+        ui->open_diagnostics();
+        return;
+    }
     auto t = current();
     bool web =
         t && !t->ntp && (t->page.url.starts_with("http://") || t->page.url.starts_with("https://"));
@@ -236,6 +261,10 @@ void BrowserController::protection_menu() {
     changed();
 }
 void BrowserController::extension_page(size_t index, bool options) {
+    if (safe_mode()) {
+        ui->toast(tr("Extensions are paused in safe mode."));
+        return;
+    }
     if (index >= extensions.items.size())
         return;
     auto &e = extensions.items[index];
@@ -267,6 +296,10 @@ std::string password_origin(const std::string &url) {
     return "https://" + host + (port.empty() || port == "443" ? "" : ":" + port);
 }
 void BrowserController::page_login(bool fill, size_t index) {
+    if (safe_mode()) {
+        ui->toast(tr("This tool is paused in safe mode."));
+        return;
+    }
     auto t = current();
     if (passwords.busy || !passwords.vault.unlocked()) {
         ui->toast(tr("Unlock the password vault first."));

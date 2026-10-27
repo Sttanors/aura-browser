@@ -5,6 +5,20 @@
 namespace aura {
 std::span<const SettingSpec> settings_catalog() {
     static const std::vector<SettingSpec> catalog = {
+        {"spellcheck", "Webpages", "Check spelling",
+         "Underline misspelled words locally. No text is sent to a spelling service.",
+         &BrowserPreferences::spellcheck},
+        {"spellcheck_languages",
+         "Webpages",
+         "Spelling languages",
+         "Use the bundled Russian and English dictionaries.",
+         &BrowserPreferences::spellcheck_languages,
+         SettingKind::Choice,
+         {{"both", "Russian and English"}, {"ru", "Russian"}, {"en", "English"}}},
+        {"remember_site_zoom", "Webpages", "Remember zoom for each site",
+         "Keep zoom per host and container. Ctrl 0 resets this site. Private values stay in "
+         "memory.",
+         &BrowserPreferences::remember_site_zoom},
         {"split_percent",
          "Tabs",
          "Split view left pane width",
@@ -15,10 +29,18 @@ std::span<const SettingSpec> settings_catalog() {
          25,
          75,
          1},
+        {"tab_sleep_mode",
+         "Tabs",
+         "Inactive tab action",
+         "Freeze keeps the document. Unload releases it and reloads it when selected; tab "
+         "navigation history is reset.",
+         &BrowserPreferences::tab_sleep_mode,
+         SettingKind::Choice,
+         {{"freeze", "Freeze"}, {"unload", "Unload"}}},
         {"tab_sleep_minutes",
          "Tabs",
-         "Put inactive tabs to sleep",
-         "Pause background pages and release their image buffers. Forms stay in memory.",
+         "Inactive tab timer",
+         "Apply the selected action to eligible background tabs. Protected pages stay loaded.",
          &BrowserPreferences::tab_sleep_minutes,
          SettingKind::Choice,
          {{"0", "Off"},
@@ -26,7 +48,7 @@ std::span<const SettingSpec> settings_catalog() {
           {"15", "After 15 minutes"},
           {"30", "After 30 minutes"},
           {"60", "After 60 minutes"}}},
-        {"tab_sleep_exceptions", "Tabs", "Never sleep these sites",
+        {"tab_sleep_exceptions", "Tabs", "Keep these sites loaded",
          "Domains separated by commas. Includes their subdomains.",
          &BrowserPreferences::tab_sleep_exceptions, SettingKind::Text},
         {"check_updates", "General", "Check for Aura updates",
@@ -127,6 +149,16 @@ std::span<const SettingSpec> settings_catalog() {
          &BrowserPreferences::site_language,
          SettingKind::Choice,
          {{"en-US,en", "English"}, {"ru-RU,ru,en-US,en", "Русский"}}},
+        {"tab_layout",
+         "Tabs",
+         "Tab bar position",
+         "Choose a sidebar or a horizontal tab bar. Pages stay open.",
+         &BrowserPreferences::tab_layout,
+         SettingKind::Choice,
+         {{"vertical", "Sidebar"}, {"horizontal", "Top"}}},
+        {"tree_tabs", "Tabs", "Tree tabs",
+         "Nest tabs opened from pages. Collapsing a branch keeps its pages open.",
+         &BrowserPreferences::tree_tabs},
         {"foreground_links", "Tabs", "Switch to links opened in tabs",
          "Select new tabs opened by links and popups.", &BrowserPreferences::foreground_links},
         {"tabs_at_end", "Tabs", "Add tabs at the end",
@@ -261,11 +293,11 @@ std::span<const SettingSpec> settings_catalog() {
         {"quick_links", "Start page", "Quick links", "Show shortcuts on the new tab page.",
          &BrowserPreferences::quick_links},
         {"show_tab_host", "Appearance", "Website names in tabs",
-         "Show the website address under each title.", &BrowserPreferences::show_tab_host},
+         "Show the website address under each sidebar title.", &BrowserPreferences::show_tab_host},
         {"reduce_motion", "Appearance", "Reduce motion",
          "Keep interface transitions and loading indicators still.",
          &BrowserPreferences::reduce_motion},
-        {"show_favicons", "Appearance", "Website icons", "Show favicons in the tab sidebar.",
+        {"show_favicons", "Appearance", "Website icons", "Show favicons in the tab bar.",
          &BrowserPreferences::show_favicons},
         {"show_status", "Appearance", "Link preview",
          "Show link destinations at the bottom of the page.", &BrowserPreferences::show_status},
@@ -511,11 +543,6 @@ std::string setting_value(const BrowserPreferences &p, const SettingSpec &s) {
                 return std::to_string(p.*member);
         },
         s.member);
-}
-bool valid_home_address(const std::string &v) {
-    const auto start = v.starts_with("https://") ? 8u : v.starts_with("http://") ? 7u : 0u;
-    return start && v.size() > start && v.find_first_of(" \t\r\n") == std::string::npos &&
-           v[start] != '/' && v[start] != '?' && v[start] != '#';
 }
 bool set_setting(BrowserPreferences &p, const SettingSpec &s, const std::string &value) {
     if (s.kind == SettingKind::Choice &&

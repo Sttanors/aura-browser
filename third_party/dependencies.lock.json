@@ -130,6 +130,12 @@
       "strip_root": false,
       "sha256": "a90e6feb48b1edc1cdf7717b755f5af1bf9fb052bde819ef748b930a6d16f26d",
       "tree_sha256": "b560c51dd0a96b976d9d1efc7af816b7d8fbb745c672a4536f6f7d1ba53d92a1"
+    },
+    "sdl3": {
+      "version": "3.4.18",
+      "url": "https://github.com/libsdl-org/SDL/releases/download/release-3.4.18/SDL3-3.4.18.tar.gz",
+      "archive": "sdl3.tar.gz",
+      "sha256": "9c75cf16330322c217dedd2e0609f1124f1b54b8633e763467b4684d0f4334a3"
     }
   }
 }

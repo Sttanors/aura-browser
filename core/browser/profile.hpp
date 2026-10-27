@@ -1,7 +1,10 @@
 #pragma once
+#include "core/browser/container_rules.hpp"
 #include "core/browser/hotkeys.hpp"
 #include "core/browser/permissions.hpp"
 #include "core/browser/preferences.hpp"
+#include "core/browser/search_providers.hpp"
+#include "core/browser/site_zoom.hpp"
 #include <array>
 #include <cstdint>
 #include <filesystem>
@@ -9,7 +12,8 @@
 #include <string>
 #include <vector>
 namespace aura {
-std::string navigation_url(std::string input, const std::string &engine = "duckduckgo");
+std::string navigation_url(std::string input, const std::string &engine = "duckduckgo",
+                           std::span<const SearchProvider> providers = {}, int custom_default = 0);
 std::string search_engine_name(const std::string &engine);
 std::string url_host(const std::string &url);
 struct Visit {
@@ -23,7 +27,9 @@ struct BookmarkFolder {
     std::string name;
 };
 std::optional<std::vector<std::string>> bookmark_tags(const std::string &text);
-std::string bookmarks_html(const std::vector<Visit> &, const std::vector<BookmarkFolder> &);
+bool valid_bookmark_address(const std::string &value);
+std::string bookmarks_html(const std::vector<Visit> &, const std::vector<BookmarkFolder> &,
+                           size_t *skipped = nullptr);
 struct Shortcut {
     std::string title, url;
 };
@@ -34,6 +40,8 @@ struct SavedTab {
     bool workspace_active = false;
     int group = 0;
     int container = 0;
+    int parent = -1; // Index within this saved window, never a runtime tab ID.
+    bool tree_collapsed = false;
 };
 struct SavedWindow {
     std::vector<SavedTab> tabs;
@@ -67,17 +75,28 @@ struct NamedSession {
 };
 bool valid_named_session(const NamedSession &);
 void remove_container_tabs(SavedWindow &window, int container);
+void normalize_tab_tree(SavedWindow &window);
+void remap_saved_tabs(SavedWindow &window, std::span<const int> source_indices);
 class Profile : public BrowserPreferences {
   public:
     explicit Profile(std::filesystem::path directory);
     std::filesystem::path directory;
     std::string profiles_root;
     std::vector<SitePermission> site_permissions;
+    std::vector<SiteZoom> site_zooms;
+    std::vector<ContainerRule> container_rules;
     std::vector<HotkeyOverride> hotkeys;
+    std::vector<std::string> spelling_words;
+    std::vector<SearchProvider> search_providers;
+    int default_search_provider = 0, next_search_provider = 1;
+    int save_search_provider(SearchProvider provider);
+    bool remove_search_provider(int id);
+    std::string current_search_name(const std::string &input = {}) const;
     std::vector<Visit> history, bookmarks;
     std::vector<BookmarkFolder> bookmark_folders;
     int next_bookmark_folder = 1;
     bool has_bookmark_folder(int id) const;
+    int bookmark_folder_id(std::string name) const;
     std::string bookmark_folder_label(int id) const;
     int add_bookmark_folder(std::string name, int assigned_id = 0);
     bool rename_bookmark_folder(int id, std::string name);

@@ -1,6 +1,7 @@
 #pragma once
 #include "common/text_editor.hpp"
 #include "core/browser/browser.hpp"
+#include "core/browser/tab_strip.hpp"
 #include "include/core/SkFont.h"
 #include "include/core/SkTypeface.h"
 #include "ui/wallpaper.hpp"
@@ -30,7 +31,14 @@ class BrowserUi {
         SiteData,
         Sessions,
         Screenshot,
-        Hotkeys
+        Hotkeys,
+        TaskManager,
+        ReadingListPanel,
+        SearchProviders,
+        DuplicateTabs,
+        SpellingDictionary,
+        ExtensionAccess,
+        Diagnostics
     };
     BrowserUi(BrowserController &owner, const std::filesystem::path &font);
     ~BrowserUi();
@@ -42,6 +50,10 @@ class BrowserUi {
     bool key_default(const CefKeyEvent &event);
     void open_hotkeys();
     std::string hotkeys_report() const;
+    void composition(const std::string &, int, int);
+    void cancel_ime();
+    bool composing() const { return preedit_browser_ || !preedit_.empty(); }
+    void commit_composition(const std::string &);
     void text(const std::string &value);
     bool tick();
     void focus_address(bool select = true);
@@ -68,6 +80,7 @@ class BrowserUi {
     std::string groups_report() const;
     void open_containers(int tab_id = -1);
     std::string containers_report() const;
+    std::string downloads_report() const;
     void open_profiles();
     std::string profiles_report() const;
     void open_commands();
@@ -86,9 +99,29 @@ class BrowserUi {
     void begin_screenshot_area();
     std::string screenshot_report() const;
     std::string bookmarks_report() const;
+    void open_duplicates();
+    std::string duplicates_report() const;
+    void open_spelling_dictionary();
+    std::string spelling_report() const;
+    void open_extension_access(const std::string &id);
+    std::string extension_access_report() const;
+    void open_diagnostics();
+    std::string diagnostics_report() const;
+    void open_search_providers();
+    std::string search_providers_report() const;
+    void open_reading_list();
+    std::string reading_report() const;
     void open_sessions();
     std::string sessions_report() const;
+    void open_task_manager();
+    std::string task_manager_report() const;
     std::string sidebar_report() const;
+    std::string tab_strip_report() const;
+    bool caption_hit(int x, int y) const;
+    bool tab_drop_at(int x, int y, int &before, Rect &marker) const;
+    void cancel_tab_gesture();
+    void open_tab_windows(int id);
+    bool sync_tab_layout();
     void passwords_locked() {
         clear_password_fields();
         password_mode_ = 0;
@@ -105,6 +138,10 @@ class BrowserUi {
     TextEditor address, find;
 
   private:
+    void draw_diagnostics(SkCanvas &, Rect);
+    void diagnostics_pointer(Rect, int, int);
+    std::string preedit_;
+    int preedit_browser_ = 0, preedit_start_ = 0, preedit_length_ = 0;
     BrowserController &app_;
     Rect screenshot_area_, screenshot_region_;
     bool screenshot_drag_ = false, screenshot_cancel_focus_ = false;
@@ -114,6 +151,49 @@ class BrowserUi {
     void draw_screenshot_area(SkCanvas &);
     void screenshot_area_pointer(const PointerInput &);
     void finish_screenshot_area(bool accept);
+    const std::vector<int> &reading_results() const;
+    mutable uint64_t reading_revision_ = ~uint64_t{0};
+    mutable std::string reading_query_;
+    mutable std::vector<int> reading_ids_;
+    std::vector<DuplicateGroup> duplicate_groups_;
+    std::optional<DuplicateGroup> duplicate_selected_;
+    DuplicateRef duplicate_keep_;
+    int duplicate_scroll_ = 0;
+    std::chrono::steady_clock::time_point duplicate_refresh_{};
+    void refresh_duplicates();
+    void draw_duplicates(SkCanvas &, Rect);
+    void duplicates_pointer(Rect, int, int);
+    std::array<Rect, 2> duplicate_buttons(Rect, int) const;
+    std::array<TextEditor, 3> provider_fields_;
+    bool provider_editing_ = false;
+    int provider_focus_ = -1, provider_id_ = 0, provider_scroll_ = 0;
+    std::string provider_error_;
+    void draw_search_providers(SkCanvas &, Rect);
+    void search_providers_pointer(Rect, int, int);
+    void save_search_provider();
+    std::array<Rect, 3> provider_buttons(Rect, int) const;
+    void draw_spelling(SkCanvas &, Rect);
+    void spelling_pointer(Rect, int, int);
+    void save_spelling_word();
+    std::vector<std::string> spelling_results() const;
+    TextEditor spelling_input_;
+    bool spelling_focus_ = false, spelling_private_ = false;
+    int spelling_scroll_ = 0;
+    std::string spelling_error_;
+    void draw_extension_access(SkCanvas &, Rect);
+    void extension_access_pointer(Rect, int, int);
+    void add_extension_site();
+    TextEditor extension_site_input_;
+    std::string extension_access_id_, extension_site_error_;
+    bool extension_site_focus_ = false, extension_sites_draft_ = false;
+    int extension_site_scroll_ = 0;
+    uint64_t extension_site_revision_ = 0;
+    TextEditor reading_search_;
+    bool reading_focus_ = false;
+    int reading_scroll_ = 0;
+    void draw_reading_list(SkCanvas &, Rect);
+    void reading_pointer(Rect, int, int);
+    std::array<Rect, 3> reading_buttons(Rect, int) const;
     TextEditor session_name_;
     bool session_input_focus_ = false;
     int session_edit_ = 0, session_scroll_ = 0;
@@ -190,7 +270,7 @@ class BrowserUi {
         bool enabled = true;
     };
     TextEditor command_query_;
-    int command_selected_ = 0, command_scroll_ = 0;
+    int command_selected_ = 0, command_scroll_ = 0, move_window_tab_ = 0;
     std::vector<CommandResult> command_results() const;
     void draw_commands(SkCanvas &, Rect);
     void commands_pointer(Rect, int, int);
@@ -205,6 +285,19 @@ class BrowserUi {
     void draw_profiles(SkCanvas &, Rect);
     void profiles_pointer(Rect, int, int);
     std::vector<int> listed_profiles() const;
+    bool container_rules_mode_ = false, container_rule_subdomains_ = false;
+    int container_rule_target_ = 0;
+    void draw_container_rules(SkCanvas &, Rect);
+    void container_rules_pointer(Rect, int, int);
+    void container_rule_picker(Rect, int page = 0);
+    std::string container_rules_report() const;
+    std::vector<ProcessTask> process_rows_;
+    int process_scroll_ = 0;
+    bool process_available_ = false;
+    std::chrono::steady_clock::time_point process_refresh_{};
+    void refresh_task_manager();
+    void draw_task_manager(SkCanvas &, Rect);
+    void task_manager_pointer(Rect, int, int);
     TextEditor container_input_;
     bool container_input_focus_ = false;
     int container_edit_ = -1, container_target_ = -1, container_color_ = 0, container_scroll_ = 0;
@@ -233,7 +326,7 @@ class BrowserUi {
     sk_sp<SkImage> web_backdrop_;
     int backdrop_x_ = 0, backdrop_y_ = 0;
     int width_ = 1360, height_ = 900, hover_x_ = -1, hover_y_ = -1, suggestion_ = -1,
-        panel_scroll_ = 0, tab_scroll_ = 0, drag_tab_ = -1, drag_y_ = 0;
+        panel_scroll_ = 0, tab_scroll_ = 0, drag_tab_ = -1, drag_y_ = 0, drag_source_ = 0;
     std::vector<Rect> focus_targets_;
     int keyboard_focus_ = -1, focus_scope_ = -1, visible_active_id_ = -1,
         visible_active_index_ = -1, visible_active_row_ = -1;
@@ -272,12 +365,26 @@ class BrowserUi {
     std::chrono::steady_clock::time_point toast_until_{},
         last_tick_ = std::chrono::steady_clock::now();
     float focus_animation_ = 0, progress_ = 0;
-    void draw_editor(SkCanvas &canvas, const TextEditor &editor, Rect rect, float size,
-                     bool active);
+    void draw_editor(SkCanvas &canvas, const TextEditor &editor, Rect rect, float size, bool active,
+                     bool secret = false);
     bool editor_key(TextEditor &editor, const CefKeyEvent &event);
     std::vector<Visit> suggestions() const;
     void commit_address();
     void dismiss();
+    bool horizontal_tabs() const;
+    int navigation_x() const { return horizontal_tabs() ? 56 : 260; }
+    TabStripLayout horizontal_layout() const;
+    void draw_tab_strip(SkCanvas &);
+    void draw_tab_hint(SkCanvas &);
+    void draw_tab_drop(SkCanvas &);
+    int strip_hint_id_ = 0, strip_hint_visible_ = 0;
+    bool strip_hint_ready_ = false;
+    std::chrono::steady_clock::time_point strip_hint_at_{};
+    bool tab_strip_pointer(const PointerInput &);
+    void open_aura_menu(bool tools = false);
+    void open_tab_menu(int index, int x, int y);
+    int strip_scroll_ = 0, strip_active_id_ = -1, strip_active_row_ = -1, drag_x_ = 0;
+    bool strip_mode_ = false, drag_moved_ = false, drag_cancelled_ = false;
     Rect address_bounds() const;
     Rect panel_bounds() const;
     Rect dialog_bounds() const;

@@ -1,7 +1,9 @@
 #include "core/browser/profile.hpp"
 #include "common/config.hpp"
 #include "common/platform.hpp"
+#include "common/text.hpp"
 #include "core/browser/i18n.hpp"
+#include "core/browser/spelling.hpp"
 #include <algorithm>
 #include <cctype>
 #include <charconv>
@@ -38,7 +40,7 @@ std::string encode(const std::string &text) {
     return out;
 }
 // Validate only the authority; query/path punctuation is not a hostname.
-bool bare_address(const std::string &input, bool &local) {
+bool bare_address(const std::string &input, bool &local, bool explicit_url = false) {
     if (input.find_first_of(" \t\r\n") != std::string::npos)
         return false;
     const auto authority = input.substr(0, input.find_first_of("/?#"));
@@ -99,9 +101,28 @@ bool bare_address(const std::string &input, bool &local) {
     }
     local = host == "localhost" || host.starts_with("127.") || host == "::1" ||
             (!ipv6 && host.find('.') == std::string::npos && has_port);
-    return ipv6 || has_port || host == "localhost" || host.find('.') != std::string::npos;
+    if (explicit_url && !ipv6 && std::all_of(host.begin(), host.end(), [](unsigned char c) {
+            return (c >= '0' && c <= '9') || c == '.';
+        })) {
+        auto ip = a2i_IPADDRESS(host.c_str());
+        const bool valid = ip && ASN1_STRING_length(ip) == 4;
+        ASN1_OCTET_STRING_free(ip);
+        if (!valid)
+            return false;
+    }
+    return explicit_url || ipv6 || has_port || host == "localhost" ||
+           host.find('.') != std::string::npos;
 }
 } // namespace
+bool valid_home_address(const std::string &value) {
+    const size_t offset = value.starts_with("https://") ? 8 : value.starts_with("http://") ? 7 : 0;
+    if (!offset || value.size() <= offset || value.size() > 16384 ||
+        std::any_of(value.begin(), value.end(),
+                    [](unsigned char c) { return c < 32 || c == 127 || c == '\\'; }))
+        return false;
+    bool local = false;
+    return bare_address(value.substr(offset), local, true);
+}
 std::string search_engine_name(const std::string &engine) {
     if (engine == "google")
         return "Google";
@@ -111,11 +132,26 @@ std::string search_engine_name(const std::string &engine) {
         return "Yandex";
     return "DuckDuckGo";
 }
-std::string navigation_url(std::string input, const std::string &engine) {
+std::string navigation_url(std::string input, const std::string &engine,
+                           std::span<const SearchProvider> providers, int custom_default) {
     input = trim(std::move(input));
     if (input.empty() || input == "aura://newtab")
         return "aura://newtab";
     const auto name = lower(input);
+    const auto space = input.find_first_of(" \t");
+    if (space != std::string::npos) {
+        const auto keyword = name.substr(0, space);
+        for (const auto &p : providers)
+            if (p.keyword == keyword && valid_search_provider(p)) {
+                const auto query = trim(input.substr(space + 1));
+                if (!query.empty()) {
+                    auto url = search_address(p, query);
+                    if (url.empty())
+                        throw std::invalid_argument("Search query is too long");
+                    return url;
+                }
+            }
+    }
     if (name.starts_with("chrome-extension://")) {
         const auto end = input.find_first_of("/?#", 19);
         const auto id = name.substr(19, end == std::string::npos ? std::string::npos : end - 19);
@@ -133,6 +169,13 @@ std::string navigation_url(std::string input, const std::string &engine) {
     bool local = false;
     if (bare_address(input, local))
         return (local ? "http://" : "https://") + input;
+    if (const auto p = find_search_provider(providers, custom_default);
+        p && valid_search_provider(*p)) {
+        auto url = search_address(*p, input);
+        if (url.empty())
+            throw std::invalid_argument("Search query is too long");
+        return url;
+    }
     const std::string base = engine == "google"   ? "https://www.google.com/search?q="
                              : engine == "bing"   ? "https://www.bing.com/search?q="
                              : engine == "yandex" ? "https://yandex.ru/search/?text="
@@ -172,6 +215,37 @@ void Profile::load() {
             }
         }
     }
+    spelling_words.clear();
+    if (auto words = table["spelling_words"].as_array())
+        for (const auto &word : *words) {
+            if (spelling_words.size() >= spelling_word_limit)
+                break;
+            add_spelling_word(spelling_words, word.value_or(std::string{}));
+        }
+    search_providers.clear();
+    next_search_provider = 1;
+    default_search_provider = 0;
+    if (auto rows = table["search_providers"].as_array())
+        for (const auto &row : *rows) {
+            if (search_providers.size() >= 32)
+                break;
+            auto t = row.as_table();
+            if (!t)
+                continue;
+            SearchProvider p{(*t)["id"].value_or(0), (*t)["name"].value_or(""),
+                             (*t)["keyword"].value_or(""), (*t)["url"].value_or("")};
+            if (valid_search_provider(p) && !find_search_provider(search_providers, p.id) &&
+                std::none_of(search_providers.begin(), search_providers.end(),
+                             [&](const auto &old) { return old.keyword == p.keyword; })) {
+                next_search_provider = std::max(next_search_provider, p.id + 1);
+                search_providers.push_back(std::move(p));
+            }
+        }
+    next_search_provider = std::max(
+        next_search_provider, std::clamp(table["next_search_provider"].value_or(1), 1, 1000001));
+    int preferred = table["default_search_provider"].value_or(0);
+    if (find_search_provider(search_providers, preferred))
+        default_search_provider = preferred;
     static_cast<BrowserPreferences &>(*this) = BrowserPreferences{};
     for (const auto &setting : settings_catalog()) {
         const auto node = table[setting.id];
@@ -251,6 +325,28 @@ void Profile::load() {
                 std::find(container_trash.begin(), container_trash.end(), id) ==
                     container_trash.end())
                 container_trash.push_back(id);
+        }
+    container_rules.clear();
+    if (auto rows = table["container_rules"].as_array())
+        for (const auto &node : *rows)
+            if (const auto row = node.as_table()) {
+                const auto id = (*row)["container"].value<int>();
+                if (id && container(*id))
+                    set_container_rule(container_rules, (*row)["host"].value_or(std::string{}), *id,
+                                       (*row)["subdomains"].value_or(false));
+            }
+    site_zooms.clear();
+    if (auto rows = table["site_zooms"].as_array())
+        for (const auto &node : *rows) {
+            if (site_zooms.size() >= 1000)
+                break;
+            if (const auto row = node.as_table()) {
+                const auto identity = (*row)["container"].value<int>();
+                const auto level = (*row)["level"].value<double>();
+                if (identity && level && container(*identity))
+                    update_site_zoom(site_zooms, (*row)["site"].value_or(std::string{}), *identity,
+                                     *level);
+            }
         }
     groups.clear();
     site_permissions.clear();
@@ -348,63 +444,65 @@ void Profile::load() {
     read("history", history);
     read("bookmarks", bookmarks);
     prune_history();
-    if (auto a = table["session"].as_array())
-        for (auto &n : *a)
-            if (auto t = n.as_table(); t && container((*t)["container"].value_or(0)))
-                session.push_back({(*t)["url"].value_or(std::string("aura://newtab")),
-                                   (*t)["pinned"].value_or(false),
-                                   has_workspace((*t)["workspace"].value_or(0))
-                                       ? (*t)["workspace"].value_or(0)
-                                       : 0,
-                                   (*t)["workspace_active"].value_or(false),
-                                   (*t)["group"].value_or(0), (*t)["container"].value_or(0)});
+    auto read_tabs = [&](SavedWindow &window, const toml::array *array) {
+        std::vector<int> indices;
+        int source = -1;
+        if (array)
+            for (const auto &node : *array) {
+                ++source;
+                if (source >= 500)
+                    break;
+                const auto row = node.as_table();
+                if (!row || !container((*row)["container"].value_or(0)))
+                    continue;
+                try {
+                    const auto url = (*row)["url"].value_or(std::string("aura://newtab"));
+                    if (url.empty())
+                        continue;
+                    window.tabs.push_back(
+                        {navigation_url(url), (*row)["pinned"].value_or(false),
+                         has_workspace((*row)["workspace"].value_or(0))
+                             ? (*row)["workspace"].value_or(0)
+                             : 0,
+                         (*row)["workspace_active"].value_or(false), (*row)["group"].value_or(0),
+                         (*row)["container"].value_or(0), (*row)["parent"].value_or(-1),
+                         (*row)["tree_collapsed"].value_or(false)});
+                    indices.push_back(source);
+                } catch (const std::exception &) {
+                }
+            }
+        remap_saved_tabs(window, indices);
+    };
+    SavedWindow legacy;
+    legacy.active = active;
+    read_tabs(legacy, table["session"].as_array());
+    session = std::move(legacy.tabs);
+    active = legacy.active;
     if (auto entries = table["windows"].as_array())
         for (const auto &node : *entries) {
             if (windows.size() >= 32)
                 break;
-            if (auto row = node.as_table()) {
+            if (const auto row = node.as_table()) {
                 SavedWindow window;
-                window.active = std::max(0, (*row)["active"].value_or(0));
+                window.active = (*row)["active"].value_or(0);
                 window.workspace = (*row)["workspace"].value_or(0);
                 window.split_left = (*row)["split_left"].value_or(-1);
                 window.split_right = (*row)["split_right"].value_or(-1);
                 if (!has_workspace(window.workspace))
                     window.workspace = 0;
-                if (auto tabs = (*row)["tabs"].as_array())
-                    for (const auto &tab : *tabs) {
-                        if (window.tabs.size() >= 500)
-                            break;
-                        if (auto item = tab.as_table()) {
-                            if (!container((*item)["container"].value_or(0)))
-                                continue;
-                            auto url = (*item)["url"].value_or(std::string{});
-                            try {
-                                if (!url.empty())
-                                    window.tabs.push_back(
-                                        {navigation_url(url), (*item)["pinned"].value_or(false),
-                                         has_workspace((*item)["workspace"].value_or(0))
-                                             ? (*item)["workspace"].value_or(0)
-                                             : 0,
-                                         (*item)["workspace_active"].value_or(false),
-                                         (*item)["group"].value_or(0),
-                                         (*item)["container"].value_or(0)});
-                            } catch (const std::exception &) {
-                            }
-                        }
-                    }
-                if (!window.tabs.empty()) {
-                    window.active = std::min(window.active, int(window.tabs.size()) - 1);
-                    const int left = window.split_left, right = window.split_right;
-                    if (left < 0 || right < 0 || left == right || left >= int(window.tabs.size()) ||
-                        right >= int(window.tabs.size()) ||
-                        (window.active != left && window.active != right) ||
-                        window.tabs[left].workspace != window.workspace ||
-                        window.tabs[right].workspace != window.workspace ||
-                        window.tabs[left].url == "aura://newtab" ||
-                        window.tabs[right].url == "aura://newtab")
-                        window.split_left = window.split_right = -1;
-                    windows.push_back(std::move(window));
-                }
+                read_tabs(window, (*row)["tabs"].as_array());
+                if (window.tabs.empty())
+                    continue;
+                const int left = window.split_left, right = window.split_right;
+                if (left < 0 || right < 0 || left == right || left >= int(window.tabs.size()) ||
+                    right >= int(window.tabs.size()) ||
+                    (window.active != left && window.active != right) ||
+                    window.tabs[left].workspace != window.workspace ||
+                    window.tabs[right].workspace != window.workspace ||
+                    window.tabs[left].url == "aura://newtab" ||
+                    window.tabs[right].url == "aura://newtab")
+                    window.split_left = window.split_right = -1;
+                windows.push_back(std::move(window));
             }
         }
     hotkeys.clear();
@@ -490,9 +588,13 @@ void Profile::load() {
                             const auto t = tab.as_table();
                             if (!t ||
                                 !keys(*t, {"url", "pinned", "workspace", "workspace_active",
-                                           "group", "container"}) ||
+                                           "group", "container", "parent", "tree_collapsed"}) ||
                                 !(*t)["container"].is_integer() ||
-                                !(*t)["workspace"].is_integer() || ++total > 200) {
+                                !(*t)["workspace"].is_integer() ||
+                                (t->contains("parent") && !(*t)["parent"].is_integer()) ||
+                                (t->contains("tree_collapsed") &&
+                                 !(*t)["tree_collapsed"].is_boolean()) ||
+                                ++total > 200) {
                                 valid = false;
                                 break;
                             }
@@ -500,7 +602,9 @@ void Profile::load() {
                                 {(*t)["url"].value_or(std::string{}),
                                  (*t)["pinned"].value_or(false), (*t)["workspace"].value_or(-1),
                                  (*t)["workspace_active"].value_or(false),
-                                 (*t)["group"].value_or(0), (*t)["container"].value_or(-1)});
+                                 (*t)["group"].value_or(0), (*t)["container"].value_or(-1),
+                                 (*t)["parent"].value_or(-1),
+                                 (*t)["tree_collapsed"].value_or(false)});
                         }
                     snapshot.windows.push_back(std::move(window));
                 }
@@ -512,6 +616,32 @@ void Profile::load() {
                 named_sessions.push_back(std::move(snapshot));
             }
         }
+    // Preserve legacy snapshots that differ only in Cyrillic case; give each a unique label.
+    std::vector<std::string> seen_names;
+    for (auto &snapshot : named_sessions) {
+        auto key = fold_text(snapshot.name);
+        if (std::find(seen_names.begin(), seen_names.end(), key) != seen_names.end()) {
+            auto base = snapshot.name;
+            if (base.size() > 96) {
+                size_t end = 96;
+                while (end && (static_cast<unsigned char>(base[end]) & 0xc0) == 0x80)
+                    --end;
+                base.resize(end);
+            }
+            for (int suffix = 2;; ++suffix) {
+                auto candidate = base + " (" + std::to_string(suffix) + ")";
+                if (std::none_of(named_sessions.begin(), named_sessions.end(),
+                                 [&](const auto &other) {
+                                     return fold_text(other.name) == fold_text(candidate);
+                                 })) {
+                    snapshot.name = std::move(candidate);
+                    break;
+                }
+            }
+            key = fold_text(snapshot.name);
+        }
+        seen_names.push_back(std::move(key));
+    }
     next_named_session = std::max(next_named_session,
                                   std::clamp(table["next_named_session"].value_or(1), 1, 1000001));
     auto validate_group = [this](SavedTab &t) {
@@ -521,13 +651,29 @@ void Profile::load() {
     };
     for (auto &t : session)
         validate_group(t);
-    for (auto &w : windows)
+    SavedWindow legacy_tree{session, active};
+    normalize_tab_tree(legacy_tree);
+    session = std::move(legacy_tree.tabs);
+    for (auto &w : windows) {
         for (auto &t : w.tabs)
             validate_group(t);
+        normalize_tab_tree(w);
+    }
 }
 void Profile::save() const {
     toml::table root;
-    root.insert("schema", 14);
+    root.insert("schema", 18);
+    toml::array words;
+    for (const auto &word : spelling_words)
+        words.push_back(word);
+    root.insert("spelling_words", std::move(words));
+    toml::array providers;
+    for (const auto &p : search_providers)
+        providers.push_back(
+            toml::table{{"id", p.id}, {"name", p.name}, {"keyword", p.keyword}, {"url", p.url}});
+    root.insert("search_providers", std::move(providers));
+    root.insert("default_search_provider", default_search_provider);
+    root.insert("next_search_provider", next_search_provider);
     toml::array keys;
     for (const auto &entry : hotkeys)
         keys.push_back(toml::table{{"action", entry.action},
@@ -546,6 +692,16 @@ void Profile::save() const {
                                           {"permission", rule.permission},
                                           {"value", rule.value}});
     root.insert("site_permissions", std::move(permissions));
+    toml::array route_rows;
+    for (const auto &rule : container_rules)
+        route_rows.push_back(toml::table{
+            {"host", rule.host}, {"container", rule.container}, {"subdomains", rule.subdomains}});
+    root.insert("container_rules", std::move(route_rows));
+    toml::array zoom_rows;
+    for (const auto &rule : site_zooms)
+        zoom_rows.push_back(
+            toml::table{{"site", rule.site}, {"container", rule.container}, {"level", rule.level}});
+    root.insert("site_zooms", std::move(zoom_rows));
     if (!profiles_root.empty())
         root.insert("profiles_root", profiles_root);
     toml::array container_rows;
@@ -602,7 +758,9 @@ void Profile::save() const {
                                    {"workspace", t.workspace},
                                    {"workspace_active", t.workspace_active},
                                    {"group", t.group},
-                                   {"container", t.container}});
+                                   {"container", t.container},
+                                   {"parent", t.parent},
+                                   {"tree_collapsed", t.tree_collapsed}});
     root.insert("session", std::move(tabs));
     auto window_rows = [](const std::vector<SavedWindow> &windows) {
         toml::array saved_windows;
@@ -614,7 +772,9 @@ void Profile::save() const {
                                                  {"workspace", t.workspace},
                                                  {"workspace_active", t.workspace_active},
                                                  {"group", t.group},
-                                                 {"container", t.container}});
+                                                 {"container", t.container},
+                                                 {"parent", t.parent},
+                                                 {"tree_collapsed", t.tree_collapsed}});
             saved_windows.push_back(toml::table{{"active", window.active},
                                                 {"workspace", window.workspace},
                                                 {"split_left", window.split_left},
@@ -845,7 +1005,7 @@ void Profile::toggle_bookmark(std::string url, std::string title) {
         std::find_if(bookmarks.begin(), bookmarks.end(), [&](auto &b) { return b.url == url; });
     if (it != bookmarks.end())
         bookmarks.erase(it);
-    else if (url != "aura://newtab")
+    else if (valid_bookmark_address(url))
         bookmarks.insert(bookmarks.begin(), {std::move(url), std::move(title), 0});
 }
 std::vector<Visit> Profile::suggest(const std::string &query, std::size_t limit) const {
@@ -925,23 +1085,27 @@ bool Profile::rename_container(int id, std::string name, int color) {
     return true;
 }
 void remove_container_tabs(SavedWindow &window, int id) {
-    int before = 0;
-    for (int i = 0; i < int(window.tabs.size()) && i < window.active; i++)
-        if (window.tabs[i].container == id)
-            ++before;
-    const auto old = window.tabs.size();
-    std::erase_if(window.tabs, [&](const auto &t) { return t.container == id; });
-    if (old != window.tabs.size()) {
-        window.active =
-            std::clamp(window.active - before, 0, std::max(0, int(window.tabs.size()) - 1));
-        window.split_left = window.split_right = -1;
-    }
+    std::vector<int> kept;
+    SavedWindow result = window;
+    result.tabs.clear();
+    for (int i = 0; i < int(window.tabs.size()); ++i)
+        if (window.tabs[i].container != id) {
+            result.tabs.push_back(window.tabs[i]);
+            kept.push_back(i);
+        }
+    if (kept.size() == window.tabs.size())
+        return;
+    remap_saved_tabs(result, kept);
+    result.split_left = result.split_right = -1;
+    window = std::move(result);
 }
 bool Profile::remove_container(int id) {
     if (!id || !container(id))
         return false;
     std::erase_if(containers, [&](const auto &c) { return c.id == id; });
     std::erase_if(site_permissions, [&](const auto &rule) { return rule.container == id; });
+    std::erase_if(container_rules, [&](const auto &rule) { return rule.container == id; });
+    std::erase_if(site_zooms, [&](const auto &rule) { return rule.container == id; });
     container_trash.push_back(id);
     for (auto &w : windows)
         remove_container_tabs(w, id);
@@ -991,5 +1155,49 @@ std::filesystem::path Profile::container_data_directory(int id) const {
         throw std::invalid_argument("Invalid container id");
     // Chrome runtime only accepts profile directories directly below root_cache_path.
     return directory / "cache" / ("AuraContainer-" + std::to_string(id));
+}
+} // namespace aura
+
+namespace aura {
+int Profile::save_search_provider(SearchProvider p) {
+    p.name = trim(std::move(p.name));
+    p.keyword = lower(trim(std::move(p.keyword)));
+    p.url = trim(std::move(p.url));
+    const bool adding = p.id == 0;
+    if (adding)
+        p.id = next_search_provider;
+    if (!valid_search_provider(p) || (adding && search_providers.size() >= 32) ||
+        (!adding && !find_search_provider(search_providers, p.id)) ||
+        std::any_of(search_providers.begin(), search_providers.end(),
+                    [&](const auto &old) { return old.id != p.id && old.keyword == p.keyword; }))
+        return 0;
+    const int id = p.id;
+    if (adding) {
+        search_providers.push_back(std::move(p));
+        ++next_search_provider;
+    } else
+        for (auto &old : search_providers)
+            if (old.id == id) {
+                old = std::move(p);
+                break;
+            }
+    return id;
+}
+bool Profile::remove_search_provider(int id) {
+    if (!std::erase_if(search_providers, [id](const auto &p) { return p.id == id; }))
+        return false;
+    if (default_search_provider == id)
+        default_search_provider = 0;
+    return true;
+}
+std::string Profile::current_search_name(const std::string &input) const {
+    const auto text = lower(trim(input));
+    const auto end = text.find_first_of(" \t");
+    if (end != std::string::npos)
+        for (const auto &p : search_providers)
+            if (p.keyword == text.substr(0, end))
+                return p.name;
+    const auto p = find_search_provider(search_providers, default_search_provider);
+    return p ? p->name : search_engine_name(search_engine);
 }
 } // namespace aura

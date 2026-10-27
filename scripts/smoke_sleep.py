@@ -67,10 +67,13 @@ def main():
                         wait_until(lambda: first()['sleeping'], 'Automatic timeout did not freeze the tab', timeout=325)
                         assert time.monotonic() - started >= 298
                     else:
+                        before_sleep = state()
                         key_at(w, 's', 12)
                         if mode == 'exceptions':
                             time.sleep(2)
                             assert not first()['sleeping'] and first()['buffer_bytes'] > 0
+                            assert len(state()['tabs']) == len(before_sleep['tabs'])
+                            assert state()['active_tab'] == before_sleep['active_tab'], 'Rejected sleep changed focus'
                             key_at(w, '1', 4)
                             assert doc()['value'] == 'Unsaved_data'
                         else:
@@ -109,14 +112,18 @@ def main():
                         wait_until(lambda: not first()['pinned'], 'Unpin failed')
                         click_at(w, 352, 352)
                         wait_until(lambda: doc().get('audio') == 'running', 'Web Audio not started')
+                        before_sleep = state()
                         key_at(w, 's', 12)
                         time.sleep(2)
                         assert not first()['sleeping'], 'Web Audio tab slept'
+                        assert len(state()['tabs']) == len(before_sleep['tabs'])
+                        assert state()['active_tab'] == before_sleep['active_tab'], 'Media sleep rejection changed focus'
+                        before_private = len(state()['tabs'])
                         key_at(w, 'n', 12)
                         key_at(w, 'l', 4)
                         type_text(w, url + '?PRIVATE_SLEEP_SENTINEL')
                         key_at(w, 'Return')
-                        wait_until(lambda: len(state()['tabs']) == 3 and state()['tabs'][-1]['loaded'], 'No private tab')
+                        wait_until(lambda: len(state()['tabs']) == before_private + 1 and state()['tabs'][-1]['loaded'], 'No private tab')
                         key_at(w, 's', 12)
                         time.sleep(1)
                         assert state()['tabs'][-1]['private'] and not state()['tabs'][-1]['sleeping']

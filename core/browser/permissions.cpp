@@ -26,6 +26,26 @@ std::string_view host(const std::string &origin) {
 }
 } // namespace
 std::span<const PermissionSpec> permission_catalog() { return catalog; }
+std::string extension_site_pattern(std::string input) {
+    const auto first = input.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos)
+        return {};
+    input = input.substr(first, input.find_last_not_of(" \t\r\n") - first + 1);
+    std::transform(input.begin(), input.end(), input.begin(),
+                   [](unsigned char c) { return c >= 'A' && c <= 'Z' ? char(c + 32) : char(c); });
+    if (input.ends_with("/*"))
+        input.resize(input.size() - 2);
+    else if (input.ends_with('/'))
+        input.pop_back();
+    if (input.starts_with("https://") && input.ends_with(":443"))
+        input.resize(input.size() - 4);
+    else if (input.starts_with("http://") && input.ends_with(":80"))
+        input.resize(input.size() - 3);
+    if (!valid_permission_origin(input))
+        return {};
+    const auto scheme = input.substr(0, input.find("://"));
+    return scheme + "://" + std::string(host(input)) + "/*";
+}
 const PermissionSpec *find_permission(const std::string &id) {
     for (const auto &spec : catalog)
         if (id == spec.id)

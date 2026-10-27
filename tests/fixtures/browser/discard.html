@@ -1,0 +1,12 @@
+<!doctype html><meta charset="utf-8"><title>Unload fixture</title>
+<style>body{font:20px sans-serif;padding:20px}button{display:block;margin:16px 0;height:40px;width:260px}</style>
+<h1>Unload fixture</h1>
+<button onclick="window.addEventListener('beforeunload',e=>{e.preventDefault();e.returnValue=''});protectedPage=true;report()">Protect page</button>
+<form method="post" action="/post"><button>Submit POST</button></form>
+<script>
+let ticks=0,protectedPage=false;
+const token=Math.random().toString(36).slice(2);
+function report(){document.title=JSON.stringify({token,ticks,protected:protectedPage})}
+if(location.search.includes('frame'))document.body.appendChild(document.createElement('iframe')).src='/sleep.html';
+setInterval(()=>{ticks++;report()},100);report();
+</script>

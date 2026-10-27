@@ -21,6 +21,7 @@ std::span<const HotkeySpec> hotkey_catalog() {
                                              {"bookmarks", "Bookmarks", {'B', 1}},
                                              {"history", "History", {'H', 1}},
                                              {"downloads", "Downloads", {'J', 1}},
+                                             {"task_manager", "Task manager", {0x1B, 2}},
                                              {"print", "Print", {'P', 1}},
                                              {"passwords", "Passwords", {'Y', 3}},
                                              {"workspaces", "Workspaces", {'E', 3}},
@@ -55,6 +56,8 @@ bool allowed_hotkey(Hotkey chord) {
         return !mods;
     if (mods < 0 || mods > 7)
         return false;
+    if (key == 0x1B && mods == 2)
+        return true;
     if (!((key >= 'A' && key <= 'Z') || (key >= '0' && key <= '9') || (key >= 0x70 && key <= 0x7B)))
         return false;
     if (!(mods & 5) && !(key >= 0x70 && key <= 0x7B))
@@ -118,7 +121,9 @@ std::string hotkey_label(Hotkey h) {
         out += "Shift+";
     if (h.modifiers & 4)
         out += "Alt+";
-    if (h.key >= 0x70 && h.key <= 0x7B)
+    if (h.key == 0x1B)
+        out += "Esc";
+    else if (h.key >= 0x70 && h.key <= 0x7B)
         out += 'F' + std::to_string(h.key - 0x6F);
     else
         out += char(h.key);

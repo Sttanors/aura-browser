@@ -39,24 +39,28 @@ struct DiagnosticState {
 
 class DiagnosticApp final : public CefApp, public CefBrowserProcessHandler {
 public:
-    DiagnosticApp(PumpSchedule& schedule, bool capture, bool software, std::string extension)
-        : schedule_(schedule), capture_(capture), software_(software), extension_(std::move(extension)) {}
-    CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
-    void OnScheduleMessagePumpWork(int64_t delay_ms) override { schedule_.schedule(delay_ms); }
-    void OnContextInitialized() override { context_ready_ = true; }
-    bool context_ready() const { return context_ready_; }
-    std::function<void(CefRefPtr<CefCommandLine>)> relaunch;
-    bool OnAlreadyRunningAppRelaunch(CefRefPtr<CefCommandLine> command,
-                                     const CefString&) override {
-        if (!relaunch) return false;
-        relaunch(command);
-        return true;
-    }
+  DiagnosticApp(PumpSchedule &schedule, bool capture, bool software, std::string extension,
+                bool safe_mode = false, bool verbose_logging = true, std::string ozone = "x11")
+      : schedule_(schedule), capture_(capture), software_(software), safe_mode_(safe_mode),
+        verbose_logging_(verbose_logging), extension_(std::move(extension)),
+        ozone_(std::move(ozone)) {}
+  CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
+  void OnScheduleMessagePumpWork(int64_t delay_ms) override { schedule_.schedule(delay_ms); }
+  void OnContextInitialized() override { context_ready_ = true; }
+  bool context_ready() const { return context_ready_; }
+  std::function<void(CefRefPtr<CefCommandLine>)> relaunch;
+  bool OnAlreadyRunningAppRelaunch(CefRefPtr<CefCommandLine> command, const CefString &) override {
+      if (!relaunch)
+          return false;
+      relaunch(command);
+      return true;
+  }
     void OnBeforeCommandLineProcessing(const CefString& process_type, CefRefPtr<CefCommandLine> command) override;
 private:
     PumpSchedule& schedule_;
     bool capture_, software_;
-    std::string extension_;
+    bool safe_mode_, verbose_logging_;
+    std::string extension_, ozone_;
     bool context_ready_ = false;
     IMPLEMENT_REFCOUNTING(DiagnosticApp);
 };
